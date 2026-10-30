@@ -10,6 +10,28 @@ function applyConfigToUI() {
     setDuoSwitch(document.getElementById('settings-editor-word-wrap'), AppConfig.get('editor-word-wrap') === 'true');
     setDuoSwitch(document.getElementById('settings-show-code-preview'), AppConfig.get('show-code-preview', 'true') !== 'false');
 
+    if (!window._qolSettingsBound && window.initDuoSwitch) {
+        window._qolSettingsBound = true;
+        window.initDuoSwitch('settings-editor-word-wrap', (isOn) => {
+            AppConfig.set('editor-word-wrap', isOn ? 'true' : 'false');
+            if (window.monacoEditor) {
+                window.monacoEditor.updateOptions({ wordWrap: isOn ? 'on' : 'off' });
+            }
+            if (window.monacoDiffEditor) {
+                window.monacoDiffEditor.getModifiedEditor().updateOptions({ wordWrap: isOn ? 'on' : 'off' });
+                window.monacoDiffEditor.getOriginalEditor().updateOptions({ wordWrap: isOn ? 'on' : 'off' });
+            }
+        });
+        window.initDuoSwitch('settings-show-code-preview', (isOn) => {
+            AppConfig.set('show-code-preview', isOn ? 'true' : 'false');
+            if (isOn) {
+                document.body.classList.remove('hide-code-preview');
+            } else {
+                document.body.classList.add('hide-code-preview');
+            }
+        });
+    }
+
     if (AppConfig.get('show-code-preview', 'true') === 'false') {
         document.body.classList.add('hide-code-preview');
     } else {
