@@ -1,0 +1,78 @@
+/* Loaded after #modern-theme so these win on phones */
+/* ---- Width-safe prompt dock (any viewport, incl. iPad / narrow chat pane next to the explorer) ---- */
+#main-pane, #chat, #bottom-dock-area, #prompt-bar, #prompt-top-row,
+#prompt-input-row, #statusbar { min-width: 0; box-sizing: border-box; }
+#bottom-dock-area { max-width: 100%; }
+#cmd { min-width: 0; }
+
+/* Status row: one line; the model name gives way first */
+#statusbar { height: auto !important; min-height: 30px; flex-wrap: nowrap !important; gap: 8px; }
+#statusbar > div:first-child { flex: 0 0 auto; }
+#statusbar > div:last-child { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+#status-model { flex: 0 1 auto; min-width: 0; max-width: 180px; }
+#status-tokens { flex: 0 0 auto; }
+
+/* Mode tabs + model picker: wrap to a second row instead of overflowing */
+#prompt-top-row { flex-wrap: wrap; row-gap: 6px; column-gap: 8px; }
+#mode-toolbar { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.mode-segmented-group { max-width: 100%; }
+.mode-tab-btn { min-width: 0; }
+#model-group { flex: 0 1 auto; min-width: 0; max-width: 100%; margin-left: auto; }
+#model-select-btn { min-width: 0; max-width: 100%; }
+#model-select-btn .msb-name { min-width: 0; flex: 0 1 auto; }
+#model-select-btn .msb-provider { flex: 0 1 auto; }
+
+@media (max-width: 900px) {
+    /* Anchor the dropdown to the prompt bar so it can never poke out of a narrow chat pane */
+    #model-group { position: static; }
+    #model-select-dropdown {
+        left: auto; right: 0; width: min(360px, 100%) !important;
+        max-height: min(360px, 55dvh);
+    }
+    #model-select-btn { max-width: min(100%, 260px); }
+}
+@media (max-width: 768px) {
+    #window-body { position: relative; }
+    
+    /* --- Sidebar Mobile Overlay --- */
+    #sidebar {
+        position: absolute;
+        top: 0; bottom: 0; left: -340px;
+        z-index: 10001;
+        height: 100%;
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 0 40px rgba(0,0,0,0.8);
+    }
+    #sidebar.mobile-open { left: 0; }
+    #sidebar-resizer { display: none !important; }
+    
+    #sidebar-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+        z-index: 10000; opacity: 0; pointer-events: none;
+        transition: opacity 0.3s;
+    }
+    #sidebar-overlay.visible { opacity: 1; pointer-events: auto; }
+    
+    /* Swap desktop toggle button for mobile hamburger & close buttons */
+    #btn-sidebar-toggle-mobile { display: flex !important; margin-right: 8px; }
+    #btn-sidebar-close-mobile { display: flex !important; }
+    #btn-sidebar-collapse { display: none !important; }
+
+    /* Full-screen modals: square, edge-to-edge */
+    #newtool-modal, #models-modal {
+        border-radius: 0 !important; border: none !important; box-shadow: none !important;
+        background: var(--bg-main) !important;
+    }
+    #newtool-modal-overlay, #models-modal-overlay { background: var(--bg-main) !important; }
+
+    #statusbar { padding: 6px 12px 4px !important; }
+    #status-model { max-width: none !important; }
+    #prompt-top-row { margin-top: 2px; }
+    /* Phones: tabs take the remaining width next to a compact model button */
+    #mode-toolbar { flex: 1 1 0; }
+    #model-group { flex: 0 1 auto; }
+    #model-select-btn { max-width: 140px; }
+}
+@media (max-width: 380px) {
+    #model-select-btn { max-width: 96px; }
+}

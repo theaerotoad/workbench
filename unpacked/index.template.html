@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- CSP: scripts limited to self/jsdelivr/blob/data (Monaco and the tool worker need unsafe-inline/eval); connect-src is broad for user-configured LLM endpoints. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net blob: data: 'unsafe-inline' 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https: http: data: blob:; object-src 'none'; base-uri 'self';">
+    <title>workbench spaces</title>
+    <link id="ion-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 6L3 12L7 18' stroke='%2356b6c2' stroke-width='2'/%3E%3Cpath d='M13 4L8 12H16L11 20' stroke='%23a855f7' stroke-width='2'/%3E%3Cpath d='M17 6L21 12L17 18' stroke='%2356b6c2' stroke-width='2'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script type="module" src="./js/main.js"></script>
+    <script type="module" src="./js/main_2.js"></script>
+    <link id="style-base" rel="stylesheet" href="./styles/base.css">
+    <link id="style-sidebar" rel="stylesheet" href="./styles/sidebar.css">
+    <link id="style-editor" rel="stylesheet" href="./styles/editor.css">
+    <link id="style-chat" rel="stylesheet" href="./styles/chat.css">
+    <link id="style-prompt" rel="stylesheet" href="./styles/prompt.css">
+    <link id="style-settings" rel="stylesheet" href="./styles/settings.css">
+    <link id="style-dialogs" rel="stylesheet" href="./styles/dialogs.css">
+    <link id="style-tool-models" rel="stylesheet" href="./styles/tool-models-modal.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link id="modern-theme" rel="stylesheet" href="./styles/modern-theme.css">
+    <link id="mobile-overrides" rel="stylesheet" href="./styles/mobile-overrides.css">
+</head>
+<body>
+
+<div id="sidebar-overlay"></div>
+
+<div id="window" class="initializing">
+<script type="module" src="./js/main_3.js"></script>
+<div id="app-initializer">
+        <div class="init-spinner"></div>
+        <div class="init-text">Loading workbench...</div>
+    </div>
+
+    <div id="sessions-popover-overlay">
+        <div id="sessions-popover">
+            <div class="popover-header">
+                <nav class="popover-header-title popover-breadcrumb" aria-label="Breadcrumb">
+                    <span id="ws-popover-row" class="crumb crumb-folder" title="">
+                    <span id="ws-popover-icon" class="icon">folder</span>
+                    <span id="ws-popover-name"></span>
+                    </span>
+                    <span id="ws-popover-sep" class="icon crumb-sep" aria-hidden="true">chevron_right</span>
+                    <span class="crumb crumb-current" aria-current="page">
+                        <span class="icon">view_list</span>
+                        <span>Sessions</span>
+                    </span>
+                </nav>
+                <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                    <button id="btn-clear-all-sessions" class="icon-btn" title="Clear all sessions (including local history)">
+                        <span class="icon" style="font-size: 15px;">delete_sweep</span>
+                    </button>
+                    <button id="btn-create-session" class="btn-new-session" title="Create a new conversation session">
+                        <span class="icon" style="font-size: 13px;">add</span>
+                        <span>New</span>
+                    </button>
+                </div>
+            </div>
+            <div id="sessions-list"></div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <div id="yesno-modal-overlay">
+        <div id="yesno-modal">
+            <div id="yesno-modal-message"></div>
+            <input id="yesno-modal-input" type="text" spellcheck="false" autocomplete="off">
+            <div id="yesno-modal-error"></div>
+            <div id="yesno-modal-btns">
+                <button id="yesno-modal-save" class="btn-confirm primary">Save</button>
+                <button id="yesno-modal-discard" class="btn-confirm">Don't save</button>
+                <button id="yesno-modal-cancel" class="btn-confirm">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="cleardata-modal-overlay">
+        <div id="cleardata-modal">
+            <div id="cleardata-modal-header">
+                <div id="cleardata-modal-title">
+                    <span class="icon" style="font-size: 14px;">delete</span>
+                    <span>Clear Data</span>
+                </div>
+                <button id="cleardata-modal-close" class="icon-btn" title="Close">
+                    <span class="icon" style="font-size: 16px;">close</span>
+                </button>
+            </div>
+            <div id="cleardata-modal-body">
+                <div class="cleardata-intro">Choose what to clear. This cannot be undone.</div>
+
+                <label class="cleardata-option">
+                    <input type="checkbox" id="cleardata-opt-checkpoints" checked>
+                    <div class="cleardata-option-text">
+                        <span class="cleardata-option-title"><span class="icon">history</span>Checkpoints</span>
+                        <span class="cleardata-option-desc">File baselines and history used to diff and restore changes.</span>
+                    </div>
+                </label>
+
+                <label class="cleardata-option">
+                    <input type="checkbox" id="cleardata-opt-sessions" checked>
+                    <div class="cleardata-option-text">
+                        <span class="cleardata-option-title"><span class="icon">forum</span>Sessions</span>
+                        <span class="cleardata-option-desc">All saved conversation sessions and their history.</span>
+                    </div>
+                </label>
+
+                <label class="cleardata-option">
+                    <input type="checkbox" id="cleardata-opt-models">
+                    <div class="cleardata-option-text">
+                        <span class="cleardata-option-title"><span class="icon">tune</span>Model Settings</span>
+                        <span class="cleardata-option-desc">Configured providers, models, and the currently selected model.</span>
+                    </div>
+                </label>
+
+                <label class="cleardata-option">
+                    <input type="checkbox" id="cleardata-opt-custom-tools">
+                    <div class="cleardata-option-text">
+                        <span class="cleardata-option-title"><span class="icon">engineering</span>Custom Tools</span>
+                        <span class="cleardata-option-desc">Your custom tool definitions and their permissions/lock states.</span>
+                    </div>
+                </label>
+
+                <label class="cleardata-option">
+                    <input type="checkbox" id="cleardata-opt-settings" checked>
+                    <div class="cleardata-option-text">
+                        <span class="cleardata-option-title"><span class="icon">settings</span>Settings</span>
+                        <span class="cleardata-option-desc">General preferences, mode prompts, prompt history, caches, and recent folders.</span>
+                    </div>
+                </label>
+            </div>
+            <div id="cleardata-modal-footer">
+                <div id="cleardata-select-links">
+                    <button type="button" id="cleardata-select-all">Select all</button>
+                    <button type="button" id="cleardata-select-none">Select none</button>
+                </div>
+                <div id="cleardata-modal-btns">
+                    <button id="cleardata-cancel" class="btn-confirm">Cancel</button>
+                    <button id="cleardata-confirm" class="btn-confirm primary">Clear Selected</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="about-modal-overlay">
+        <div id="about-modal">
+            <button id="about-modal-close" class="icon-btn" title="Close">
+                <span class="icon" style="font-size: 16px;">close</span>
+            </button>
+
+            <div class="about-logo">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 6L2 12L6 18" stroke="var(--primary)" stroke-width="2"/>
+                    <path class="ion-bolt" d="M14 4L9 12H15L10 20" stroke="var(--purple)" stroke-width="2"/>
+                    <path d="M18 6L22 12L18 18" stroke="var(--primary)" stroke-width="2"/>
+                </svg>
+            </div>
+
+            <div class="about-name">workbench</div>
+            <span class="about-version">v0.2.8</span>
+
+            <hr class="about-divider">
+
+            <div class="about-links">
+                <a class="about-link" href="https://github.com/theaerotoad/workbench" target="_blank" rel="noopener noreferrer">
+                    <span class="icon">code</span>
+                    <span>GitHub Repository</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div id="newtool-modal-overlay">
+        <div id="newtool-modal">
+            <div id="newtool-modal-header">
+                <div id="newtool-modal-title">
+                    <span class="icon" style="font-size: 14px;">engineering</span>
+                    <span>New Tool</span>
+                </div>
+                <button id="newtool-modal-close" class="icon-btn" title="Close">
+                    <span class="icon" style="font-size: 16px;">close</span>
+                </button>
+            </div>
+            <div id="newtool-modal-body">
+                <div id="newtool-source-tabs">
+                    <div class="newtool-source-tab" data-pane="blank">
+                        <span class="icon">edit_note</span><span>Blank</span>
+                    </div>
+                    <div class="newtool-source-tab" data-pane="local">
+                        <span class="icon">upload_file</span><span>Import file</span>
+                    </div>
+                    <div class="newtool-source-tab active" data-pane="browse">
+                        <span class="icon">code</span><span>Browse GitHub</span>
+                    </div>
+                    <div class="newtool-source-tab" data-pane="mcp">
+                        <span class="icon">cable</span><span>Connect MCP</span>
+                    </div>
+                </div>
+
+                <div id="newtool-col-mcp" class="newtool-pane" data-pane="mcp">
+                    <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                        <label for="newtool-mcp-url">MCP Server SSE URL</label>
+                        <div style="display:flex; gap:8px;">
+                            <input type="text" id="newtool-mcp-url" placeholder="http://localhost:3001/sse" autocomplete="off" spellcheck="false" style="flex:1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 6px 8px; border-radius: 4px; font-family: inherit; font-size: 13px;">
+                            <button type="button" id="newtool-mcp-connect" class="btn-confirm primary">Fetch</button>
+                        </div>
+                        <div id="newtool-mcp-status" class="dim" style="font-size: 11px;"></div>
+                    </div>
+                    
+                    <div id="newtool-mcp-tools-container" style="display:none; flex-direction:column; flex:1; overflow:hidden;">
+                        <div style="margin-bottom:8px; display:flex; align-items:center; justify-content:space-between;">
+                            <div style="font-weight:600; font-size:12px;">Select Tools to Bundle</div>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <label style="font-size:11px; color:var(--dim);">Bundle Name:</label>
+                                <input type="text" id="newtool-mcp-bundle-name" value="mcp_tools" autocomplete="off" spellcheck="false" style="width:100px; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 4px 6px; border-radius: 4px; font-family: inherit; font-size: 11px;">
+                            </div>
+                        </div>
+                        <div id="newtool-mcp-tools-list" style="overflow-y:auto; flex:1; border:1px solid var(--border); border-radius:4px; padding:4px;"></div>
+                    </div>
+                </div>
+
+                <div id="newtool-col-local" class="newtool-pane" data-pane="blank">
+                    <input type="text" id="newtool-name-input" autocomplete="off" spellcheck="false" style="display:none">
+                    <div class="newtool-blank-source-row">
+                        <label for="newtool-source-editor">Tool source</label>
+                        <textarea
+                            id="newtool-source-editor"
+                            class="newtool-source-editor"
+                            spellcheck="false"
+                            placeholder="// Write the tool source here.
+// The tool name is inferred from the TOOL_META.name in this code."
+                        ></textarea>
+                    </div>
+                </div>
+
+                <div id="newtool-col-import" class="newtool-pane" data-pane="local">
+                    <div id="newtool-dropzone" tabindex="0">
+                        <span class="icon">upload_file</span>
+                        <div id="newtool-dropzone-text"><strong>Drop a .js file</strong> here, or click to browse</div>
+                        <div id="newtool-dropzone-hint">The tool name and code will be filled in automatically</div>
+                        <input type="file" id="newtool-file-input" accept=".js,text/javascript" style="display:none">
+                    </div>
+                    <div id="newtool-file-picked">
+                        <div class="newtool-file-picked-row">
+                            <span class="icon">description</span>
+                            <span id="newtool-file-picked-name"></span>
+                            <button type="button" class="newtool-file-clear" title="Remove file">
+                                <span class="icon" style="font-size:14px;">close</span>
+                            </button>
+                        </div>
+                        <div id="newtool-file-picked-desc" class="newtool-file-picked-desc dim-placeholder"></div>
+                    </div>
+                </div>
+
+                <div id="newtool-col-browse" class="newtool-pane active" data-pane="browse">
+                    <div id="newtool-browse-toolbar">
+                        <input type="text" id="newtool-browse-search" placeholder="Filter tools..." autocomplete="off" spellcheck="false">
+                        <button type="button" id="newtool-browse-refresh" title="Refresh">
+                            <span class="icon">refresh</span>
+                        </button>
+                    </div>
+                    <div id="newtool-browse-list"></div>
+                </div>
+
+                <div id="newtool-modal-error"></div>
+            </div>
+            <div id="newtool-modal-footer">
+                <button id="newtool-update-all" class="btn-confirm" title="Update every installed tool that has a newer repo version" style="display:none;">Update all</button>
+                <button id="newtool-cancel" class="btn-confirm">Done</button>
+                <button id="newtool-create" class="btn-confirm primary newtool-create-btn">Create</button>
+                <button id="newtool-create-mcp" class="btn-confirm primary newtool-create-btn" style="display:none;">Create Bundle</button>
+                <button id="newtool-install" class="btn-confirm primary" title="Install this tool" style="display:none;">Install</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="models-modal-overlay">
+        <div id="models-modal">
+            <div id="models-modal-header">
+                <div id="models-modal-title">
+                    <span class="icon" style="font-size: 14px;">tune</span>
+                    <span>Model Providers</span>
+                </div>
+                <div id="models-modal-header-actions">
+                    <button id="models-modal-edit-json" class="icon-btn" title="Edit as raw JSON">
+                        <span class="icon" style="font-size: 15px;">data_object</span>
+                    </button>
+                    <button id="models-modal-close" class="icon-btn" title="Close">
+                        <span class="icon" style="font-size: 16px;">close</span>
+                    </button>
+                </div>
+            </div>
+            <div id="models-modal-body">
+                <div id="mm-sidebar">
+                    <div id="mm-provider-list"></div>
+                    <button type="button" id="mm-add-provider-btn">
+                        <span class="icon">add</span><span>Add Provider</span>
+                    </button>
+                </div>
+                <div id="mm-detail"></div>
+            </div>
+            <div id="models-modal-footer">
+                <span id="models-modal-footer-hint">Changes save automatically to .agent/models.json</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="msg-delete-modal-overlay">
+        <div id="msg-delete-modal">
+            <div id="msg-delete-modal-header">
+                <div id="msg-delete-modal-title">
+                    <span class="icon" style="font-size:15px;">delete</span>
+                    <span>Delete message</span>
+                </div>
+                <button id="msg-delete-modal-close" class="icon-btn" title="Close">
+                    <span class="icon" style="font-size:16px;">close</span>
+                </button>
+            </div>
+            <div id="msg-delete-modal-body">
+                <button type="button" class="msg-del-option" id="msg-del-only">
+                    <div class="opt-title">
+                        <span class="icon" style="font-size:15px;">delete</span>
+                        <span>Delete message only</span>
+                    </div>
+                    <div class="opt-desc">Removes the prompt from the chat. Any file changes made by this message remain in the workspace.</div>
+                </button>
+                <button type="button" class="msg-del-option" id="msg-del-and-revert">
+                    <div class="opt-title">
+                        <span class="icon" style="font-size:15px;">history</span>
+                        <span>Delete message and revert file changes</span>
+                    </div>
+                    <div class="opt-desc danger">Removes the prompt and restores files to the state they were in before this message. Files created by this message will be deleted.</div>
+                </button>
+            </div>
+            <div id="msg-delete-modal-footer">
+                <button id="msg-delete-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="msg-edit-modal-overlay">
+        <div id="msg-edit-modal">
+            <div id="msg-edit-modal-header">
+                <div id="msg-edit-modal-title">
+                    <span class="icon" style="font-size:15px;">edit</span>
+                    <span>Confirm edit</span>
+                </div>
+                <button id="msg-edit-modal-close" class="icon-btn" title="Close">
+                    <span class="icon" style="font-size:16px;">close</span>
+                </button>
+            </div>
+            <div id="msg-edit-modal-body">
+                <button type="button" class="msg-del-option" id="msg-edit-only">
+                    <div class="opt-title">
+                        <span class="icon" style="font-size:15px;">edit</span>
+                        <span>Edit message only</span>
+                    </div>
+                    <div class="opt-desc">Saves your edit. All file changes made by this message remain in the workspace.</div>
+                </button>
+                <button type="button" class="msg-del-option" id="msg-edit-and-revert">
+                    <div class="opt-title">
+                        <span class="icon" style="font-size:15px;">history</span>
+                        <span>Edit message and revert file changes</span>
+                    </div>
+                    <div class="opt-desc danger">Saves your edit and restores files to the state they were in before this message. Files created after this message will be deleted.</div>
+                </button>
+            </div>
+            <div id="msg-edit-modal-footer">
+                <button id="msg-edit-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-popover">
+        <div class="settings-panel">
+        <div class="settings-panel-head">
+            <span class="icon">shield</span>
+            <span class="head-label">Security &amp; Permissions</span>
+            <button id="settings-popover-close" class="icon-btn" title="Close">
+                <span class="icon">close</span>
+            </button>
+        </div>
+        <div class="popover-section-title" style="margin-top: 0; margin-bottom: 8px;">
+            <span class="icon" style="font-size: 14px;">build</span>
+            <span>Tools</span>
+        </div>
+        <div id="tools-list"></div>
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div class="ct-item-row" style="border-bottom: none; padding: 4px 0;">
+                <span class="ct-item-name">.agent files</span>
+                <div class="tri-switch" id="shield-agent-switch">
+                    <button class="tri-btn never active never" data-agent-val="hide">hide</button>
+                    <button class="tri-btn always" data-agent-val="show">show</button>
+                </div>
+            </div>
+            <div style="font-size: 10px; color: var(--dim); margin-top: 4px; line-height: 1.4;">Controls whether .agent files are visible to all tools (read, write, grep, etc.)</div>
+        </div>
+
+        </div>
+    </div>
+
+    <div id="window-body">
+        <div id="sidebar" class="collapsed">
+            <div id="sidebar-body">
+            <div id="sidebar-tabs">
+                <button id="btn-sidebar-collapse" class="icon-btn" title="Collapse sidebar"><span class="icon" style="font-size:15px;">chevron_left</span></button>
+                <button id="btn-sidebar-close-mobile" class="icon-btn" title="Close sidebar" style="display:none;"><span class="icon" style="font-size:16px;">close</span></button>
+                <div class="sidebar-nav-tab active" id="tab-nav-explorer" data-view="explorer" title="Files">
+                    <span class="icon" id="sidebar-files-icon" style="font-size: 18px;">folder</span>
+                    <span class="tab-label">Files</span>
+                    <span class="sidebar-badge" id="file-count">0</span>
+                </div>
+                <div class="sidebar-nav-tab" id="tab-nav-search" data-view="search" title="Search">
+                    <span class="icon" style="font-size: 18px;">search</span>
+                    <span class="tab-label">Search</span>
+                    <span class="sidebar-badge" id="search-count"></span>
+                </div>
+                <div class="sidebar-nav-tab" id="tab-nav-changes" data-view="changes" title="Changes">
+                    <span class="icon" style="font-size: 18px;">difference</span>
+                    <span class="tab-label">Changes</span>
+                    <span class="sidebar-badge" id="changes-count">0</span>
+                </div>
+                <div class="sidebar-nav-tab" id="tab-nav-settings" data-view="settings" title="Settings">
+                    <span class="icon" style="font-size: 18px;">settings</span>
+                    <span class="tab-label">Settings</span>
+                </div>
+
+                <div class="sidebar-nav-tab" id="btn-about-toggle" style="margin-top: auto;" title="About workbench">
+                    <span class="icon" style="font-size: 18px;">info</span>
+                    <span class="tab-label">About</span>
+                </div>
+
+                <div class="sidebar-nav-tab" id="btn-settings-toggle" title="Security & Permissions">
+                    <span class="icon" style="font-size: 18px;">shield</span>
+                    <span class="tab-label">Security</span>
+                </div>
+            </div>
+
+            <div id="sidebar-content">
+                <div id="sidebar-view-settings" style="display:none;">
+                    <div class="sidebar-panel-header">
+                        <span style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Settings</span>
+                    </div>
+                    <div id="settings-content" style="overflow-y: auto; flex: 1;">
+
+                        <div class="settings-section-label">Behavior</div>
+
+                        <!-- General Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">tune</span>
+                                <span>General</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <label>Thinking Timeout (seconds, -1 = disabled):</label>
+                                    <input type="number" id="settings-thinking-timeout" value="-1" min="-1" max="3600">
+                                </div>
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Keep skipped thinking in context</span>
+                                        <div class="tri-switch duo-switch" id="settings-keep-skipped-thinking">
+                                            <button class="tri-btn off active off" data-val="off">off</button>
+                                            <button class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row">
+                                    <label>Tool Timeout (seconds, 5-3600):</label>
+                                    <input type="number" id="settings-tool-timeout" value="120" min="5" max="3600">
+                                </div>
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label" title="Store and load .agent config files from the remote WebDAV server">Sync .agent to WebDAV</span>
+                                        <div class="tri-switch duo-switch" id="settings-webdav-sync-agent">
+                                            <button class="tri-btn off active off" data-val="off">off</button>
+                                            <button class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Context Compression Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">compress</span>
+                                <span>Context Compression</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Enable auto-compression</span>
+                                        <div class="tri-switch duo-switch" id="settings-compress-enabled">
+                                            <button class="tri-btn off active off" data-val="off">off</button>
+                                            <button class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row">
+                                    <label>Compress at (% of context window):</label>
+                                    <input type="number" id="settings-compress-threshold" value="75" min="10" max="99">
+                                </div>
+                                <div class="settings-field-row">
+                                    <label>Preserve last N messages:</label>
+                                    <input type="number" id="settings-compress-preserve" value="6" min="1" max="50">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section-label">Appearance</div>
+
+                        <!-- Theme Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">contrast</span>
+                                <span>UI Theme</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <select id="settings-ui-theme">
+                                        <option value="dark">Dark</option>
+                                        <option value="light">Light</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Accent Color Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">palette</span>
+                                <span>Accent Color</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <span class="duo-switch-label">Choose accent</span>
+                                </div>
+                                <div class="settings-field-row">
+                                    <div id="settings-accent-swatches" role="group" aria-label="Accent color"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Background Glow Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">tonality</span>
+                                <span>Status Glow</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Enable status glow</span>
+                                        <div class="tri-switch duo-switch" id="settings-glow-enabled">
+                                            <button class="tri-btn off active off" data-val="off">off</button>
+                                            <button class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div id="danger-zone-footer">
+                        <div class="settings-panel-group" style="border-color: rgba(224, 108, 117, 0.12); margin-bottom: 0;">
+                            <div class="settings-panel-header" style="background: rgba(224, 108, 117, 0.03); color: var(--dim); border-bottom-color: rgba(224, 108, 117, 0.1);">
+                                <span class="icon" style="color: var(--dim);">warning</span>
+                                <span>Danger Zone</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <button id="btn-clear-data" class="danger-btn" title="Choose what stored data to clear">
+                                        <span class="icon" style="font-size: 14px;">delete</span>
+                                        <span>Clear Data…</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="sidebar-mobile-header" class="sidebar-panel-header" style="display:none;">
+                    <span style="font-size:11px; color:var(--primary); font-weight:700;">Files</span>
+                    <button id="btn-sidebar-close-mobile-2" class="icon-btn" title="Close sidebar"><span class="icon" style="font-size:16px;">close</span></button>
+                </div>
+            <div id="sidebar-view-explorer">
+                <div class="sidebar-panel-header">
+                    <span style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Explorer</span>
+                    <div class="sidebar-header-actions">
+                        <button id="btn-new-file" class="icon-btn" title="New File"><span class="icon" style="font-size:15px;">note_add</span></button>
+                        <button id="btn-new-folder" class="icon-btn" title="New Folder"><span class="icon" style="font-size:15px;">create_new_folder</span></button>
+                        <button id="btn-explorer-io" class="icon-btn" title="Import / Export files" aria-haspopup="menu" aria-expanded="false"><span class="icon" style="font-size:15px;">import_export</span></button>
+                        <button id="btn-reload-tree" class="icon-btn" title="Refresh Explorer"><span class="icon" style="font-size:15px;">refresh</span></button>
+                        <button id="btn-collapse-all" class="icon-btn" title="Collapse Folders"><span class="icon" style="font-size:15px;">unfold_less</span></button>
+                    </div>
+                </div>
+                <div id="file-tree">
+                    <div class="tree-node dim" style="padding: 8px 12px;">(no folder open)</div>
+                </div>
+            </div>
+
+            <div id="sidebar-view-search" style="display:none;">
+                <div class="sidebar-panel-header">
+                    <span style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Search</span>
+                </div>
+                <div id="search-panel-input-wrap">
+                    <div class="search-field-wrap">
+                        <input type="text" id="search-input" placeholder="Search across workspace files… (Enter)" autocomplete="off" spellcheck="false">
+                        <button type="button" id="search-clear" class="search-clear-btn" title="Clear search">&times;</button>
+                    </div>
+                </div>
+                <div id="search-results"></div>
+            </div>
+
+            <div id="sidebar-view-changes" style="display:none;">
+
+                <div id="changes-subview-files">
+                    <div class="sidebar-panel-header">
+                        <span style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Modified Files</span>
+                        <div class="sidebar-header-actions">
+                            <button id="btn-discard-all" class="icon-btn" title="Discard all changes">
+                                <span class="icon" style="font-size: 14px; color: var(--red);">undo</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="changes-list"></div>
+                </div>
+
+                <div id="changes-graph-divider"></div>
+
+                <div id="changes-subview-graph">
+                    <div class="sidebar-panel-header">
+                        <span id="graph-panel-label" style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Prompts</span>
+                        <div id="graph-breadcrumb">
+                            <span class="crumb-back" id="graph-breadcrumb-back">
+                                <span class="icon" style="font-size:13px;">arrow_back</span>All changes
+                            </span>
+                            <span class="crumb-file" id="graph-breadcrumb-file"></span>
+                        </div>
+                    </div>
+                    <div id="checkpoint-timeline-list"></div>
+                </div>
+            </div>
+            </div>
+            </div>
+
+
+            <div id="explorer-io-menu" role="menu">
+                <div class="context-menu-item" id="btn-upload-files" role="menuitem">
+                    <span class="icon" style="font-size:14px; color:var(--green);">upload_file</span>
+                    <span>Add files…</span>
+                </div>
+                <div class="context-menu-item" id="btn-download-zip" role="menuitem">
+                    <span class="icon" style="font-size:14px; color:var(--green);">folder_zip</span>
+                    <span>Download all as .zip</span>
+                </div>
+                <div class="explorer-io-hint">Tip: drop files onto the explorer, or onto a folder, to add them.</div>
+            </div>
+
+            <div id="explorer-context-menu">
+                <div class="context-menu-item" data-action="new-file" data-scope="dir">
+                    <span class="icon" style="font-size:14px; color:var(--primary);">note_add</span>
+                    <span>New File</span>
+                </div>
+                <div class="context-menu-item" data-action="new-folder" data-scope="dir">
+                    <span class="icon" style="font-size:14px; color:var(--yellow);">create_new_folder</span>
+                    <span>New Folder</span>
+                </div>
+                <div class="context-menu-item" data-action="upload-files" data-scope="dir">
+                    <span class="icon" style="font-size:14px; color:var(--green);">upload_file</span>
+                    <span>Add Files Here…</span>
+                </div>
+                <div class="context-menu-separator"></div>
+                <div class="context-menu-item" data-action="open-tab" data-scope="file">
+                    <span class="icon" style="font-size:14px;">open_in_new</span>
+                    <span>Open in Editor</span>
+                </div>
+                <div class="context-menu-item" data-action="view-diff" data-scope="changed">
+                    <span class="icon" style="font-size:14px; color:var(--primary);">difference</span>
+                    <span>View Diff</span>
+                </div>
+                <div class="context-menu-item" data-action="attach-prompt" data-scope="file">
+                    <span class="icon" style="font-size:14px; color:var(--magenta);">alternate_email</span>
+                    <span>Attach to Prompt (@)</span>
+                </div>
+                <div class="context-menu-item" data-action="download" data-scope="downloadable">
+                    <span class="icon" style="font-size:14px; color:var(--green);">download</span>
+                    <span>Download</span>
+                </div>
+                <div class="context-menu-item" data-action="download-zip" data-scope="downloaddir">
+                    <span class="icon" style="font-size:14px; color:var(--green);">folder_zip</span>
+                    <span>Download as .zip</span>
+                </div>
+                <div class="context-menu-item" data-action="restore-default" data-scope="restorable">
+                    <span class="icon" style="font-size:14px; color:var(--magenta);">restart_alt</span>
+                    <span>Restore to Default</span>
+                </div>
+                <div class="context-menu-separator"></div>
+                <div class="context-menu-item danger" data-action="rename" data-scope="renameable">
+                    <span class="icon" style="font-size:14px;">edit</span>
+                    <span>Rename</span>
+                </div>
+                <div class="context-menu-item danger" data-action="delete" data-scope="deletable">
+                    <span class="icon" style="font-size:14px; color:var(--red);">delete</span>
+                    <span>Delete</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="sidebar-resizer" class="hidden" title="Drag to resize sidebar"></div>
+
+        <div id="main-pane">
+            <div id="tabs-bar">
+                <button id="btn-sidebar-toggle-mobile" class="icon-btn" title="Toggle sidebar" style="display:none;">
+                    <span class="icon">menu</span>
+                </button>
+                <div id="tabs-list-container">
+                    <div class="editor-tab active" data-tab="chat" id="tab-chat">
+                        <span class="icon" style="font-size: 13px;">chat</span>
+                        <span>chat</span>
+                    </div>
+                </div>
+
+                <div id="tabs-session-cluster" style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                    <button id="btn-workspace-display" class="workspace-pill-btn" title="Current workspace" style="display:none;">
+                        <span class="icon" id="workspace-btn-icon" style="font-size: 14px;">folder</span>
+                        <span id="workspace-btn-name" class="workspace-pill-name">Workspace</span>
+                    </button>
+
+                    <button id="btn-session-toggle" class="session-pill-btn" title="Click to view or switch sessions" style="display:none;">
+                        <span class="icon" style="font-size: 14px;">forum</span>
+                        <span id="session-btn-name" class="session-pill-name">sess_default</span>
+                        <span class="icon" style="font-size: 14px; margin-left: 2px;">arrow_drop_down</span>
+                    </button>
+
+                    <button id="btn-exit-workspace" class="icon-btn" title="Close workspace (exit)" style="display:none;">
+                        <span class="icon" style="font-size: 16px;">exit_to_app</span>
+                    </button>
+                </div>
+
+                <div id="tabs-actions">
+                    <div class="editor-view-segmented" id="editor-mode-toggle">
+                        <button id="btn-view-edit" class="seg-btn active" title="Switch to Code Editor">
+                            <span class="icon" style="font-size: 13px;">code</span>
+                            <span>Edit</span>
+                        </button>
+                        <button id="btn-view-preview" class="seg-btn" title="Switch to HTML Live Preview">
+                            <span class="icon" style="font-size: 13px;">visibility</span>
+                            <span>Preview</span>
+                        </button>
+                    </div>
+
+                    <button id="btn-tab-save" class="btn-tab-action" title="Save file [Ctrl+S] · Save As [Ctrl+Shift+S]" style="display:none;">
+                        <span class="icon" style="font-size: 15px;">save</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="chat-view">
+                <div id="chat-container">
+                    <div id="chat"></div>
+                    <div id="prompt-rail" class="prompt-rail"></div>
+                </div>
+            </div>
+
+            <div id="diff-view">
+                <div id="diff-toolbar">
+                    <span class="icon" style="font-size: 15px; color: var(--primary);">difference</span>
+                    <span id="diff-title" style="font-weight:600; color:var(--fg);">Diff View</span>
+                    <span id="diff-stats" class="dim" style="margin-left: 4px;"></span>
+                    <div style="flex-grow:1;"></div>
+
+                    <button id="btn-diff-prev-hunk" class="pill-btn" title="Jump to previous change hunk">
+                        <span class="icon" style="font-size: 13px;">keyboard_arrow_up</span>
+                        <span>Prev Hunk</span>
+                    </button>
+                    <button id="btn-diff-next-hunk" class="pill-btn" title="Jump to next change hunk">
+                        <span class="icon" style="font-size: 13px;">keyboard_arrow_down</span>
+                        <span>Next Hunk</span>
+                    </button>
+                    <button id="btn-diff-toggle-inline" class="pill-btn" title="Toggle Side-by-Side / Inline Diff">
+                        <span class="icon" id="diff-layout-icon" style="font-size: 13px;">view_stream</span>
+                        <span id="diff-layout-text">Inline</span>
+                    </button>
+                    <button id="btn-diff-save" class="pill-btn" title="Save modified file changes [Ctrl+S] · Save As [Ctrl+Shift+S]">
+                        <span class="icon" style="font-size: 13px;">save</span>
+                        <span>Save</span>
+                    </button>
+                    <button id="btn-diff-discard" class="pill-btn danger">
+                        <span class="icon" style="font-size: 13px;">undo</span>
+                        <span>Revert Changes</span>
+                    </button>
+                </div>
+                <div id="monaco-diff-container"></div>
+            </div>
+
+            <div id="editor-view">
+                <div id="editor-save-error" class="editor-save-error" style="display:none;">
+                    <span class="icon">error</span>
+                    <span id="editor-save-error-text"></span>
+                    <button id="editor-save-error-close" class="ct-icon-btn icon-btn" title="Dismiss">
+                        <span class="icon" style="font-size:14px;">close</span>
+                    </button>
+                </div>
+                <div id="monaco-editor-container"></div>
+                <div id="editor-binary-notice">
+                    <div id="image-zoom-bar">
+                        <button id="img-zoom-out" class="img-zoom-btn" title="Zoom out">
+                            <span class="icon" style="font-size:13px;">remove</span>
+                        </button>
+                        <button id="img-scale-label" class="img-zoom-btn" title="Click to reset to 100%">100%</button>
+                        <button id="img-zoom-in" class="img-zoom-btn" title="Zoom in">
+                            <span class="icon" style="font-size:13px;">add</span>
+                        </button>
+                    </div>
+                    <img id="editor-image-preview" style="display:none;" />
+                    <span id="editor-binary-msg">Binary file</span>
+                </div>
+                <div id="attachment-text-preview"></div>
+                <iframe id="html-preview-frame" sandbox="allow-scripts allow-modals"></iframe>
+            </div>
+
+            <div id="webdav-modal-overlay" class="vws-backdrop" style="display:none; z-index:900;">
+                <div class="vws-card" role="dialog" aria-label="Connect WebDAV">
+                    <div class="vws-title"><span class="icon">dns</span><span>Connect WebDAV Workspace</span></div>
+                    <label style="font-size: 11px; color: var(--dim); margin-bottom:-8px;">Workspace Name (optional)</label>
+                    <input type="text" id="webdav-name" placeholder="My Project (defaults to folder or host)" maxlength="60" spellcheck="false" autocomplete="off">
+                    <label style="font-size: 11px; color: var(--dim); margin-bottom:-8px;">Server URL</label>
+                    <input type="text" id="webdav-url" placeholder="https://example.com/webdav/" spellcheck="false" autocomplete="off">
+                    <label style="font-size: 11px; color: var(--dim); margin-bottom:-8px;">Root Folder Path (optional)</label>
+                    <input type="text" id="webdav-root-path" placeholder="/projects/myapp (created if missing)" spellcheck="false" autocomplete="off">
+                    <label style="font-size: 11px; color: var(--dim); margin-bottom:-8px;">Username (optional)</label>
+                    <input type="text" id="webdav-user" placeholder="admin" spellcheck="false" autocomplete="off">
+                    <label style="font-size: 11px; color: var(--dim); margin-bottom:-8px;">Password (optional)</label>
+                    <input type="password" id="webdav-pass" placeholder="secret" spellcheck="false" autocomplete="off">
+                    <div style="font-size: 10px; color: var(--dim); line-height: 1.4;">Note: WebDAV servers must have CORS enabled to allow browser access. Credentials are saved locally in your browser.</div>
+                    <div class="vws-actions" style="margin-top: 12px; justify-content: flex-end;">
+                        <button type="button" class="vws-btn" id="webdav-cancel">Cancel</button>
+                        <button type="button" class="vws-btn" id="webdav-save" style="display:none;">Save</button>
+                        <button type="button" class="vws-btn primary" id="webdav-connect">Connect</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="no-folder-overlay" class="no-folder-overlay">
+                <div id="recent-folders-container">
+                    <span class="icon" style="font-size: 48px; color: var(--dim); margin-bottom: 12px;">folder</span>
+                    <button id="no-folder-btn" class="folder-action" style="margin-bottom: 16px; width: 220px; justify-content: center;">
+                        <span class="icon" style="font-size:14px;">folder_open</span>
+                        <span id="no-folder-btn-label">Open Folder</span>
+                    </button>
+                    <button id="no-folder-virtual-btn" class="folder-action" style="margin-bottom: 16px; width: 220px; justify-content: center;" title="Create an in-memory workspace, no folder on disk needed">
+                        <span class="icon" style="font-size:14px;">cloud_queue</span>
+                        <span>New Virtual Workspace</span>
+                    </button>
+                    <button id="no-folder-webdav-btn" class="folder-action" style="margin-bottom: 16px; width: 220px; justify-content: center;" title="Connect to a remote WebDAV server">
+                        <span class="icon" style="font-size:14px;">dns</span>
+                        <span>Connect WebDAV</span>
+                    </button>
+                    <div id="recent-folders-section" style="display:none; width: 280px;">
+                        <div style="font-size:11px; color:var(--dim); font-weight:700; text-transform:uppercase; margin-bottom:8px; letter-spacing:0.5px;">Recent Workspaces</div>
+                        <div id="recent-folders-list"></div>
+                    </div>
+                    <div style="margin-top: 16px; width: 280px; display: flex; justify-content: center;">
+                        <button class="btn-models-edit" onclick="openModelsModal()">
+                            <span class="icon" style="font-size:14px;">edit_note</span>
+                            <span>Open models settings</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="no-folder-overlay-footer">
+                    <div class="no-folder-overlay-footer-credit">Created by Fredconex</div>
+                    <div style="display: flex; gap: 18px;">
+                        <a href="https://github.com/theaerotoad/workbench" target="_blank" rel="noopener noreferrer"><span class="icon" style="font-size:14px;">code</span>GitHub Repository</a>
+                        <a href="https://www.paypal.com/donate/?hosted_button_id=24CJHH95X3AQS" target="_blank" rel="noopener noreferrer"><span class="icon" style="font-size:14px;">favorite</span>Support Development</a>
+                    </div>
+                </div>
+            </div>
+
+            <div id="bottom-dock-area">
+                <div id="dock-glow" aria-hidden="true"></div>
+                <div id="statusbar">
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-badge mode-code" id="status-mode">CODE</span>
+                        <span id="status-info" class="dim"></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span id="status-model" class="dim" style="display:none; font-size:11px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title=""></span>
+                        <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
+                    </div>
+                </div>
+
+                <div id="perm-banner">
+                    <span id="perm-message">Action requires approval</span>
+                    <input type="text" id="perm-reject-reason" placeholder="Why are you rejecting this? (sent to the model)" title="Optional reason for rejection — included in the tool error returned to the model">
+                    <div class="perm-btns">
+                        <button id="btn-perm-deny" class="btn-perm">reject</button>
+                        <button id="btn-perm-always" class="btn-perm always">always allow</button>
+                        <button id="btn-perm-allow" class="btn-perm allow">approve once</button>
+                    </div>
+                </div>
+
+                <div id="prompt-bar">
+                    <div id="prompt-top-row">
+                        <div id="mode-toolbar">
+                            <div class="mode-segmented-group">
+                                <button class="mode-tab-btn" data-mode="plan" title="Generate implementation plan in .agent_plan.md without modifying code">
+                                    <span class="icon" style="font-size:13px;">assignment</span>
+                                    <span>Plan</span>
+                                </button>
+                                <button class="mode-tab-btn" data-mode="ask" title="Read-only query mode for code explanations and search">
+                                    <span class="icon" style="font-size:13px;">chat</span>
+                                    <span>Ask</span>
+                                </button>
+                                <button class="mode-tab-btn active" data-mode="code" title="Full code editing and tool execution">
+                                    <span class="icon" style="font-size:13px;">code</span>
+                                    <span>Code</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="model-group">
+                            <button type="button" id="model-select-btn" title="Model (from .agent/models.json)">
+                                <span class="msb-name" id="msb-name">—</span>
+                                <span class="msb-provider" id="msb-provider">—</span>
+                                <span class="icon msb-caret">expand_more</span>
+                            </button>
+                            <div id="model-select-overlay"></div>
+                            <div id="model-select-dropdown">
+                                <div id="model-select-search-wrap">
+                                    <input type="text" id="model-select-search" placeholder="Filter models..." autocomplete="off" />
+                                    <button type="button" id="model-select-config-btn" title="Edit .agent/models.json">
+                                        <span class="icon">settings</span>
+                                    </button>
+                                </div>
+                                <div id="model-select-list"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="prompt-attachments"></div>
+
+                    <div id="queued-prompt-banner" style="display:none;"></div>
+
+                    <div id="prompt-input-row">
+                        <button id="prompt-attach" type="button" title="Attach files or images">
+                            <span class="icon" style="font-size:16px;">add</span>
+                        </button>
+                        <div id="attach-menu" class="attach-menu" style="display:none;">
+                            <div class="attach-menu-item" data-attach-type="doc">
+                                <span class="icon" style="font-size:16px; color:var(--yellow);">description</span>
+                                <span>Documents</span>
+                            </div>
+                            <div class="attach-menu-item" data-attach-type="image">
+                                <span class="icon" style="font-size:16px; color:var(--green);">image</span>
+                                <span>Images</span>
+                            </div>
+                        </div>
+                        <input type="file" id="prompt-attach-input" multiple accept="image/*" style="display:none;" />
+                        <input type="file" id="prompt-attach-doc-input" multiple style="display:none;" />
+                        <div id="autocomplete-popup"></div>
+                        <textarea id="cmd" placeholder="Ask agent or type / for commands, @ for files..." rows="1" spellcheck="false" autofocus></textarea>
+                        <button id="prompt-symbol" class="magenta" type="button" title="Send prompt">&gt;</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="model-picker-overlay"></div>
+<div id="model-picker-dropdown">
+    <div id="model-picker-header">
+        <span class="icon" style="font-size:16px;color:var(--primary);">search</span>
+        <span id="model-picker-title">Select Model</span>
+        <button id="model-picker-close" class="icon-btn" title="Close"><span class="icon" style="font-size:16px;">close</span></button>
+    </div>
+    <div id="model-picker-filter">
+        <input type="text" id="model-picker-search" placeholder="Filter models..." autocomplete="off" />
+    </div>
+    <div id="model-picker-list"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs/loader.js" integrity="sha384-jwxunh5pHKFzi60XobDcwOM7qnk4lSGpdBU/hNn9pUGp+ZUpaHJqadNLRF2k+jPu" crossorigin="anonymous">
+    
+</script>
+<script type="text/plain" id="builtin-tool-src-read" src="./tools/read.js"></script>
+<script type="text/plain" id="builtin-tool-src-edit" src="./tools/edit.js"></script>
+<script type="text/plain" id="builtin-tool-src-write" src="./tools/write.js"></script>
+<script type="text/plain" id="builtin-tool-src-grep" src="./tools/grep.js"></script>
+<script type="text/plain" id="builtin-tool-src-find" src="./tools/find.js"></script>
+<script type="text/plain" id="builtin-tool-src-rename" src="./tools/rename.js"></script>
+<script type="text/plain" id="builtin-tool-src-preview_image" src="./tools/preview_image.js"></script>
+
+<script type="module" src="./js/ui_editor.js"></script>
+<script type="module" src="./js/ui_explorer.js"></script>
+<script type="module" src="./js/ui_chat.js"></script>
+</body>
+</html>
