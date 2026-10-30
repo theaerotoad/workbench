@@ -1,0 +1,12 @@
+dynamic_servers:
+  qmd:
+    command: "/home/user/software/pyplayground/qmdpy/.venv/bin/python3"
+    args: ["/home/user/software/pyplayground/qmdpy_share/qmd", "mcp"]
+    mount_path: "qmd" 
+    # maps all trailing CLI arguments joined as a single string into "command"
+    arg_mode: "joined_string"
+    arg_key: "command"
+    env:
+      QMD_CONFIG: "/home/user/software/pyplayground/qmdpy/example.yml"
+      QMD_XML: True
+      QMD_DEEP: True
