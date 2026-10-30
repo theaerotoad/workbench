@@ -6,6 +6,24 @@ function applyConfigToUI() {
     document.getElementById('settings-tool-timeout').value = AppConfig.get('tool-timeout', '120');
     setDuoSwitch(document.getElementById('settings-keep-skipped-thinking'), AppConfig.get('keep-skipped-thinking') === "true");
     setDuoSwitch(document.getElementById('settings-glow-enabled'), AppConfig.get('glow-enabled', 'true') !== 'false');
+    
+    setDuoSwitch(document.getElementById('settings-editor-word-wrap'), AppConfig.get('editor-word-wrap') === 'true');
+    setDuoSwitch(document.getElementById('settings-show-code-preview'), AppConfig.get('show-code-preview', 'true') !== 'false');
+
+    if (AppConfig.get('show-code-preview', 'true') === 'false') {
+        document.body.classList.add('hide-code-preview');
+    } else {
+        document.body.classList.remove('hide-code-preview');
+    }
+
+    if (window.monacoEditor) {
+        window.monacoEditor.updateOptions({ wordWrap: AppConfig.get('editor-word-wrap') === 'true' ? 'on' : 'off' });
+    }
+    if (window.monacoDiffEditor) {
+        window.monacoDiffEditor.getModifiedEditor().updateOptions({ wordWrap: AppConfig.get('editor-word-wrap') === 'true' ? 'on' : 'off' });
+        window.monacoDiffEditor.getOriginalEditor().updateOptions({ wordWrap: AppConfig.get('editor-word-wrap') === 'true' ? 'on' : 'off' });
+    }
+
     const ce = document.getElementById('settings-compress-enabled');
     const ct = document.getElementById('settings-compress-threshold');
     const cp = document.getElementById('settings-compress-preserve');

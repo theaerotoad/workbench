@@ -64,6 +64,7 @@ function initMonaco() {
             defineMonacoThemes();
 
             const editorHost = document.getElementById('monaco-editor-container');
+            const wordWrapConfig = window.AppConfig.get('editor-word-wrap') === 'true' ? 'on' : 'off';
             monacoEditor = MONACO.editor.create(editorHost, {
                 theme: 'agent2-dark',
                 automaticLayout: true,
@@ -79,7 +80,8 @@ function initMonaco() {
                 bracketPairColorization: { enabled: true },
                 glyphMargin: false,
                 lineDecorationsWidth: 10,
-                tabSize: 4
+                tabSize: 4,
+                wordWrap: wordWrapConfig
             });
 
             monacoEditor.addCommand(MONACO.KeyMod.CtrlCmd | MONACO.KeyCode.KeyS, () => {
@@ -169,6 +171,8 @@ function initMonaco() {
                 renderIndicators: true,
                 ignoreTrimWhitespace: false
             });
+            monacoDiffEditor.getModifiedEditor().updateOptions({ wordWrap: wordWrapConfig });
+            monacoDiffEditor.getOriginalEditor().updateOptions({ wordWrap: wordWrapConfig });
 
             monacoDiffEditor.getModifiedEditor().addCommand(MONACO.KeyMod.CtrlCmd | MONACO.KeyCode.KeyS, () => {
                 saveDiffModifiedFile();

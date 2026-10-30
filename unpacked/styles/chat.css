@@ -256,6 +256,7 @@
     margin: 0; border: 1px solid var(--border);
     border-radius: 3px; background: var(--bg-panel);
     overflow: hidden; font-size: 12px; white-space: normal;
+    flex-shrink: 0;
 }
 .code-header {
     display: flex; align-items: center; gap: 6px;
@@ -403,7 +404,8 @@ html.theme-light .code-header .tool-badge {
 .tool-output-text.error-output-text { color: var(--red); }
 
 /* Shared Builtin Tool UI Classes */
-.tool-ui-wrap { font-family: var(--font-mono, monospace); display: flex; flex-direction: column; gap: 6px; margin: 2px 0; }
+body.hide-code-preview .tool-ui-wrap { display: none !important; }
+.tool-ui-wrap { font-family: var(--font-mono, monospace); display: flex; flex-direction: column; gap: 6px; margin: 2px 0; flex-shrink: 0; }
 .tool-ui-bar { display: flex; align-items: center; justify-content: space-between; background: var(--bg-input); border: 1px solid var(--border); padding: 5px 8px; border-radius: 3px; font-size: 11px; }
 .tool-ui-box { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; font-size: 11px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); }
 .tool-ui-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 8px; background: var(--bg-input); border-top: 1px solid var(--border); }
@@ -471,6 +473,7 @@ html.theme-light .code-header .tool-badge {
     white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
 }
 .tool-output-text {
+    flex-shrink: 0;
     color: var(--dim); font-size: 11.5px; white-space: pre-wrap;
     word-break: break-word; overflow-wrap: anywhere;
     max-height: 180px; overflow-y: auto; line-height: 1.45;

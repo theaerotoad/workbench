@@ -215,6 +215,10 @@ window.getToolTimeoutMs = getToolTimeoutMs;
 // The frame is never stored: the tool's final displayHtml replaces it when the run ends.
 // Elements marked data-live-scroll keep their scroll position, or stay pinned to the bottom if they were there.
 function liveRenderToolBody(entry, html) {
+    if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
+        const tName = entry && entry.toolName;
+        if (tName && ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(tName)) return;
+    }
     const box = entry && entry.box;
     if (!box || !box.isConnected || !box.classList.contains('running-tool-box')) return;
     const body = box.querySelector('.tool-box-body');
@@ -395,6 +399,12 @@ function renderToolCallBox(toolName, args, resultOutput, isDone = false, isError
         ? customSummary
         : (isError ? (summarizeToolError(resultOutput) || "") : "");
 
+    if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
+        if (['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName)) {
+            displayHtml = null;
+        }
+    }
+
     let innerContentHTML = '';
 
     if (displayHtml) {
@@ -448,6 +458,11 @@ window.renderToolCallBox = renderToolCallBox;
 
 // --- safeRenderToolCallBox.js ---
 function safeRenderToolCallBox(toolName, args, resultOutput, isDone = false, isError = false, container = null, existingBox = null, sessionId, displayHtml = null, customSummary = null) {
+    if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
+        if (['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName)) {
+            displayHtml = null;
+        }
+    }
     const sid = sessionId || state.activeSessionId;
     if (sid !== state.activeSessionId) {
         const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName);

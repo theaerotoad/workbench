@@ -21,7 +21,9 @@ const CONFIG_DEFAULTS = {
     'compress-preserve': '6',
     'hide-agent-files': 'true',
     'sidebar-width': '314',
-    'webdav-sync-agent': 'false'
+    'webdav-sync-agent': 'false',
+    'editor-word-wrap': 'false',
+    'show-code-preview': 'true'
 };
 
 const CONFIG_FILE = '.agent/config.json';
