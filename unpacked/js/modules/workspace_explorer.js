@@ -481,6 +481,19 @@ function showContextMenu(e, node) {
 
     if (!applyContextScopes(node)) return;
 
+    const renderMdBtn = document.getElementById('ctx-render-md');
+    if (renderMdBtn) {
+        if (node && node.kind === 'file' && node.name.toLowerCase().endsWith('.md')) {
+            renderMdBtn.style.display = 'flex';
+            renderMdBtn.onclick = () => {
+                contextMenu.style.display = 'none';
+                window.openFileTab('render:' + node.path);
+            };
+        } else {
+            renderMdBtn.style.display = 'none';
+        }
+    }
+
     contextMenu.style.display = 'block';
     contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 190)}px`;
     contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 260)}px`;

@@ -373,6 +373,21 @@ function renderTabs() {
             });
             tab.appendChild(closeBtn);
             tab.addEventListener('click', () => switchTab(tabId));
+        } else if (tabId.startsWith('render:')) {
+            const filepath = tabId.replace('render:', '');
+            const fname = filepath.split('/').pop();
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--info);">preview</span><span>Preview: ${escapeHTML(fname)}</span>`;
+            tab.title = `Rendered Markdown: ${filepath}`;
+
+            const closeBtn = document.createElement('span');
+            closeBtn.className = 'tab-close icon';
+            closeBtn.innerText = 'close';
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeTab(tabId);
+            });
+            tab.appendChild(closeBtn);
+            tab.addEventListener('click', () => switchTab(tabId));
         } else if (isAttachment) {
             const attId = tabId.replace('attachment:', '');
             let att = state.attachmentStore[attId];
@@ -788,6 +803,25 @@ async function switchTab(tabId, opts = {}) {
             attachmentTextPreview.style.display = 'block';
             attachmentTextPreview.textContent = att.content;
         }
+    } else if (tabId.startsWith('render:')) {
+        chatView.style.display = 'none';
+        diffView.style.display = 'none';
+        editorView.style.display = 'flex';
+        state.currentEditorPath = null;
+        editorModeToggle.style.display = 'none';
+        btnTabSave.style.display = 'none';
+
+        monacoContainer.style.display = 'none';
+        htmlPreviewFrame.style.display = 'none';
+        editorBinaryNotice.style.display = 'none';
+        attachmentTextPreview.style.display = 'none';
+
+        const mdContainer = document.getElementById('markdown-preview-container');
+        if (mdContainer) {
+            mdContainer.style.display = 'block';
+            const filepath = tabId.replace('render:', '');
+            updateMarkdownPreview(filepath);
+        }
     } else {
         chatView.style.display = 'none';
         diffView.style.display = 'none';
@@ -795,6 +829,8 @@ async function switchTab(tabId, opts = {}) {
         state.currentEditorPath = tabId;
         hideEditorSaveError();
         attachmentTextPreview.style.display = 'none';
+        const mdContainer = document.getElementById('markdown-preview-container');
+        if (mdContainer) mdContainer.style.display = 'none';
 
         const isImage = /\.(png|jpg|jpeg|gif|ico|svg|webp)$/i.test(tabId);
         const meta = registry.meta[tabId];
@@ -986,6 +1022,30 @@ function updateHtmlPreview() {
 
 // --- AST_EXPORTS_START ---
 window.updateHtmlPreview = updateHtmlPreview;
+// --- AST_EXPORTS_END ---
+
+// --- updateMarkdownPreview.js ---
+function updateMarkdownPreview(filepath, content) {
+    const mdContainer = document.getElementById('markdown-preview-container');
+    if (!mdContainer) return;
+    
+    let latestContent = content;
+    if (latestContent === undefined) {
+        const m = monacoModels.get(filepath);
+        if (m) {
+            latestContent = m.getValue();
+        } else {
+            latestContent = registry.files[filepath] || '';
+        }
+    }
+    
+    const scrollPos = mdContainer.scrollTop;
+    mdContainer.innerHTML = window.formatMarkdownSnippet(latestContent);
+    mdContainer.scrollTop = scrollPos;
+}
+
+// --- AST_EXPORTS_START ---
+window.updateMarkdownPreview = updateMarkdownPreview;
 // --- AST_EXPORTS_END ---
 
 // --- withDirtyTrackingSuppressed.js ---

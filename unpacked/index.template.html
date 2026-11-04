@@ -706,6 +706,10 @@
                     <span class="icon" style="font-size:14px;">open_in_new</span>
                     <span>Open in Editor</span>
                 </div>
+                <div class="context-menu-item" id="ctx-render-md" data-scope="file" style="display:none;">
+                    <span class="icon" style="font-size:14px; color:var(--info);">preview</span>
+                    <span>Render Markdown</span>
+                </div>
                 <div class="context-menu-item" data-action="view-diff" data-scope="changed">
                     <span class="icon" style="font-size:14px; color:var(--primary);">difference</span>
                     <span>View Diff</span>
@@ -849,6 +853,7 @@
                 </div>
                 <div id="attachment-text-preview"></div>
                 <iframe id="html-preview-frame" sandbox="allow-scripts allow-modals"></iframe>
+                <div id="markdown-preview-container" class="md-content"></div>
             </div>
 
             <div id="webdav-modal-overlay" class="vws-backdrop" style="display:none; z-index:900;">

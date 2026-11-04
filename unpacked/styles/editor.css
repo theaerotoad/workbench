@@ -199,6 +199,16 @@
     border: none; background: #ffffff; color-scheme: light;
 }
 
+/* Markdown Preview Container */
+#markdown-preview-container {
+    display: none; width: 100%; height: 100%;
+    overflow-y: auto; padding: 20px 30px;
+    box-sizing: border-box; background: var(--bg-main);
+    color: var(--fg);
+}
+#markdown-preview-container > *:first-child { margin-top: 0; }
+#markdown-preview-container > *:last-child { margin-bottom: 0; }
+
 /* Pill Buttons (Toolbar actions) */
 .pill-btn {
     background: var(--bg-input); color: var(--fg);

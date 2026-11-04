@@ -313,6 +313,10 @@ export async function writeDisk(filePath, content, opts) {
     if (state.activeTab === filePath && state.editorViewMode === 'preview') {
         window.updateHtmlPreview();
     }
+
+    if (state.openTabs.includes(`render:${filePath}`)) {
+        window.updateMarkdownPreview(filePath, content);
+    }
 }
 
 export async function readFileTextSniffed(file) {
