@@ -102,8 +102,6 @@ body{font-family:var(--font-ui);
  box-shadow:0 0 28px rgba(var(--accent-rgb),.07)}
 #chat>.log-entry.md-content{background:#151517;border:1px solid var(--border);
  border-radius:4px;padding:12px 18px;margin:6px 0 6px auto; width:fit-content; max-width:85%; display:block;}
-.md-content .md-inline-code{background:rgba(var(--accent-rgb),.1);border-color:rgba(var(--accent-rgb),.25);
-color:var(--accent);border-radius:2px}
 .md-content .md-link{color:var(--accent)}
 .md-content .md-table{border-radius:3px}
 .code-box{border-radius:3px;background:#111113}
