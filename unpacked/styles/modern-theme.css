@@ -98,8 +98,8 @@ body{font-family:var(--font-ui);
 #chat>*{animation:rise .3s ease both}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .chat-bubble{max-width:72%;padding:10px 16px;border-radius:4px;
- background:rgba(var(--accent-rgb),.09);border:1px solid rgba(var(--accent-rgb),.38);
- box-shadow:0 0 28px rgba(var(--accent-rgb),.07)}
+ background:#151517;border:1px solid var(--border);
+ box-shadow:none}
 #chat>.log-entry.md-content{background:#151517;border:1px solid var(--border);
  border-radius:4px;padding:12px 18px;margin:6px 0 6px auto; width:fit-content; max-width:85%; display:block;}
 .md-content .md-link{color:var(--accent)}
@@ -161,8 +161,8 @@ background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shado
 #newtool-browse-list,#newtool-dropzone{border-radius:3px}
 .session-item-row:hover,.recent-folder-item:hover,.cleardata-option:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.07)}
 .session-item-row.active{border-color:var(--accent);background:rgba(var(--accent-rgb),.13);box-shadow:0 0 20px rgba(var(--accent-rgb),.12)}
-.session-pill-btn{border-radius:3px;padding:3px 10px;min-width:140px;max-width:340px;background:rgba(var(--accent-rgb),.1);border-color:rgba(var(--accent-rgb),.4);color:var(--accent)}
-.session-pill-btn:hover,.session-pill-btn.active{background:rgba(var(--accent-rgb),.2);border-color:var(--accent);color:#fff}
+.session-pill-btn{border-radius:3px;padding:3px 10px;min-width:140px;max-width:340px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;transition:all .15s ease}
+.session-pill-btn:hover,.session-pill-btn.active{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.5);color:var(--accent)}
 .workspace-pill-btn{border-radius:3px;padding:3px 9px;max-width:220px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;transition:all .15s ease}
 .workspace-pill-btn:hover{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.5);color:var(--accent)}
 .mm-provider-item.active,.newtool-source-tab.active,.editor-view-segmented .seg-btn.active,.btn-tab-action.active,
@@ -237,7 +237,7 @@ html.theme-light #sidebar, html.theme-light #main-pane {
  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 12px 32px rgba(0,0,0,0.08);
 }
 html.theme-light #chat-view, html.theme-light #chat-container, html.theme-light #chat, html.theme-light #tabs-bar { background: transparent; }
-html.theme-light #chat>.log-entry.md-content { background: #f7f7f9; }
+html.theme-light #chat>.log-entry.md-content, html.theme-light .chat-bubble { background: #f7f7f9; }
 html.theme-light .code-box { background: var(--bg-input); border-color: var(--border); }
 html.theme-light .code-box pre, html.theme-light .code-box code { color: var(--fg); }
 html.theme-light .code-box .btn-copy-code, html.theme-light .code-box .tool-badge { color: var(--dim); }
@@ -260,7 +260,8 @@ html.theme-light .sidebar-nav-tab.active { background: rgba(var(--accent-rgb),0.
 html.theme-light .tree-node.selected { color: var(--fg); }
 html.theme-light .settings-panel-head .head-label { color: var(--fg); }
 html.theme-light .ac-item.selected .ac-item-title { color: var(--fg); }
-html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--accent); }
+html.theme-light .session-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
+html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.3); }
 html.theme-light .workspace-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
 html.theme-light .workspace-pill-btn:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.3); }
 html.theme-light .toast { background: rgba(255,255,255,0.98); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
