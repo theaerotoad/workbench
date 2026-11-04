@@ -202,8 +202,12 @@ function formatMarkdownSnippet(text) {
     html = html.replace(/\$\$([\s\S]+?)\$\$/g, (match, math) => {
         const idx = mathBlocks.length;
         if (window.katex) {
-            math = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-            mathBlocks.push(window.katex.renderToString(math, { displayMode: true, throwOnError: false }));
+            try {
+                let tex = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+                mathBlocks.push(window.katex.renderToString(tex, { displayMode: true, throwOnError: false }));
+            } catch (e) {
+                mathBlocks.push(`<span style="color:var(--red);" title="KaTeX error: ${e.message}">${match}</span>`);
+            }
         } else {
             mathBlocks.push(match);
         }
@@ -213,8 +217,12 @@ function formatMarkdownSnippet(text) {
     html = html.replace(/\$([^\s$][^$\n]*?[^\s$]|[^\s$])\$/g, (match, math) => {
         const idx = mathBlocks.length;
         if (window.katex) {
-            math = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-            mathBlocks.push(window.katex.renderToString(math, { displayMode: false, throwOnError: false }));
+            try {
+                let tex = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+                mathBlocks.push(window.katex.renderToString(tex, { displayMode: false, throwOnError: false }));
+            } catch (e) {
+                mathBlocks.push(`<span style="color:var(--red);" title="KaTeX error: ${e.message}">${match}</span>`);
+            }
         } else {
             mathBlocks.push(match);
         }
