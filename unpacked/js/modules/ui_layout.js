@@ -376,7 +376,7 @@ function renderTabs() {
         } else if (tabId.startsWith('render:')) {
             const filepath = tabId.replace('render:', '');
             const fname = filepath.split('/').pop();
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--info);">preview</span><span>Preview: ${escapeHTML(fname)}</span>`;
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--info);">preview</span><span>Render: ${escapeHTML(fname)}</span>`;
             tab.title = `Rendered Markdown: ${filepath}`;
 
             const closeBtn = document.createElement('span');
@@ -1031,12 +1031,7 @@ function updateMarkdownPreview(filepath, content) {
     
     let latestContent = content;
     if (latestContent === undefined) {
-        const m = monacoModels.get(filepath);
-        if (m) {
-            latestContent = m.getValue();
-        } else {
-            latestContent = registry.files[filepath] || '';
-        }
+        latestContent = registry.files[filepath] || '';
     }
     
     const scrollPos = mdContainer.scrollTop;
