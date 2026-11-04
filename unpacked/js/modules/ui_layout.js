@@ -1038,7 +1038,7 @@ async function updateMarkdownPreview(filepath, content) {
     }
     
     const scrollPos = mdContainer.scrollTop;
-    mdContainer.innerHTML = window.formatMarkdownSnippet(latestContent);
+    mdContainer.innerHTML = `<div class="md-content">${window.formatMarkdownSnippet(latestContent)}</div>`;
     mdContainer.scrollTop = scrollPos;
 }
 
