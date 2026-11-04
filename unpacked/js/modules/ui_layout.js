@@ -820,7 +820,7 @@ async function switchTab(tabId, opts = {}) {
         if (mdContainer) {
             mdContainer.style.display = 'block';
             const filepath = tabId.replace('render:', '');
-            updateMarkdownPreview(filepath);
+            await updateMarkdownPreview(filepath);
         }
     } else {
         chatView.style.display = 'none';
@@ -1025,13 +1025,16 @@ window.updateHtmlPreview = updateHtmlPreview;
 // --- AST_EXPORTS_END ---
 
 // --- updateMarkdownPreview.js ---
-function updateMarkdownPreview(filepath, content) {
+async function updateMarkdownPreview(filepath, content) {
     const mdContainer = document.getElementById('markdown-preview-container');
     if (!mdContainer) return;
     
     let latestContent = content;
     if (latestContent === undefined) {
-        latestContent = registry.files[filepath] || '';
+        latestContent = await window.readFileContent(filepath);
+        if (latestContent === undefined || latestContent === null) {
+            latestContent = '';
+        }
     }
     
     const scrollPos = mdContainer.scrollTop;
