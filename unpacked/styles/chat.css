@@ -225,8 +225,6 @@
 .md-content em { font-style: italic; }
 .md-content del { color: var(--dim); }
 .md-content .md-inline-code {
-    background: var(--bg-input); border: 1px solid var(--border);
-    color: var(--primary); padding: 1px 5px; border-radius: 2px;
     font-family: var(--font-mono); font-size: 0.9em;
 }
 .md-content .md-link { color: var(--blue); text-decoration: underline; text-decoration-color: rgba(97, 175, 239, 0.4); }

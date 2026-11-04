@@ -198,6 +198,29 @@ function formatMarkdownSnippet(text) {
         return `\u0000ICODE${idx}\u0000`;
     });
 
+    const mathBlocks = [];
+    html = html.replace(/\$\$([\s\S]+?)\$\$/g, (match, math) => {
+        const idx = mathBlocks.length;
+        if (window.katex) {
+            math = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            mathBlocks.push(window.katex.renderToString(math, { displayMode: true, throwOnError: false }));
+        } else {
+            mathBlocks.push(match);
+        }
+        return `\u0000MATH${idx}\u0000`;
+    });
+
+    html = html.replace(/\$([^\s$][^$\n]*?[^\s$]|[^\s$])\$/g, (match, math) => {
+        const idx = mathBlocks.length;
+        if (window.katex) {
+            math = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            mathBlocks.push(window.katex.renderToString(math, { displayMode: false, throwOnError: false }));
+        } else {
+            mathBlocks.push(match);
+        }
+        return `\u0000MATH${idx}\u0000`;
+    });
+
     const lines = html.split('\n');
     const out = [];
     let listStack = [];
@@ -334,6 +357,7 @@ function formatMarkdownSnippet(text) {
 
     html = html.replace(/\u0000ICODE(\d+)\u0000/g, (m, i) => inlineCodes[Number(i)]);
     html = html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (m, i) => codeBlocks[Number(i)]);
+    html = html.replace(/\u0000MATH(\d+)\u0000/g, (m, i) => mathBlocks[Number(i)]);
 
     return html;
 }
