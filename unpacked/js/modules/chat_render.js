@@ -470,6 +470,10 @@ function formatMarkdownSnippet(text) {
         return `\u0000MATH${idx}\u0000`;
     });
 
+    // Restore safe inline HTML tags that are commonly used in Markdown (e.g., inside tables or text).
+    // Only tags without attributes are unescaped to prevent XSS.
+    html = html.replace(/&lt;(\/?(?:br|ul|li|ol|b|i|u|strong|em|hr|table|thead|tbody|tr|th|td|kbd|details|summary|sup|sub|p|span|div)\s*\/?)&gt;/gi, '<$1>');
+
     const lines = html.split('\n');
     const out = [];
     let listStack = [];
