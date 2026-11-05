@@ -404,6 +404,12 @@ const TOOL_API_METHODS = {
         }
     },
     readFile: async (toolName, [fp]) => {
+        if (window.isSkillPath && window.isSkillPath(fp)) {
+            const content = window.registry?.files?.[fp] !== undefined
+                ? window.registry.files[fp]
+                : (await window.readFileContent(fp));
+            if (content !== undefined && typeof content === 'string') return content;
+        }
         const res = await window.readFileContentForTool(fp);
         if (res.error) return res.error;
         return res.content;

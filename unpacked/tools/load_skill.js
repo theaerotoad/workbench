@@ -31,6 +31,39 @@ function badge(text, colorVar) {
     return `<span class="tool-ui-badge" style="color:${colorVar}; background:color-mix(in srgb, ${colorVar} 15%, transparent);">${esc(text)}</span>`;
 }
 
+function parseSkillText(rawContent, fallbackName, filepath) {
+    const text = String(rawContent || '').trim();
+    const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+    let name = fallbackName || '';
+    let description = '';
+    let body = text;
+
+    if (match) {
+        const lines = match[1].split(/\r?\n/);
+        for (const line of lines) {
+            const m = line.match(/^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/);
+            if (m) {
+                const k = m[1].toLowerCase();
+                const v = m[2].replace(/^['">|]|['"]$/g, '').trim();
+                if (k === 'name' && v) name = v;
+                if (k === 'description' && v) description = v;
+            }
+        }
+        body = match[2].trim();
+    }
+
+    if (!name && filepath) {
+        const parts = filepath.replace(/\\/g, '/').split('/');
+        if (parts.length >= 2) {
+            const dir = parts[parts.length - 2];
+            if (dir && dir !== 'skills') name = dir;
+        }
+    }
+
+    name = (name || 'unnamed-skill').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    return { name, description, body, path: filepath };
+}
+
 async function fail(api, msg) {
     const errorHtml = `
         <div class="tool-ui-wrap">
@@ -58,6 +91,8 @@ async function handler(args, api) {
     const skillName = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 
     let skill = null;
+
+    // 1. Check window state if running in main thread
     if (typeof window !== 'undefined') {
         if (typeof window.getSkillByName === 'function') {
             skill = window.getSkillByName(skillName);
@@ -67,41 +102,62 @@ async function handler(args, api) {
         }
     }
 
+    // 2. Direct path read candidates (worker or main thread)
     if (!skill) {
-        const possiblePaths = [
+        const candidatePaths = [
             `.agent/skills/${rawName}/SKILL.md`,
             `.agent/skills/${rawName}/skill.md`,
             `.agent/skills/${skillName}/SKILL.md`,
             `.agent/skills/${skillName}/skill.md`
         ];
 
-        for (const p of possiblePaths) {
+        for (const p of candidatePaths) {
             try {
                 const text = await api.readFile(p);
                 if (text && typeof text === 'string' && !text.startsWith('ERROR:')) {
-                    if (typeof window !== 'undefined' && typeof window.parseSkillFile === 'function') {
-                        skill = window.parseSkillFile(text, p);
-                    } else {
-                        const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-                        skill = {
-                            name: skillName,
-                            description: '',
-                            body: match ? match[2].trim() : text,
-                            path: p
-                        };
-                    }
-                    if (typeof window !== 'undefined' && window.state?.skills) {
-                        window.state.skills[skill.name] = skill;
-                    }
+                    skill = parseSkillText(text, skillName, p);
                     break;
                 }
             } catch (e) {}
         }
     }
 
+    // 3. Fallback scan via api.listFiles() to handle directory name or casing differences
+    if (!skill && typeof api.listFiles === 'function') {
+        try {
+            const files = await api.listFiles();
+            for (const f of files) {
+                const norm = f.replace(/\\/g, '/');
+                const parts = norm.split('/');
+                if (parts.length >= 4 && parts[0] === '.agent' && parts[1] === 'skills') {
+                    const dir = parts[2].toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+                    const file = parts[3].toLowerCase();
+                    if ((dir === skillName || dir === rawName.toLowerCase()) && file === 'skill.md') {
+                        const text = await api.readFile(f);
+                        if (text && typeof text === 'string' && !text.startsWith('ERROR:')) {
+                            skill = parseSkillText(text, parts[2], f);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+
+    // 4. If still not found, enumerate existing skills from file list for a helpful error
     if (!skill) {
-        const available = (typeof window !== 'undefined' && window.state?.skills) ? Object.keys(window.state.skills) : [];
-        const availMsg = available.length ? ` Available skills: ${available.join(', ')}` : ' No skills found in .agent/skills/.';
+        let available = [];
+        try {
+            if (typeof api.listFiles === 'function') {
+                const files = await api.listFiles();
+                available = files
+                    .filter(f => f.startsWith('.agent/skills/') && f.toLowerCase().endsWith('skill.md'))
+                    .map(f => f.split('/')[2])
+                    .filter(Boolean);
+            }
+        } catch (e) {}
+
+        const availMsg = available.length ? ` Available skills: ${[...new Set(available)].join(', ')}` : ' No skills found in .agent/skills/.';
         return fail(api, `Skill "${rawName}" not found.${availMsg}`);
     }
 

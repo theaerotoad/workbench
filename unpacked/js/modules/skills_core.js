@@ -96,6 +96,9 @@ async function scanWorkspaceSkills() {
                 content = await window.readFileContent(fp);
             }
             if (content && typeof content === 'string') {
+                if (window.registry && window.registry.files) {
+                    window.registry.files[fp] = content;
+                }
                 const parsed = parseSkillFile(content, fp);
                 if (parsed && parsed.name) {
                     nextSkills[parsed.name] = parsed;

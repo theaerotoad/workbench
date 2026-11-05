@@ -391,7 +391,7 @@ window.isToolOrAgentPath = isToolOrAgentPath;
 
 // --- isVirtualAgentFile.js ---
 function isVirtualAgentFile(path) {
-    return VIRTUAL_AGENT_FILES.includes(path) || isToolFilePath(path) || isAttachmentPath(path) || !!PROMPT_FILE_MODES[path];
+    return VIRTUAL_AGENT_FILES.includes(path) || isToolFilePath(path) || isAttachmentPath(path) || isSkillPath(path) || !!PROMPT_FILE_MODES[path];
 }
 
 // --- AST_EXPORTS_START ---
