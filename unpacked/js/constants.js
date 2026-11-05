@@ -310,6 +310,7 @@ let SLASH_COMMANDS = [
     { cmd: '/session', desc: 'Open session list popover' },
     { cmd: '/clear', desc: 'Reset session: clear messages, chat, and modified files' },
     { cmd: '/restore', desc: 'Discard all modified files to original' },
+    { cmd: '/skill', desc: 'Invoke an agent skill from .agent/skills/' },
     { cmd: '/help', desc: 'Show commands and keyboard shortcuts' }
 ];
 const SNIFF_BYTES = 8192;

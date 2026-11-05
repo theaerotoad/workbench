@@ -138,7 +138,7 @@ function refreshCustomModes() {
         }
     }
 
-    const baseCommands = ['/plan', '/ask', '/code', '/execute-plan', '/continue', '/compact', '/new', '/session', '/clear', '/restore', '/help'];
+    const baseCommands = ['/plan', '/ask', '/code', '/execute-plan', '/continue', '/compact', '/new', '/session', '/clear', '/restore', '/skill', '/help'];
     SLASH_COMMANDS = SLASH_COMMANDS.filter(c => baseCommands.includes(c.cmd));
 
     dynamicModes = [];
