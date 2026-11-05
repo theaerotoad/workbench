@@ -19,7 +19,11 @@ function buildDynamicSystemPrompt(modeOverride) {
     const vars = { planFile: PLAN_FILE, mode: effMode };
     const mode = (effMode === 'ask' || effMode === 'plan' || dynamicModes.includes(effMode)) ? effMode : 'code';
     const template = MODE_PROMPTS[mode] || seedDefaultModePrompts()[mode] || MODE_PROMPTS['code'];
-    return renderPromptTemplate(template, vars);
+    let prompt = renderPromptTemplate(template, vars);
+    if (typeof window.formatSkillsSystemPromptSection === 'function') {
+        prompt += window.formatSkillsSystemPromptSection();
+    }
+    return prompt;
 }
 
 // --- AST_EXPORTS_START ---
@@ -85,6 +89,7 @@ window.formatPromptBlame = formatPromptBlame;
 // True when the text is one of the app's slash commands (not just "/some/path ..." prose).
 function isSlashCommand(text) {
     const first = (text || '').trim().split(/\s+/)[0].toLowerCase();
+    if (first.startsWith('/skill:') || first === '/skill') return true;
     return !!first && SLASH_COMMANDS.some(c => c.cmd === first);
 }
 

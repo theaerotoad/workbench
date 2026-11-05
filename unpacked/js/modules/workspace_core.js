@@ -46,6 +46,7 @@ function closeWorkspace() {
     registry.meta = {};
     registry.opsLog = {};
     registry.compressionHistory = [];
+    state.skills = {};
     state.modifiedFiles.clear();
     state.linesAdded = 0;
     state.linesRemoved = 0;
@@ -293,7 +294,7 @@ async function refreshPathMeta(fp) {
     if (!rootHandle || typeof fp !== 'string' || !fp) return;
     const cur = registry.meta[fp];
     if (cur && (cur.virtual || cur.attachment)) return;
-    if (isAgentPath(fp) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || isPromptFileMode(fp)) return;
+    if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || isPromptFileMode(fp)) return;
     if (fp === PLAN_FILE || !isScanVisiblePath(fp)) return;   // the plan file can live only in memory
 
     const parts = fp.split('/').filter(Boolean);
@@ -342,6 +343,9 @@ async function refreshPathMeta(fp) {
         cur.handle = handle;
     }
     if (added) renderExplorerTree();
+    if (isSkillPath(fp) && typeof window.scanWorkspaceSkills === 'function') {
+        window.scanWorkspaceSkills().catch(() => {});
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -565,6 +569,10 @@ async function runSyncWorkspace(silent = true) {
         registerConfigVirtualFile();
         registerPromptsVirtualFile();
         registerAttachmentsVirtualFiles();
+
+        if (typeof window.scanWorkspaceSkills === 'function') {
+            await window.scanWorkspaceSkills();
+        }
 
         if (structChanged || !silent) {
             renderExplorerTree();
