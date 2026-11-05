@@ -396,7 +396,8 @@ window.renderMermaidBlock = renderMermaidBlock;
 // --- formatMarkdownSnippet.js ---
 function formatMarkdownSnippet(text) {
     if (!text) return "";
-    let html = escapeHTML(text);
+    const cleanText = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let html = escapeHTML(cleanText);
 
     const codeBlocks = [];
     html = html.replace(/```[ \t]*(\w*)[ \t]*\n?([\s\S]*?)```/g, (match, lang, code) => {
