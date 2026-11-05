@@ -232,15 +232,27 @@ window.guessImageMimeType = guessImageMimeType;
 
 // --- isAgentPath.js ---
 function isAgentPath(path) {
+const skillsDir = window.SKILLS_DIR || '.agent/skills';
 return path === CUSTOM_TOOLS_DIR ||
        path === TOOLS_DIR ||
        path === PROMPTS_DIR ||
        path === ATTACHMENTS_DIR ||
+       path === skillsDir ||
        path.startsWith(CUSTOM_TOOLS_DIR + '/');
 }
 
 // --- AST_EXPORTS_START ---
 window.isAgentPath = isAgentPath;
+// --- AST_EXPORTS_END ---
+
+// --- isSkillPath.js ---
+function isSkillPath(path) {
+    const dir = window.SKILLS_DIR || '.agent/skills';
+    return path === dir || (typeof path === 'string' && path.startsWith(dir + '/'));
+}
+
+// --- AST_EXPORTS_START ---
+window.isSkillPath = isSkillPath;
 // --- AST_EXPORTS_END ---
 
 // --- isAttachmentPath.js ---
@@ -369,7 +381,8 @@ window.isToolFilePath = isToolFilePath;
 
 // --- isToolOrAgentPath.js ---
 function isToolOrAgentPath(path) {
-    return isVirtualAgentFile(path) || path === CUSTOM_TOOLS_DIR || path === TOOLS_DIR || path === PROMPTS_DIR;
+    const skillsDir = window.SKILLS_DIR || '.agent/skills';
+    return isVirtualAgentFile(path) || path === CUSTOM_TOOLS_DIR || path === TOOLS_DIR || path === PROMPTS_DIR || path === skillsDir;
 }
 
 // --- AST_EXPORTS_START ---
@@ -465,6 +478,7 @@ window.registerGitignoreRules = registerGitignoreRules;
 // --- shouldHideFromTools.js ---
 function shouldHideFromTools(path) {
     if (isAttachmentPath(path)) return false; // attachments are always readable by tools
+    if (isSkillPath(path)) return false; // skills are always readable by tools
     if (AppConfig.get('hide-agent-files', 'true') !== 'true') {
         return false;
     }

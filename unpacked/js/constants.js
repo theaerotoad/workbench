@@ -68,6 +68,7 @@ const AppConfig = {
 };
 
 const ATTACHMENTS_DIR = '.agent/attachments';
+const SKILLS_DIR = '.agent/skills';
 const BINARY_EXT_AMBIGUOUS = /\.(bin|dat|res|lps|obj|db|img|pb)$/i;
 const BINARY_EXT_DEFINITE = /\.(png|jpg|jpeg|gif|ico|bmp|webp|tif|tiff|heic|avif|psd|pdf|zip|tar|gz|xz|bz2|zst|lzma|7z|rar|exe|dll|so|dylib|mp4|mkv|webm|mp3|m4a|aac|wav|flac|ogg|avi|mov|pyc|pyo|ttf|otf|woff|woff2|eot|sqlite|sqlite3|gguf|ggml|ppu|o|a|lib|class|jar|wasm|node|swf|iso|apk|dmg|pkl|npy|npz|parquet|onnx|safetensors|docx|xlsx|pptx|odt|ods|odp|mdb|accdb|dds|tga|pdb)$/i;
 const BINARY_MAGIC = [
@@ -87,7 +88,7 @@ const BINARY_MAGIC = [
     [0x66, 0x4C, 0x61, 0x43],                        // fLaC
     [0x52, 0x49, 0x46, 0x46]                         // RIFF (wav, avi, webp)
 ];
-const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image'];
+const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill'];
 const CLEARDATA_LS_KEYS = {
     models: ['models_json', 'selected_model'],
     customTools: ['tool_files_json', 'tool_lock_state', 'tool_deleted_names', 'tool_perm_state', 'tool_settings_state'],
@@ -430,7 +431,7 @@ const TOOL_API_METHODS = {
         if (window.shouldHideFromTools(fp)) {
             return { error: `ERROR: ${fp} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.` };
         }
-        if (window.isAgentPath(fp) && !window.isVirtualAgentFile(fp)) {
+        if (window.isAgentPath(fp) && !window.isVirtualAgentFile(fp) && !window.isSkillPath?.(fp)) {
             return { error: `ERROR: ${fp} is inside .agent and cannot be read by a tool call.` };
         }
         const dataUrl = await window.readImageDataUrl(fp);
@@ -454,7 +455,7 @@ const TOOL_API_METHODS = {
         if (window.shouldHideFromTools(fp)) {
             return `ERROR: ${fp} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
         }
-        if (window.isAgentPath(fp) && !window.isToolFilePath(fp) && !window.isVirtualAgentFile(fp)) {
+        if (window.isAgentPath(fp) && !window.isToolFilePath(fp) && !window.isVirtualAgentFile(fp) && !window.isSkillPath?.(fp)) {
             return `ERROR: ${fp} is inside .agent and cannot be read by a tool call.`;
         }
         try {
@@ -510,7 +511,7 @@ const TOOL_API_METHODS = {
         !window.isSecurityProtectedPath(f) &&
         !window.isSensitiveUserFile(f) &&
         !window.shouldHideFromTools(f) &&
-        !(window.isAgentPath(f) && !window.isToolFilePath(f) && !window.isVirtualAgentFile(f))
+        !(window.isAgentPath(f) && !window.isToolFilePath(f) && !window.isVirtualAgentFile(f) && !window.isSkillPath?.(f))
     ).sort(),
     fileExists: async (toolName, [fp]) => !!window.registry.meta[fp] && !window.isSecurityProtectedPath(fp) && !window.isSensitiveUserFile(fp) && !window.shouldHideFromTools(fp),
     isBinary: async (toolName, [fp]) => window.resolveIsBinary(fp),
@@ -667,7 +668,7 @@ const TOOL_API_METHODS = {
     }
 };
 
-const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image']);
+const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'load_skill']);
 const TOOL_IO_WRITE = new Set(['edit', 'write', 'rename']);
 const TOOLS_DIR = '.agent/tools';
 const TOOL_SETTING_TYPES = ['number', 'text', 'boolean', 'select', 'model'];
@@ -728,6 +729,7 @@ window.SEARCH_MAX_FILE_SIZE = SEARCH_MAX_FILE_SIZE;
 window.SEARCH_MAX_TOTAL_RESULTS = SEARCH_MAX_TOTAL_RESULTS;
 window.SENSITIVE_USER_FILES = SENSITIVE_USER_FILES;
 window.SIDEBAR_BASE_W = SIDEBAR_BASE_W;
+window.SKILLS_DIR = SKILLS_DIR;
 window.SIDEBAR_MAX_EXTRA = SIDEBAR_MAX_EXTRA;
 window.SIDEBAR_MAX_W = SIDEBAR_MAX_W;
 window.SIDEBAR_MIN_W = SIDEBAR_MIN_W;
@@ -749,5 +751,5 @@ window.VFS_MIME = VFS_MIME;
 window.VIRTUAL_AGENT_FILES = VIRTUAL_AGENT_FILES;
 
 export {
-    ACCENT_PRESETS, CONFIG_DEFAULTS, CONFIG_FILE, AppConfig, ATTACHMENTS_DIR, BINARY_EXT_AMBIGUOUS, BINARY_EXT_DEFINITE, BINARY_MAGIC, BUILTIN_TOOL_NAMES, CLEARDATA_LS_KEYS, COMPRESS_PROMPT, CUSTOM_TOOLS_DIR, DB_NAME, DEFAULT_ACCENT, DEFAULT_CONTEXT_WINDOW, FILE_ICON_MAP, GITHUB_TOOLS_BRANCH, GITHUB_TOOLS_PATH, GITHUB_TOOLS_REPO, GLOW_STATUS_COLORS, HAS_FS_API, IGNORED_DIRS, IMAGE_FILE_EXT_RE, IMG_ZOOM_MAX, IMG_ZOOM_MIN, IMG_ZOOM_STEP_PCT, IMPLICIT_DIR_PATTERNS, INTERACTIVE_TOOL_TIMEOUT_MS, LANG_MAP, MAX_RECENT_FOLDERS, MODE_CONFIG, MODE_LABELS, MODEL_PROVIDERS, MODELS_FILE, MODEL_UUID_RE, MODE_PROMPT_FILES, MODE_PROMPTS, MONACO, newToolDefaultSource, PASTE_LINE_THRESHOLD, PERMISSION_LABELS, PLAN_FILE, PROMPT_FILE_HEADERS, PROMPT_FILE_MODES, PROMPT_MODE_ORDER, PROMPTS_DIR, PROTECTED_PATTERNS, SEARCH_MAX_FILE_RESULTS, SEARCH_MAX_FILE_SIZE, SEARCH_MAX_TOTAL_RESULTS, SENSITIVE_USER_FILES, SIDEBAR_BASE_W, SIDEBAR_MAX_EXTRA, SIDEBAR_MAX_W, SIDEBAR_MIN_W, SLASH_COMMANDS, SNIFF_BYTES, STORE_BASELINES, STORE_CACHE, STORE_HANDLES, STORE_SESSIONS, TOAST_ICONS, TOOL_API_METHODS, TOOL_IO_READ_ONLY, TOOL_IO_WRITE, TOOLS_DIR, TOOL_SETTING_TYPES, TOOL_TIMEOUT_DEFAULT_MS, TRANSIENT_LIVE_SELECTOR, VFS_MIME, VIRTUAL_AGENT_FILES
+    ACCENT_PRESETS, CONFIG_DEFAULTS, CONFIG_FILE, AppConfig, ATTACHMENTS_DIR, BINARY_EXT_AMBIGUOUS, BINARY_EXT_DEFINITE, BINARY_MAGIC, BUILTIN_TOOL_NAMES, CLEARDATA_LS_KEYS, COMPRESS_PROMPT, CUSTOM_TOOLS_DIR, DB_NAME, DEFAULT_ACCENT, DEFAULT_CONTEXT_WINDOW, FILE_ICON_MAP, GITHUB_TOOLS_BRANCH, GITHUB_TOOLS_PATH, GITHUB_TOOLS_REPO, GLOW_STATUS_COLORS, HAS_FS_API, IGNORED_DIRS, IMAGE_FILE_EXT_RE, IMG_ZOOM_MAX, IMG_ZOOM_MIN, IMG_ZOOM_STEP_PCT, IMPLICIT_DIR_PATTERNS, INTERACTIVE_TOOL_TIMEOUT_MS, LANG_MAP, MAX_RECENT_FOLDERS, MODE_CONFIG, MODE_LABELS, MODEL_PROVIDERS, MODELS_FILE, MODEL_UUID_RE, MODE_PROMPT_FILES, MODE_PROMPTS, MONACO, newToolDefaultSource, PASTE_LINE_THRESHOLD, PERMISSION_LABELS, PLAN_FILE, PROMPT_FILE_HEADERS, PROMPT_FILE_MODES, PROMPT_MODE_ORDER, PROMPTS_DIR, PROTECTED_PATTERNS, SEARCH_MAX_FILE_RESULTS, SEARCH_MAX_FILE_SIZE, SEARCH_MAX_TOTAL_RESULTS, SENSITIVE_USER_FILES, SIDEBAR_BASE_W, SIDEBAR_MAX_EXTRA, SIDEBAR_MAX_W, SIDEBAR_MIN_W, SKILLS_DIR, SLASH_COMMANDS, SNIFF_BYTES, STORE_BASELINES, STORE_CACHE, STORE_HANDLES, STORE_SESSIONS, TOAST_ICONS, TOOL_API_METHODS, TOOL_IO_READ_ONLY, TOOL_IO_WRITE, TOOLS_DIR, TOOL_SETTING_TYPES, TOOL_TIMEOUT_DEFAULT_MS, TRANSIENT_LIVE_SELECTOR, VFS_MIME, VIRTUAL_AGENT_FILES
 };
