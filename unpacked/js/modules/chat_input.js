@@ -224,6 +224,11 @@ function checkAutocomplete() {
             desc: c.desc
         }));
 
+        if (typeof window.getSkillsAutocompleteMatches === 'function') {
+            const skillMatches = window.getSkillsAutocompleteMatches(query);
+            acMatches = [...acMatches, ...skillMatches];
+        }
+
         if (acMatches.length > 0) {
             acSelectedIdx = 0;
             renderAutocomplete();
@@ -710,8 +715,8 @@ window.sanitizeMessages = sanitizeMessages;
 
 // --- selectAutocompleteItem.js ---
 function selectAutocompleteItem(item) {
-    if (item.type === 'command') {
-        input.value = item.value + ' ';
+    if (item.type === 'command' || item.type === 'skill') {
+        input.value = item.value.endsWith(' ') ? item.value : item.value + ' ';
         acPopup.style.display = 'none';
         resizePrompt();
         input.focus();
@@ -883,9 +888,45 @@ async function submitPrompt() {
             state.promptDirty = false;
         }
 
+        let activeSkillPrefix = "";
+        let promptTextForLLM = val;
+
         if (val.startsWith('/')) {
             const parts = val.split(' ');
             const cmd = parts[0].toLowerCase();
+
+            if (cmd.startsWith('/skill:') || cmd === '/skill') {
+                const skillName = cmd.startsWith('/skill:')
+                    ? cmd.slice(7).trim().toLowerCase()
+                    : (parts[1] || '').trim().toLowerCase();
+                const restOfPrompt = cmd.startsWith('/skill:')
+                    ? val.slice(parts[0].length).trim()
+                    : parts.slice(2).join(' ').trim();
+
+                const skill = typeof window.getSkillByName === 'function'
+                    ? window.getSkillByName(skillName)
+                    : window.state?.skills?.[skillName];
+
+                if (!skill) {
+                    const available = Object.keys(window.state?.skills || {});
+                    const availMsg = available.length ? ` Available skills: ${available.join(', ')}` : ' No skills found in .agent/skills/.';
+                    showToast(`Skill "${skillName || ''}" not found.${availMsg}`, 'error');
+                    focusPrompt();
+                    return;
+                }
+
+                if (!restOfPrompt && state.attachedReferences.length === 0) {
+                    print(`<div><span class="icon" style="color:var(--green); font-size:15px; vertical-align:middle; margin-right:4px;">auto_awesome</span><b>Skill:</b> <code class="cyan">${escapeHTML(skill.name)}</code><div class="dim" style="font-size:12px; margin-top:2px;">${escapeHTML(skill.description)}</div><div style="font-size:11.5px; margin-top:4px; opacity:0.8;">Ready. Ask your question using <code>/skill:${escapeHTML(skill.name)} &lt;request&gt;</code>.</div></div>`, "log-entry");
+                    input.value = `/skill:${skill.name} `;
+                    resizePrompt();
+                    focusPrompt();
+                    return;
+                }
+
+                activeSkillPrefix = `[Active Skill: ${skill.name}]\n<skill_instructions>\n${skill.body}\n</skill_instructions>\n\n`;
+                promptTextForLLM = restOfPrompt || val;
+            }
+
             const matchingCommand = SLASH_COMMANDS.find(c => c.cmd === cmd);
 
             if (matchingCommand && MODE_CONFIG[cmd.slice(1)]) {
@@ -998,6 +1039,9 @@ async function submitPrompt() {
 - <span class="cyan">/session</span> — Open top session menu<br>
 - <span class="cyan">/clear</span> — Reset session (clears messages, chat, modified files)<br>
 - <span class="cyan">/restore</span> — Discard all modified files to original baseline<br>
+
+- <span class="cyan">/skill:&lt;name&gt;</span> — Invoke skill from .agent/skills/&lt;name&gt;/SKILL.md<br>
+
 - <span class="cyan">Ctrl+S</span> / <span class="cyan">Ctrl+Shift+S</span> — Save / Save As (editor)<br>
 - <span class="cyan">@&lt;file&gt;</span> — Reference file context in prompt<br>
 - <span class="yellow">ESC</span> — Cancel current generation</div>`, "dim");
@@ -1052,9 +1096,9 @@ async function submitPrompt() {
                     `;
                 }
             }
-            fullPromptForLLM += `User Prompt:\n${val || "(Referenced files/code above)"}`;
+            fullPromptForLLM += `User Prompt:\n${activeSkillPrefix}${promptTextForLLM || "(Referenced files/code above)"}`;
         } else {
-            fullPromptForLLM = val;
+            fullPromptForLLM = activeSkillPrefix + (promptTextForLLM || val);
         }
 
         const attachedImageUrls = currentModelHasVision()
