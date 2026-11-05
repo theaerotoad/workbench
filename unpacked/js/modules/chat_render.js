@@ -90,7 +90,8 @@ function attachAssistantCopyAction(div, rawText) {
     div.setAttribute('data-raw-msg', text);
     if (div.querySelector('.assistant-msg-actions') || div.querySelector('.btn-prompt-action.copy')) return;
 
-    const btnHTML = `<button class="btn-prompt-action copy" title="Copy message" onclick="window.copyAssistantMsg(this)"><span class="icon" style="font-size:13px;">content_copy</span></button>`;
+    const btnHTML = `<button class="btn-prompt-action artifact" title="Extract to File (LLM)" onclick="window.extractMessageArtifact(this)"><span class="icon" style="font-size:13px;">auto_awesome</span></button>` +
+                    `<button class="btn-prompt-action copy" title="Copy message" onclick="window.copyAssistantMsg(this)"><span class="icon" style="font-size:13px;">content_copy</span></button>`;
 
     const actions = document.createElement('div');
     actions.className = 'prompt-actions assistant-msg-actions';
@@ -409,6 +410,7 @@ function formatMarkdownSnippet(text) {
             codeBlocks.push(`<div class="code-box">
                 <div class="code-header">
                     <span class="tool-badge">${escapeHTML(lang || 'code')}</span>
+                    <button class="btn-copy-code" title="Save as File" onclick="window.saveCodeArtifact(this)"><span class="icon" style="font-size:13px;">save</span></button>
                     <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
                 </div>
                 <div class="code-box-content"><pre><code>${code}</code></pre></div>
@@ -644,9 +646,14 @@ window.inlineMarkdown = inlineMarkdown;
 function moveCopyActionIntoStatsRow(targetDiv, statsRow) {
     const actionsRow = targetDiv.querySelector('.assistant-msg-actions');
     if (!actionsRow) return;
+    const artifactBtn = actionsRow.querySelector('.btn-prompt-action.artifact');
+    if (artifactBtn) {
+        artifactBtn.style.marginLeft = 'auto';
+        statsRow.appendChild(artifactBtn);
+    }
     const copyBtn = actionsRow.querySelector('.btn-prompt-action.copy');
     if (copyBtn) {
-        copyBtn.style.marginLeft = 'auto';
+        if (!artifactBtn) copyBtn.style.marginLeft = 'auto';
         statsRow.appendChild(copyBtn);
     }
     actionsRow.remove();

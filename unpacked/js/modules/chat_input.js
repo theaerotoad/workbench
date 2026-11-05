@@ -1137,3 +1137,54 @@ async function submitPrompt() {
 // --- AST_EXPORTS_START ---
 window.submitPrompt = submitPrompt;
 // --- AST_EXPORTS_END ---
+
+// --- saveCodeArtifact.js ---
+async function saveCodeArtifact(btn) {
+    const codeBox = btn.closest('.code-box');
+    if (!codeBox) return;
+    const codeEl = codeBox.querySelector('pre code');
+    if (!codeEl) return;
+    
+    const langBadge = codeBox.querySelector('.tool-badge');
+    let ext = 'txt';
+    if (langBadge && langBadge.textContent && langBadge.textContent !== 'code') {
+        ext = langBadge.textContent.trim().split(' ')[0];
+    }
+    
+    const text = codeEl.textContent;
+    const filename = await window.promptDialog("Enter filename to save snippet:", `snippet.${ext}`);
+    if (!filename) return;
+    
+    const res = await window.fs.write(filename, text);
+    if (res.error) {
+        window.showToast(res.error, 'error');
+    } else {
+        window.showToast(`Saved ${filename}`, 'success');
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.saveCodeArtifact = saveCodeArtifact;
+// --- AST_EXPORTS_END ---
+
+// --- extractMessageArtifact.js ---
+async function extractMessageArtifact(btn) {
+    const wrap = btn.closest('[data-raw-msg]');
+    if (!wrap) return;
+    const rawMsg = wrap.getAttribute('data-raw-msg');
+    
+    const instructions = await window.promptDialog("How should this be saved? (e.g. 'Save as a markdown doc in docs folder')");
+    if (!instructions) return;
+    
+    const prompt = `Extract the core artifact from the following text, discard conversational fluff, and use your write tool to fulfill this user request: ${instructions}\n\n<source_text>\n${rawMsg}\n</source_text>`;
+    
+    const input = document.getElementById('cmd');
+    if (input) {
+        input.value = prompt;
+        window.submitPrompt();
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.extractMessageArtifact = extractMessageArtifact;
+// --- AST_EXPORTS_END ---
