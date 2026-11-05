@@ -1176,7 +1176,17 @@ async function extractMessageArtifact(btn) {
     const instructions = await window.promptDialog("How should this be saved? (e.g. 'Save as a markdown doc in docs folder')");
     if (!instructions) return;
     
-    const prompt = `Extract the core artifact from the following text, discard conversational fluff, and use your write tool to fulfill this user request: ${instructions}\n\n<source_text>\n${rawMsg}\n</source_text>`;
+    // Package the message as a context snippet so it stays hidden from the chat bubble
+    // but is fully provided to the LLM in the system prefix.
+    window.attachReference({
+        type: 'snippet',
+        filepath: 'message_content',
+        startLine: 1,
+        endLine: rawMsg.split('\n').length || 1,
+        code: rawMsg
+    });
+    
+    const prompt = `Extract the core artifact from the attached message_content, discard conversational fluff, and use your write tool to fulfill this user request: ${instructions}`;
     
     const input = document.getElementById('cmd');
     if (input) {
