@@ -416,8 +416,8 @@ function formatMarkdownSnippet(text) {
             codeBlocks.push(`<div class="code-box">
                 <div class="code-header">
                     <span class="tool-badge">${escapeHTML(lang || 'code')}</span>
-                    <div style="display:flex; gap:4px;">
-                        <button class="btn-copy-code" title="Save as File" onclick="window.saveCodeArtifact(this)"><span class="icon" style="font-size:13px;">save</span></button>
+                    <div style="display:flex; gap:4px; margin-left:auto;">
+                        <button class="icon-btn" style="color:var(--dim); padding:4px;" title="Save as File" onclick="window.saveCodeArtifact(this)"><span class="icon" style="font-size:13px;">save</span></button>
                         <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
                     </div>
                 </div>
