@@ -157,21 +157,262 @@ function detectIndentation(lines) {
 window.detectIndentation = detectIndentation;
 // --- AST_EXPORTS_END ---
 
+// --- renderMermaidBlock.js ---
+const mermaidSvgCache = new Map();
+const mermaidPendingRenders = new Set();
+const mermaidQueue = [];
+let isMermaidQueueRunning = false;
+let mermaidProcessTimer = null;
+
+function unescapeHTML(str) {
+    return String(str || '')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&');
+}
+
+function hashString(str) {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+}
+
+function getMermaidTheme() {
+    return document.documentElement.classList.contains('theme-light') ? 'default' : 'dark';
+}
+
+function queueMermaidRender(blockId, rawCode, theme) {
+    const cacheKey = `${theme}:${rawCode}`;
+    if (mermaidSvgCache.has(cacheKey) || mermaidPendingRenders.has(blockId)) {
+        return;
+    }
+    mermaidPendingRenders.add(blockId);
+    mermaidQueue.push({ blockId, rawCode, theme, cacheKey });
+    scheduleMermaidProcessing();
+}
+
+function scheduleMermaidProcessing() {
+    if (mermaidProcessTimer) return;
+    mermaidProcessTimer = setTimeout(() => {
+        mermaidProcessTimer = null;
+        processMermaidQueue();
+    }, 16);
+}
+
+async function processMermaidQueue() {
+    if (isMermaidQueueRunning) return;
+    if (!mermaidQueue.length) return;
+
+    if (!window.mermaid) {
+        if (!window._mermaidLoadAttempts) window._mermaidLoadAttempts = 0;
+        window._mermaidLoadAttempts++;
+        if (window._mermaidLoadAttempts > 40) {
+            while (mermaidQueue.length > 0) {
+                const { blockId } = mermaidQueue.shift();
+                mermaidPendingRenders.delete(blockId);
+                document.querySelectorAll(`.mermaid-box[data-mermaid-id="${blockId}"]`).forEach(box => {
+                    box.classList.add('show-code');
+                    const rendered = box.querySelector('.mermaid-rendered');
+                    if (rendered) {
+                        rendered.innerHTML = '<span class="dim" style="font-size:11px;padding:8px;">Mermaid library unavailable</span>';
+                    }
+                });
+            }
+            return;
+            }
+        scheduleMermaidProcessing();
+        return;
+    }
+    window._mermaidLoadAttempts = 0;
+
+    isMermaidQueueRunning = true;
+    try {
+        while (mermaidQueue.length > 0) {
+            const { blockId, rawCode, theme, cacheKey } = mermaidQueue.shift();
+            mermaidPendingRenders.delete(blockId);
+
+            let res = mermaidSvgCache.get(cacheKey);
+            if (!res) {
+                const renderId = 'm-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36);
+                try {
+                    window.mermaid.initialize({
+                        startOnLoad: false,
+                        theme: theme === 'default' ? 'default' : 'dark',
+                        securityLevel: 'strict',
+                        fontFamily: 'inherit'
+                    });
+
+                    const renderPromise = window.mermaid.render(renderId, rawCode);
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Rendering timed out')), 6000)
+                    );
+                    const { svg, bindFunctions } = await Promise.race([renderPromise, timeoutPromise]);
+                    res = { svg, bindFunctions };
+                    mermaidSvgCache.set(cacheKey, res);
+                } catch (err) {
+                    const msg = (err && (err.str || err.message)) || String(err || 'Failed to render diagram');
+                    res = { error: msg };
+                    mermaidSvgCache.set(cacheKey, res);
+                } finally {
+                    const stray1 = document.getElementById(renderId);
+                    if (stray1 && stray1.parentElement === document.body) stray1.remove();
+                    const stray2 = document.getElementById('d' + renderId);
+                    if (stray2 && stray2.parentElement === document.body) stray2.remove();
+                }
+            }
+
+            const targets = document.querySelectorAll(`.mermaid-box[data-mermaid-id="${blockId}"]`);
+            targets.forEach(box => {
+                const container = box.querySelector('.mermaid-rendered');
+                if (!container) return;
+
+                if (res.svg) {
+                    container.innerHTML = res.svg;
+                    if (typeof res.bindFunctions === 'function') {
+                        try { res.bindFunctions(container); } catch (e) {}
+                    }
+                } else if (res.error) {
+                    box.classList.add('show-code');
+                    container.innerHTML = `<div class="mermaid-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>${escapeHTML(res.error)}</span></div>`;
+                }
+            });
+
+            if (targets.length && typeof window.smartScroll === 'function') {
+                window.smartScroll();
+            }
+        }
+    } finally {
+        isMermaidQueueRunning = false;
+        if (mermaidQueue.length > 0) {
+            scheduleMermaidProcessing();
+        }
+    }
+}
+
+function renderMermaidBlock(escapedCode) {
+    const rawCode = unescapeHTML(escapedCode).trim();
+    if (!rawCode) {
+        return `<div class="code-box mermaid-box">
+            <div class="code-header">
+                <span class="tool-badge">mermaid</span>
+            </div>
+            <div class="mermaid-rendered"><span class="dim" style="font-size:11px;">(empty diagram)</span></div>
+        </div>`;
+    }
+
+    const theme = getMermaidTheme();
+    const cacheKey = `${theme}:${rawCode}`;
+    const blockId = 'mmd-' + hashString(cacheKey);
+    const cached = mermaidSvgCache.get(cacheKey);
+
+    if (cached && cached.svg) {
+        return `<div class="code-box mermaid-box" data-mermaid-id="${blockId}">
+            <div class="code-header">
+                <span class="tool-badge">mermaid</span>
+                <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+            </div>
+            <div class="mermaid-rendered">${cached.svg}</div>
+            <div class="code-box-content mermaid-code-view"><pre><code>${escapedCode}</code></pre></div>
+        </div>`;
+    }
+
+    if (cached && cached.error) {
+        return `<div class="code-box mermaid-box show-code" data-mermaid-id="${blockId}">
+            <div class="code-header">
+                <span class="tool-badge">mermaid</span>
+                <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+            </div>
+            <div class="mermaid-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>${escapeHTML(cached.error)}</span></div>
+            <div class="mermaid-rendered" style="display:none;"></div>
+            <div class="code-box-content mermaid-code-view"><pre><code>${escapedCode}</code></pre></div>
+        </div>`;
+    }
+
+    queueMermaidRender(blockId, rawCode, theme);
+
+    return `<div class="code-box mermaid-box" data-mermaid-id="${blockId}">
+        <div class="code-header">
+            <span class="tool-badge">mermaid</span>
+            <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+            <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+        </div>
+        <div class="mermaid-rendered">
+            <div class="mermaid-loading">
+                <span class="icon spinner-icon" style="font-size:13px;">sync</span>
+                <span>Rendering diagram...</span>
+            </div>
+        </div>
+        <div class="code-box-content mermaid-code-view"><pre><code>${escapedCode}</code></pre></div>
+    </div>`;
+}
+
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && !window._mermaidThemeObserver) {
+    window._lastMermaidTheme = document.documentElement.classList.contains('theme-light') ? 'default' : 'dark';
+    window._mermaidThemeObserver = new MutationObserver(() => {
+        const curTheme = document.documentElement.classList.contains('theme-light') ? 'default' : 'dark';
+        if (window._lastMermaidTheme !== curTheme) {
+            window._lastMermaidTheme = curTheme;
+            document.querySelectorAll('.mermaid-box').forEach(box => {
+                const codeEl = box.querySelector('.mermaid-code-view pre code');
+                if (!codeEl) return;
+                const rawCode = unescapeHTML(codeEl.innerHTML).trim();
+                if (!rawCode) return;
+                const cacheKey = `${curTheme}:${rawCode}`;
+                const newBlockId = 'mmd-' + hashString(cacheKey);
+                box.setAttribute('data-mermaid-id', newBlockId);
+                const cached = mermaidSvgCache.get(cacheKey);
+                const rendered = box.querySelector('.mermaid-rendered');
+                if (rendered) {
+                    if (cached && cached.svg) {
+                        rendered.innerHTML = cached.svg;
+                        if (typeof cached.bindFunctions === 'function') {
+                            try { cached.bindFunctions(rendered); } catch (e) {}
+                        }
+                    } else {
+                        rendered.innerHTML = '<div class="mermaid-loading"><span class="icon spinner-icon" style="font-size:13px;">sync</span><span>Rendering diagram...</span></div>';
+                        queueMermaidRender(newBlockId, rawCode, curTheme);
+                    }
+                }
+            });
+        }
+    });
+    window._mermaidThemeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class']
+    });
+}
+
+// --- AST_EXPORTS_START ---
+window.renderMermaidBlock = renderMermaidBlock;
+// --- AST_EXPORTS_END ---
+
 // --- formatMarkdownSnippet.js ---
 function formatMarkdownSnippet(text) {
     if (!text) return "";
     let html = escapeHTML(text);
 
     const codeBlocks = [];
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    html = html.replace(/```[ \t]*(\w*)[ \t]*\n?([\s\S]*?)```/g, (match, lang, code) => {
         const idx = codeBlocks.length;
-        codeBlocks.push(`<div class="code-box">
-            <div class="code-header">
-                <span class="tool-badge">${escapeHTML(lang || 'code')}</span>
-                <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
-            </div>
-            <div class="code-box-content"><pre><code>${code}</code></pre></div>
-        </div>`);
+        const normalizedLang = (lang || '').trim().toLowerCase();
+        if (normalizedLang === 'mermaid') {
+            codeBlocks.push(renderMermaidBlock(code));
+        } else {
+            codeBlocks.push(`<div class="code-box">
+                <div class="code-header">
+                    <span class="tool-badge">${escapeHTML(lang || 'code')}</span>
+                    <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                </div>
+                <div class="code-box-content"><pre><code>${code}</code></pre></div>
+            </div>`);
+        }
         return `\u0000CODEBLOCK${idx}\u0000`;
     });
 
