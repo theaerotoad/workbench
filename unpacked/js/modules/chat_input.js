@@ -1148,7 +1148,14 @@ async function saveCodeArtifact(btn) {
     const langBadge = codeBox.querySelector('.tool-badge');
     let ext = 'txt';
     if (langBadge && langBadge.textContent && langBadge.textContent !== 'code') {
-        ext = langBadge.textContent.trim().split(' ')[0];
+        const rawLang = langBadge.textContent.trim().split(' ')[0].toLowerCase();
+        const extMap = {
+            'python': 'py', 'javascript': 'js', 'typescript': 'ts',
+            'markdown': 'md', 'bash': 'sh', 'shell': 'sh', 'yaml': 'yml',
+            'ruby': 'rb', 'rust': 'rs', 'c++': 'cpp', 'csharp': 'cs', 'c#': 'cs',
+            'mermaid': 'mmd'
+        };
+        ext = extMap[rawLang] || rawLang;
     }
     
     const text = codeEl.textContent;
