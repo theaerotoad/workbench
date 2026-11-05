@@ -159,7 +159,7 @@ function beginInlineEdit(msgId) {
     actionsRow.querySelector('.save').addEventListener('click', () => showEditConfirmModal(msgId));
     actionsRow.querySelector('.cancel').addEventListener('click', () => cancelInlineEdit(msgId));
     textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             showEditConfirmModal(msgId);
         } else if (e.key === 'Escape') {

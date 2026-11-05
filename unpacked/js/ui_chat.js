@@ -971,19 +971,33 @@ input.addEventListener('keydown', async (e) => {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') {
         state.promptDirty = true;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        if (acPopup.style.display === 'block') {
+    if (e.key === 'Enter') {
+        if (acPopup.style.display === 'block' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
             const chosen = acMatches[acSelectedIdx];
-            acPopup.style.display = 'none';
-            if (chosen && chosen.type === 'command' && input.value.trim().startsWith('/')) {
-                input.value = chosen.value;
-            } else if (chosen && chosen.type === 'file') {
+            if (chosen) {
                 selectAutocompleteItem(chosen);
-                return;
+            } else {
+                acPopup.style.display = 'none';
             }
+            return;
         }
-        await submitPrompt();
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            if (acPopup.style.display === 'block') {
+                const chosen = acMatches[acSelectedIdx];
+                acPopup.style.display = 'none';
+                if (chosen) {
+                    if (chosen.type === 'file') {
+                        selectAutocompleteItem(chosen);
+                        return;
+                    } else {
+                        input.value = chosen.value;
+                    }
+                }
+            }
+            await submitPrompt();
+        }
     }
 });
 
