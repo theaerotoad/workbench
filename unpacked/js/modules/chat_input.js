@@ -1176,23 +1176,26 @@ async function extractMessageArtifact(btn) {
     const instructions = await window.promptDialog("How should this be saved? (e.g. 'Save as a markdown doc in docs folder')");
     if (!instructions) return;
     
-    // Package the message as a context snippet so it stays hidden from the chat bubble
-    // but is fully provided to the LLM in the system prefix.
-    window.attachReference({
-        type: 'snippet',
-        filepath: 'message_content',
-        startLine: 1,
-        endLine: rawMsg.split('\n').length || 1,
-        code: rawMsg
-    });
+    const msgId = genMessageId();
+    const displayPrompt = `Extract artifact: ${instructions}`;
+    const modeCfg = MODE_CONFIG[state.mode];
+    const modeBadgeHTML = `
+        <span class="mode-chat-chip ${state.mode}">
+            <span class="icon" style="font-size:12px;">${modeCfg.icon}</span>
+            <span>${state.mode}</span>
+        </span>
+    `;
     
-    const prompt = `Extract the core artifact from the attached message_content, discard conversational fluff, and use your write tool to fulfill this user request: ${instructions}`;
+    print(`<div class="chat-prompt-wrap" data-msg-id="${msgId}" data-raw="${escapeHTML(displayPrompt)}"><div class="mode-divider">${modeBadgeHTML}</div><div class="chat-prompt-row"><div class="chat-bubble"><div class="md-content" style="display:inline-block; vertical-align:top;">${normalizeBlockHTML(formatMarkdownSnippet(displayPrompt))}</div></div></div><div class="prompt-actions"><button class="btn-prompt-action copy" title="Copy prompt" onclick="window.copyPrompt('${msgId}')"><span class="icon" style="font-size:13px;">content_copy</span></button><button class="btn-prompt-action del" title="Delete message" onclick="window.deletePrompt('${msgId}')"><span class="icon" style="font-size:13px;">delete</span></button></div></div>`);
     
-    const input = document.getElementById('cmd');
-    if (input) {
-        input.value = prompt;
-        window.submitPrompt();
-    }
+    const fullPromptForLLM = `[System Context: The user wants to extract an artifact based on an earlier message. The source message content is provided below.]\n\n<source_message>\n${rawMsg}\n</source_message>\n\nUser Request: ${instructions}\n\nPlease analyze the source message and use the write tool to save the requested artifact.`;
+    
+    term.scrollTop = term.scrollHeight;
+    removeContinueButtons();
+    
+    const runSessionId = state.activeSessionId;
+    await runTask(fullPromptForLLM, msgId, [], runSessionId);
+    if (runSessionId === state.activeSessionId) focusPrompt();
 }
 
 // --- AST_EXPORTS_START ---

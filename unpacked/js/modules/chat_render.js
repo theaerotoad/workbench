@@ -315,8 +315,10 @@ function renderMermaidBlock(escapedCode) {
         return `<div class="code-box mermaid-box" data-mermaid-id="${blockId}">
             <div class="code-header">
                 <span class="tool-badge">mermaid</span>
-                <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
-                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                <div style="display:flex; gap:4px;">
+                    <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                    <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                </div>
             </div>
             <div class="mermaid-rendered">${cached.svg}</div>
             <div class="code-box-content mermaid-code-view"><pre><code>${escapedCode}</code></pre></div>
@@ -327,8 +329,10 @@ function renderMermaidBlock(escapedCode) {
         return `<div class="code-box mermaid-box show-code" data-mermaid-id="${blockId}">
             <div class="code-header">
                 <span class="tool-badge">mermaid</span>
-                <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
-                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                <div style="display:flex; gap:4px;">
+                    <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                    <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                </div>
             </div>
             <div class="mermaid-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>${escapeHTML(cached.error)}</span></div>
             <div class="mermaid-rendered" style="display:none;"></div>
@@ -341,8 +345,10 @@ function renderMermaidBlock(escapedCode) {
     return `<div class="code-box mermaid-box" data-mermaid-id="${blockId}">
         <div class="code-header">
             <span class="tool-badge">mermaid</span>
-            <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
-            <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+            <div style="display:flex; gap:4px;">
+                <button class="btn-toggle-mermaid" type="button" title="Toggle code / preview" onclick="this.closest('.mermaid-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+            </div>
         </div>
         <div class="mermaid-rendered">
             <div class="mermaid-loading">
@@ -410,8 +416,10 @@ function formatMarkdownSnippet(text) {
             codeBlocks.push(`<div class="code-box">
                 <div class="code-header">
                     <span class="tool-badge">${escapeHTML(lang || 'code')}</span>
-                    <button class="btn-copy-code" title="Save as File" onclick="window.saveCodeArtifact(this)"><span class="icon" style="font-size:13px;">save</span></button>
-                    <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                    <div style="display:flex; gap:4px;">
+                        <button class="btn-copy-code" title="Save as File" onclick="window.saveCodeArtifact(this)"><span class="icon" style="font-size:13px;">save</span></button>
+                        <button class="btn-copy-code" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                    </div>
                 </div>
                 <div class="code-box-content"><pre><code>${code}</code></pre></div>
             </div>`);
