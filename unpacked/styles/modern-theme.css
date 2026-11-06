@@ -56,6 +56,7 @@ body{font-family:var(--font-ui);
 
 /* Window + layout */
 #window{border-radius:0;background:#0a0a0b;border:none;box-shadow:none}
+#top-header-bar{background:#111216;border-bottom:1px solid var(--border)}
 #window-body{padding:10px;background:transparent}
 #sidebar,#main-pane{border-radius:4px;border:1px solid var(--border);
  background:linear-gradient(180deg,#131315,#0e0e10);
@@ -161,10 +162,10 @@ background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shado
 #newtool-browse-list,#newtool-dropzone{border-radius:3px}
 .session-item-row:hover,.recent-folder-item:hover,.cleardata-option:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.07)}
 .session-item-row.active{border-color:var(--accent);background:rgba(var(--accent-rgb),.13);box-shadow:0 0 20px rgba(var(--accent-rgb),.12)}
-.session-pill-btn{border-radius:3px;padding:3px 10px;min-width:140px;max-width:340px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;transition:all .15s ease}
-.session-pill-btn:hover,.session-pill-btn.active{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.5);color:var(--accent)}
-.workspace-pill-btn{border-radius:3px;padding:3px 9px;max-width:220px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;cursor:pointer;transition:all .15s ease}
-.workspace-pill-btn:hover{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.5);color:var(--accent)}
+.session-pill-btn{border-radius:6px;padding:0 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:all .15s ease}
+.session-pill-btn:hover,.session-pill-btn.active{background:rgba(255,255,255,.07);border-color:var(--border-highlight);color:var(--fg)}
+.workspace-pill-btn{border-radius:6px;padding:0 10px;max-width:220px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:12px;font-weight:600;display:flex;align-items:center;gap:7px;cursor:pointer;transition:all .15s ease}
+.workspace-pill-btn:hover{background:rgba(255,255,255,.08);border-color:var(--border-highlight);color:var(--fg)}
 .mm-provider-item.active,.newtool-source-tab.active,.editor-view-segmented .seg-btn.active,.btn-tab-action.active,
 .icon-btn.active,.pill-btn.active{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.45);color:var(--accent)}
 .mm-provider-item,.newtool-source-tab,#newtool-source-tabs{border-radius:3px}
@@ -232,6 +233,10 @@ html.theme-light *::-webkit-scrollbar-thumb { background: rgba(0,0,0,.15); }
 html.theme-light *::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.25); }
 
 html.theme-light #window { background: #fdfdfd; box-shadow: none; }
+html.theme-light #top-header-bar { background: #f7f7f9; border-bottom: 1px solid var(--border); }
+html.theme-light .header-crumb-badge { background: rgba(0, 0, 0, 0.06); color: var(--dim); }
+html.theme-light .header-crumb-sep { color: rgba(0, 0, 0, 0.2); }
+html.theme-light .session-kbd-shortcut { background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.1); color: var(--dim); }
 html.theme-light #sidebar, html.theme-light #main-pane {
  background: linear-gradient(180deg, #ffffff, #f7f7f9);
  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 12px 32px rgba(0,0,0,0.08);
@@ -261,8 +266,8 @@ html.theme-light .tree-node.selected { color: var(--fg); }
 html.theme-light .settings-panel-head .head-label { color: var(--fg); }
 html.theme-light .ac-item.selected .ac-item-title { color: var(--fg); }
 html.theme-light .session-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
-html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.3); }
+html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--fg); background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); }
 html.theme-light .workspace-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
-html.theme-light .workspace-pill-btn:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.3); }
+html.theme-light .workspace-pill-btn:hover { color: var(--fg); background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); }
 html.theme-light .toast { background: rgba(255,255,255,0.98); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
 html.theme-light #monaco-diff-container, html.theme-light #monaco-editor-container { background: #fff; }
