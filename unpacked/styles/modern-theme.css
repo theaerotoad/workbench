@@ -57,28 +57,24 @@ body{font-family:var(--font-ui);
 /* Window + layout */
 #window{border-radius:0;background:#0a0a0b;border:none;box-shadow:none}
 #top-header-bar{background:#111216;border-bottom:1px solid var(--border)}
-#window-body{padding:10px;background:transparent}
-#sidebar,#main-pane{border-radius:4px;border:1px solid var(--border);
- background:linear-gradient(180deg,#131315,#0e0e10);
- box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 12px 32px rgba(0,0,0,.4)}
-/* Gap between the panels belongs to the resizer (10px) so its line is centered in it. */
-#sidebar{margin-right:0}
-#sidebar-resizer{flex-basis:10px}
-/* Shadows: sidebar and chat sit on the same layer. #main-pane comes later in the DOM, so its
-   shadow used to paint over the sidebar's edge; clipping its left side (and leaving the other
-   sides open for the shadow) keeps every shadow behind the panels instead of on top of them. */
-#main-pane{clip-path:inset(-60px -60px -60px 0)}
+#window-body{padding:0;background:var(--bg-main)}
+#sidebar{border-radius:0;border:none;border-right:1px solid var(--border);
+ background:var(--bg-sidebar);box-shadow:none;margin-right:0}
+#main-pane{border-radius:0;border:none;background:var(--bg-main);
+ box-shadow:none;clip-path:none}
+#sidebar-resizer{flex-basis:1px;width:1px;background:var(--border);margin:0;cursor:col-resize}
+#sidebar-resizer:hover,#sidebar-resizer.dragging{background:var(--accent)}
 #chat-view,#chat-container,#chat,#tabs-bar{background:transparent}
 .icon-btn{width:30px;height:30px;border-radius:3px}
 .icon-btn:hover{background:var(--bg-hover);border-color:transparent}
 
 /* Sidebar */
-#sidebar-tabs{background:rgba(0,0,0,.3);width:52px;padding:10px 0;gap:6px}
+#sidebar-tabs{background:rgba(0,0,0,.3);width:52px;padding:8px 0;gap:6px;border-right:1px solid var(--border)}
 .sidebar-nav-tab{width:38px;height:38px;border-radius:3px;border-left:none}
 .sidebar-nav-tab:hover{background:var(--bg-hover)}
 .sidebar-nav-tab.active{background:rgba(var(--accent-rgb),.12);color:#fff;
  border-left:3px solid var(--accent);box-shadow:0 0 12px rgba(var(--accent-rgb),.2)}
-.sidebar-panel-header{background:transparent;padding:10px 12px;min-height:50px;box-sizing:border-box}
+.sidebar-panel-header{background:transparent;padding:0 12px;height:40px;min-height:40px;display:flex;align-items:center;border-bottom:1px solid var(--border);box-sizing:border-box}
 .tree-node{border-radius:2px;padding:5px 8px}
 .tree-node.selected{background:rgba(var(--accent-rgb),.14);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.35)}
 .change-item{border-radius:3px}
@@ -252,9 +248,11 @@ html.theme-light .header-crumb-badge { background: rgba(0, 0, 0, 0.06); color: v
 html.theme-light .header-crumb-sep { color: rgba(0, 0, 0, 0.2); }
 html.theme-light .session-kbd-shortcut { background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.1); color: var(--dim); }
 html.theme-light #sidebar, html.theme-light #main-pane {
- background: linear-gradient(180deg, #ffffff, #f7f7f9);
- box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 12px 32px rgba(0,0,0,0.08);
+ background: var(--bg-main);
+ border: none;
+ box-shadow: none;
 }
+html.theme-light #sidebar { border-right: 1px solid var(--border); }
 html.theme-light #chat-view, html.theme-light #chat-container, html.theme-light #chat, html.theme-light #tabs-bar { background: transparent; }
 html.theme-light #chat>.log-entry.md-content, html.theme-light .chat-bubble { background: #f7f7f9; border-color: var(--border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 html.theme-light .gen-stat-pill { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--dim); }
