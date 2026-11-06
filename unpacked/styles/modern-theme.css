@@ -127,29 +127,31 @@ box-shadow:0 6px 20px rgba(0,0,0,.55);transition:transform .15s,background .15s}
 .jump-to-bottom-btn:hover{background:var(--bg-input);transform:translateY(-1px)}
 
 /* Bottom dock / prompt */
-#bottom-dock-area{background:#121214;border:1px solid var(--border);border-radius:4px;
- margin:0 16px 16px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
-#statusbar{height:30px;padding:4px 18px 0}
-.status-badge{border-radius:2px;padding:1px 6px}
-.status-token-metric{border-radius:3px}
-#prompt-bar{background:transparent;border-top:none;padding:6px 14px 14px}
-#prompt-input-row{background:#1a1a1d;border-radius:4px;padding:6px;transition:border-color .2s,box-shadow .2s}
-#prompt-input-row:focus-within{border-color:rgba(var(--accent-rgb),.4)}
-#cmd{font-size:14px;padding:8px 10px}
-#prompt-attach{width:38px;min-height:38px;border-radius:3px}
-#prompt-attach:hover{background:rgba(var(--accent-rgb),.14)}
-#prompt-symbol,#prompt-symbol.magenta,#prompt-symbol.cyan,#prompt-symbol.yellow{width:42px;min-height:42px;border-radius:3px;
+#bottom-dock-area{background:transparent;border:none;border-radius:0;
+ margin:0;padding:10px 18px 14px;box-shadow:none}
+#statusbar{display:none}
+.status-badge{border-radius:3px;padding:2px 6px}
+.status-token-metric{border-radius:6px;background:#111216;border:1px solid var(--border);padding:3px 8px}
+#prompt-bar{background:transparent;border-top:none;padding:0}
+#prompt-input-row{background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:12px;padding:6px 10px;transition:border-color .2s,box-shadow .2s}
+#prompt-input-row:focus-within{border-color:rgba(var(--accent-rgb),.5);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.12)}
+#cmd{font-size:13.5px;padding:4px 8px}
+#prompt-attach{width:28px;min-height:28px;height:28px;border-radius:6px;color:var(--dim)}
+#prompt-attach:hover{background:var(--bg-hover);color:var(--fg)}
+#prompt-symbol,#prompt-symbol.magenta,#prompt-symbol.cyan,#prompt-symbol.yellow{width:32px;min-height:32px;height:32px;border-radius:8px;
 background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;
-transition:transform .15s,filter .15s}
+transition:transform .1s,filter .15s}
 #prompt-symbol:not(.running):hover{transform:translateY(-1px);filter:brightness(1.1);
  background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 #prompt-symbol.running,#prompt-symbol.running:hover{background:rgba(255,107,122,.18);color:var(--red);box-shadow:none;transform:none}
-.mode-segmented-group{border-radius:3px;padding:3px}
-.mode-tab-btn{border-radius:2px;padding:3px 10px}
-.mode-tab-btn.active[data-mode="ask"]{background:rgba(var(--accent-rgb),.16);color:var(--accent)}
-.mode-tab-btn.active[data-mode="code"]{background:rgba(167,139,250,.18);color:var(--magenta)}
-#model-select-btn{border-radius:3px;padding:4px 8px}
-#model-select-btn:hover,#model-select-btn.open{border-color:rgba(var(--accent-rgb),.6)}
+.mode-segmented-group{border-radius:6px;padding:2px;background:var(--bg-card,#181a22);border:1px solid var(--border)}
+.mode-tab-btn{border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600}
+.mode-tab-btn.active{background:#252834;color:#fff}
+.mode-tab-btn.active[data-mode="ask"]{color:var(--accent)}
+.mode-tab-btn.active[data-mode="plan"]{color:var(--yellow)}
+.mode-tab-btn.active[data-mode="code"]{color:var(--magenta)}
+#model-select-btn{border-radius:6px;padding:4px 10px;background:var(--bg-card,#181a22);border:1px solid var(--border)}
+#model-select-btn:hover,#model-select-btn.open{border-color:var(--border-highlight);background:var(--bg-hover,#1f222d)}
 #perm-banner{background:rgba(var(--primary-rgb),.08);border:1px solid rgba(var(--primary-rgb),.4);border-radius:3px;margin:0 14px 8px}
 .btn-perm{border-radius:3px;padding:4px 10px}
 #queued-prompt-banner{border-radius:3px}
@@ -264,7 +266,12 @@ html.theme-light .code-box .btn-copy-code:hover { background: rgba(0,0,0,0.08); 
 html.theme-light .thought-body, html.theme-light .tool-output-text, html.theme-light .compression-summary { background: #fdfdfd; border-color: rgba(0,0,0,0.1); }
 html.theme-light .settings-field-row input[type="text"], html.theme-light .settings-field-row input[type="number"], html.theme-light .settings-field-row input[type="password"], html.theme-light .settings-field-row select, html.theme-light .mm-row input, html.theme-light #search-input, html.theme-light #newtool-browse-search, html.theme-light #model-select-search, html.theme-light #model-picker-filter input, html.theme-light #cmd { background: #fff; }
 html.theme-light #prompt-input-row { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-html.theme-light #bottom-dock-area { background: #f9f9fb; box-shadow: 0 12px 40px rgba(0,0,0,0.08); }
+html.theme-light #bottom-dock-area { background: transparent; box-shadow: none; }
+html.theme-light #prompt-input-row { background: #ffffff; border-color: rgba(0,0,0,0.12); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+html.theme-light .mode-segmented-group { background: #ffffff; border-color: rgba(0,0,0,0.1); }
+html.theme-light .mode-tab-btn.active { background: rgba(0,0,0,0.08); color: var(--fg); }
+html.theme-light .status-token-metric { background: #ffffff; border-color: rgba(0,0,0,0.1); }
+html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 html.theme-light .session-item-row.active { box-shadow: 0 0 20px rgba(var(--accent-rgb),0.15); }
 html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }
 html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }

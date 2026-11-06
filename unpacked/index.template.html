@@ -950,15 +950,8 @@
 
             <div id="bottom-dock-area">
                 <div id="dock-glow" aria-hidden="true"></div>
-                <div id="statusbar">
-                    <div style="display:flex; align-items:center;">
-                        <span class="status-badge mode-code" id="status-mode">CODE</span>
-                        <span id="status-info" class="dim"></span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span id="status-model" class="dim" style="display:none; font-size:11px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title=""></span>
-                        <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
-                    </div>
+                <div id="statusbar" style="display:none;">
+                    <span class="status-badge mode-code" id="status-mode">CODE</span>
                 </div>
 
                 <div id="perm-banner">
@@ -974,22 +967,23 @@
                 <div id="prompt-bar">
                     <div id="prompt-top-row">
                         <div id="mode-toolbar">
+                            <span id="active-mode-tag" class="active-mode-badge mode-code">CODE</span>
                             <div class="mode-segmented-group">
                                 <button class="mode-tab-btn" data-mode="plan" title="Generate implementation plan in .agent_plan.md without modifying code">
-                                    <span class="icon" style="font-size:13px;">assignment</span>
-                                    <span>Plan</span>
+                                    <span>PLAN</span>
                                 </button>
                                 <button class="mode-tab-btn" data-mode="ask" title="Read-only query mode for code explanations and search">
-                                    <span class="icon" style="font-size:13px;">chat</span>
-                                    <span>Ask</span>
+                                    <span>ASK</span>
                                 </button>
                                 <button class="mode-tab-btn active" data-mode="code" title="Full code editing and tool execution">
-                                    <span class="icon" style="font-size:13px;">code</span>
-                                    <span>Code</span>
+                                    <span>CODE</span>
                                 </button>
                             </div>
+                            <span id="status-info" class="dim" style="font-size:11px; margin-left:4px;"></span>
                         </div>
                         <div id="model-group">
+                            <span id="status-model" class="dim" style="display:none; font-size:11px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title=""></span>
+                            <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
                             <button type="button" id="model-select-btn" title="Model (from .agent/models.json)">
                                 <span class="msb-name" id="msb-name">—</span>
                                 <span class="msb-provider" id="msb-provider">—</span>
