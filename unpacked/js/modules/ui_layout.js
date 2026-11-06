@@ -1155,4 +1155,35 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         e.stopPropagation();
     }
+    
+    // Ctrl+PageUp / Ctrl+PageDown -> Cycle Tabs
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'PageUp' || e.key === 'PageDown')) {
+        const isSplit = document.body.classList.contains('split-view-active');
+        let tabs = state.openTabs || [];
+        
+        // In split view, the chat tab is pinned left, so we only cycle file tabs on the right
+        if (isSplit) {
+            tabs = tabs.filter(t => t !== 'chat');
+        }
+        
+        if (tabs.length > 1) {
+            let currentIdx = tabs.indexOf(state.activeTab);
+            
+            // If somehow the active tab isn't in our valid list, pick a sensible starting point
+            if (currentIdx === -1) currentIdx = 0;
+            
+            let nextIdx;
+            if (e.key === 'PageDown') {
+                nextIdx = (currentIdx + 1) % tabs.length;
+            } else {
+                nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+            }
+            
+            switchTab(tabs[nextIdx]);
+        }
+        
+        // This successfully overrides the browser's default tab switching behavior
+        e.preventDefault();
+        e.stopPropagation();
+    }
 }, true); // Use capture phase to intercept the keys before the Monaco editor can
