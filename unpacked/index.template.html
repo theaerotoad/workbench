@@ -405,25 +405,23 @@
 
     <header id="top-header-bar">
         <div class="header-left">
-            <div class="header-crumb">
+            <button id="btn-header-brand" class="header-brand-btn" title="workbench" type="button" onclick="if (window.rootHandle) { const b = document.getElementById('btn-exit-workspace'); if (b) b.click(); else if (window.closeWorkspace) window.closeWorkspace(); }">
                 <span class="header-crumb-badge">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="4 17 10 11 4 5"></polyline>
                         <line x1="12" y1="19" x2="20" y2="19"></line>
                     </svg>
                 </span>
-                <span class="header-crumb-title">Workspace</span>
-                <span class="header-crumb-sep">/</span>
-            </div>
+                <span class="header-crumb-title">workbench</span>
+            </button>
+            <span id="header-ws-sep" class="header-crumb-sep" style="display:none;">/</span>
             <button id="btn-workspace-display" class="workspace-pill-btn" title="Current workspace" style="display:none;">
                 <span class="icon" id="workspace-btn-icon" style="font-size: 14px;">folder</span>
                 <span id="workspace-btn-name" class="workspace-pill-name">Workspace</span>
                 <span class="workspace-status-dot"></span>
                 <span class="icon" style="font-size: 14px; margin-left: 2px;">arrow_drop_down</span>
             </button>
-        </div>
-
-        <div class="header-center">
+            <span id="header-session-sep" class="header-crumb-sep" style="display:none;">/</span>
             <button id="btn-session-toggle" class="session-pill-btn" title="Click to view or switch sessions" style="display:none;">
                 <div class="session-pill-title-wrap">
                     <span class="icon" style="font-size: 14px; flex-shrink: 0;">forum</span>
@@ -436,22 +434,7 @@
             </button>
         </div>
 
-        <div class="header-right">
-            <button type="button" class="icon-btn header-action-btn" title="Split Editor">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect width="18" height="18" x="3" y="3" rx="2"/>
-                    <line x1="12" y1="3" x2="12" y2="21"/>
-                </svg>
-            </button>
-            <button id="btn-exit-workspace" class="header-exit-btn" title="Exit Workspace" style="display:none;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                    <polyline points="16 17 21 12 16 7"/>
-                    <line x1="21" y1="12" x2="9" y2="12"/>
-                </svg>
-                <span class="exit-label">Exit</span>
-            </button>
-        </div>
+        <button id="btn-exit-workspace" style="display:none !important;" aria-hidden="true" tabindex="-1"></button>
     </header>
 
     <div id="window-body">

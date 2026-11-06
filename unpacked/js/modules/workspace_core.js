@@ -63,6 +63,15 @@ function closeWorkspace() {
     if (btnSessionToggle) btnSessionToggle.style.display = 'none';
     const wsBtnClose = document.getElementById('btn-workspace-display');
     if (wsBtnClose) wsBtnClose.style.display = 'none';
+    const wsSepClose = document.getElementById('header-ws-sep');
+    if (wsSepClose) wsSepClose.style.display = 'none';
+    const sessionSepClose = document.getElementById('header-session-sep');
+    if (sessionSepClose) sessionSepClose.style.display = 'none';
+    const brandBtnClose = document.getElementById('btn-header-brand');
+    if (brandBtnClose) {
+        brandBtnClose.title = 'workbench';
+        brandBtnClose.classList.remove('can-exit');
+    }
 
     const noFolderOverlay = document.getElementById('no-folder-overlay');
     if (noFolderOverlay) noFolderOverlay.classList.remove('hidden');
@@ -639,6 +648,15 @@ async function setWorkspace(handle) {
     if (btnSessionToggle) btnSessionToggle.style.display = 'inline-flex';
     const wsBtnSet = document.getElementById('btn-workspace-display');
     if (wsBtnSet) wsBtnSet.style.display = 'inline-flex';
+    const wsSepSet = document.getElementById('header-ws-sep');
+    if (wsSepSet) wsSepSet.style.display = '';
+    const sessionSepSet = document.getElementById('header-session-sep');
+    if (sessionSepSet) sessionSepSet.style.display = '';
+    const brandBtnSet = document.getElementById('btn-header-brand');
+    if (brandBtnSet) {
+        brandBtnSet.title = 'workbench (click to close workspace)';
+        brandBtnSet.classList.add('can-exit');
+    }
 
     registry.files = {};
     registry.originalFiles = {};
@@ -889,6 +907,18 @@ function updateWorkspaceTitle() {
 
     const btnExit = document.getElementById('btn-exit-workspace');
     if (btnExit) btnExit.style.display = (rootHandle && name) ? 'inline-flex' : 'none';
+
+    const wsSep = document.getElementById('header-ws-sep');
+    if (wsSep) wsSep.style.display = (rootHandle && name) ? '' : 'none';
+
+    const sessionSep = document.getElementById('header-session-sep');
+    if (sessionSep) sessionSep.style.display = (rootHandle && name) ? '' : 'none';
+
+    const brandBtn = document.getElementById('btn-header-brand');
+    if (brandBtn) {
+        brandBtn.title = (rootHandle && name) ? 'workbench (click to close workspace)' : 'workbench';
+        brandBtn.classList.toggle('can-exit', !!(rootHandle && name));
+    }
 }
 
 // --- AST_EXPORTS_START ---

@@ -170,7 +170,7 @@ background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shado
 #btn-workspace-display:hover,.workspace-pill-btn:hover{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight)}
 .workspace-status-dot{width:6px;height:6px;border-radius:50%;background:var(--success,#3ecf8e);display:inline-block}
 
-#btn-session-toggle,.session-pill-btn{width:100%;background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--fg);font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:background .15s,border-color .15s}
+#btn-session-toggle,.session-pill-btn{width:auto;max-width:380px;min-width:140px;height:30px;background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:6px;padding:0 10px;color:var(--fg);font-size:12px;display:inline-flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:background .15s,border-color .15s;flex-shrink:1}
 #btn-session-toggle:hover,#btn-session-toggle.active,.session-pill-btn:hover,.session-pill-btn.active{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight)}
 .session-palette-shortcut,.session-kbd-shortcut{font-size:10px;font-family:var(--font-mono);background:rgba(255,255,255,.08);border:1px solid var(--border);padding:1px 5px;border-radius:3px;color:var(--dim)}
 
@@ -247,6 +247,8 @@ html.theme-light #window { background: #fdfdfd; box-shadow: none; }
 html.theme-light #top-header-bar { background: #f7f7f9; border-bottom: 1px solid var(--border); }
 html.theme-light .header-crumb-badge { background: rgba(0, 0, 0, 0.06); color: var(--dim); }
 html.theme-light .header-crumb-sep { color: rgba(0, 0, 0, 0.2); }
+html.theme-light .header-brand-btn { color: var(--dim); }
+html.theme-light .header-brand-btn.can-exit:hover { color: var(--fg); background: rgba(0, 0, 0, 0.05); }
 html.theme-light .session-kbd-shortcut { background: rgba(0, 0, 0, 0.05); border-color: rgba(0, 0, 0, 0.1); color: var(--dim); }
 html.theme-light #sidebar, html.theme-light #main-pane {
  background: var(--bg-main);

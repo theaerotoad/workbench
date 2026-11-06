@@ -123,25 +123,36 @@ body {
     z-index: 30;
     transition: opacity 0.15s ease;
 }
-.header-left, .header-right {
+.header-left {
     display: flex;
     align-items: center;
-    gap: 10px;
-}
-.header-center {
+    gap: 8px;
     flex: 1;
-    max-width: 480px;
-    margin: 0 12px;
-    display: flex;
-    justify-content: center;
+    min-width: 0;
 }
-.header-crumb {
-    display: flex;
+.header-brand-btn {
+    background: transparent;
+    border: none;
+    padding: 3px 6px;
+    border-radius: 6px;
+    cursor: default;
+    display: inline-flex;
     align-items: center;
     gap: 7px;
+    color: var(--dim);
+    font-family: inherit;
     font-size: 12px;
     font-weight: 500;
-    color: var(--dim);
+    transition: all 0.15s ease;
+    user-select: none;
+    flex-shrink: 0;
+}
+.header-brand-btn.can-exit {
+    cursor: pointer;
+}
+.header-brand-btn.can-exit:hover {
+    color: var(--fg);
+    background: var(--bg-hover);
 }
 .header-crumb-badge {
     width: 20px;
@@ -160,9 +171,14 @@ body {
 .header-crumb-title {
     color: var(--dim);
 }
+.header-brand-btn.can-exit:hover .header-crumb-title {
+    color: var(--fg);
+}
 .header-crumb-sep {
     color: rgba(255, 255, 255, 0.2);
     margin: 0 1px;
+    user-select: none;
+    font-size: 12px;
 }
 .workspace-status-dot {
     width: 6px;
