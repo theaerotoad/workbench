@@ -185,6 +185,10 @@ function initMonaco() {
                 saveDiffModifiedFile();
             });
 
+            if (window.state && window.state.activeTab && window.state.activeTab !== 'chat') {
+                window.switchTab(window.state.activeTab, { keepFocus: true }).catch(console.error);
+            }
+
             clearTimeout(timeoutId);
             settle();
             } catch(e) {

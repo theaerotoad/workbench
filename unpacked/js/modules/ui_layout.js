@@ -165,15 +165,16 @@ window.getDuoSwitch = getDuoSwitch;
 
 
 function getOrCreateModel(filepath, content) {
-    if (monacoModels.has(filepath)) {
-        const m = monacoModels.get(filepath);
-        if (content !== undefined && m.getValue() !== content && !isFileDirty(filepath)) {
-            withDirtyTrackingSuppressed(() => m.setValue(content));
-        }
-        return m;
-    }
     const uri = MONACO.Uri.parse(`inmemory://agent2/${encodeURIComponent(filepath)}`);
-    const model = MONACO.editor.createModel(content || '', langOf(filepath), uri);
+    let model = monacoModels.get(filepath) || (MONACO.editor ? MONACO.editor.getModel(uri) : null);
+    
+    if (model) {
+        if (content !== undefined && model.getValue() !== content && !isFileDirty(filepath)) {
+            withDirtyTrackingSuppressed(() => model.setValue(content));
+        }
+    } else {
+        model = MONACO.editor.createModel(content || '', langOf(filepath), uri);
+    }
     monacoModels.set(filepath, model);
     return model;
 }
