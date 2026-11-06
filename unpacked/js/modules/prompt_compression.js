@@ -142,7 +142,7 @@ async function compressContext(sessionId, { silent = false, manual = false } = {
 
     const transcript = serializeMessagesForCompression(older);
 
-    const { url: apiUrl, model, key: apiKey } = getCurrentModelInfo();
+    const { url: apiUrl, model, key: apiKey, useProxy } = getCurrentModelInfo();
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
@@ -156,7 +156,11 @@ async function compressContext(sessionId, { silent = false, manual = false } = {
 
     let summaryText = '';
     try {
-        const resp = await fetch(`${apiUrl}/chat/completions`, {
+        const targetUrl = `${apiUrl}/chat/completions`;
+        const reqUrl = useProxy ? '/proxy' : targetUrl;
+        if (useProxy) headers['x-proxy-target'] = targetUrl;
+
+        const resp = await fetch(reqUrl, {
             method: 'POST',
             headers,
             signal: compressController.signal,
@@ -457,7 +461,7 @@ function updateTokenStatus(usage) {
     const prompt = usage.prompt_tokens || usage.prompt_n || 0;
     const gen = usage.completion_tokens || usage.predicted_n || 0;
     const total = usage.total_tokens || (prompt + gen);
-    const { url: apiUrl, model, key: apiKey, contextWindow: cw } = getCurrentModelInfo();
+    const { url: apiUrl, model, key: apiKey, contextWindow: cw, useProxy } = getCurrentModelInfo();
     const contextWindow = cw || DEFAULT_CONTEXT_WINDOW;
     const pct = contextWindow > 0 ? total / contextWindow : 0;
 
@@ -469,7 +473,7 @@ function updateTokenStatus(usage) {
     modelEl.innerText = shortenModelName(model) || '?';
     modelEl.title = model || '';
 
-        fetchActiveModelName(apiUrl, apiKey, model).then(resolvedName => {
+        fetchActiveModelName(apiUrl, apiKey, model, useProxy).then(resolvedName => {
             if (!resolvedName || resolvedName === model) return;
             if (el.style.display !== 'inline-flex') return;
             el.title = `Model: ${resolvedName} | Prompt: ${prompt.toLocaleString()} | Gen: ${gen.toLocaleString()} | Total: ${total.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${Math.round(pct * 100)}% of context)`;

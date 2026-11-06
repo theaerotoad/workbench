@@ -1,7 +1,7 @@
 // --- runTask.js ---
 async function runTask(task, msgId, imageUrls, sessionId) {
     const runSessionId = sessionId || state.activeSessionId;
-    let { url: apiUrl, model, key: apiKey, vision: runModelVision } = getCurrentModelInfo();
+    let { url: apiUrl, model, key: apiKey, vision: runModelVision, useProxy } = getCurrentModelInfo();
     const runCtx = sessionCtx(runSessionId);
     const runGen = getGenState(runSessionId);
     const isRunLive = () => runSessionId === state.activeSessionId;
@@ -109,7 +109,11 @@ async function runTask(task, msgId, imageUrls, sessionId) {
 
             let resp;
             try {
-                resp = await fetch(`${apiUrl}/chat/completions`, {
+                const targetUrl = `${apiUrl}/chat/completions`;
+                const reqUrl = useProxy ? '/proxy' : targetUrl;
+                if (useProxy) headers["x-proxy-target"] = targetUrl;
+                
+                resp = await fetch(reqUrl, {
                     method: "POST",
                     headers: headers,
                     signal: runGen.activeController.signal,
@@ -769,7 +773,7 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                 {
                     const cur = getCurrentModelInfo();
                     if (cur.url && cur.model) {
-                        apiUrl = cur.url; model = cur.model; apiKey = cur.key; runModelVision = cur.vision;
+                        apiUrl = cur.url; model = cur.model; apiKey = cur.key; runModelVision = cur.vision; useProxy = !!cur.useProxy;
                         activeTools = getToolsForMode(runMode, !!runModelVision);
                     }
                 }

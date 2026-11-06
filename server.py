@@ -8,6 +8,11 @@ from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.wsgi import WSGIMiddleware
+from starlette.requests import Request
+from starlette.responses import StreamingResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
+import urllib.request
+import urllib.error
 
 # WebDAV imports
 from wsgidav.wsgidav_app import WsgiDAVApp
@@ -48,6 +53,50 @@ def main():
     
     args = parser.parse_args()
     routes = []
+
+    # 0. LLM Proxy Endpoint
+    async def llm_proxy(request: Request):
+        target_url = request.headers.get("x-proxy-target")
+        if not target_url:
+            return JSONResponse({"error": "Missing x-proxy-target header"}, status_code=400)
+            
+        method = request.method
+        body = await request.body()
+        
+        headers = {}
+        for k, v in request.headers.items():
+            if k.lower() not in ("host", "x-proxy-target", "content-length", "connection"):
+                headers[k] = v
+                
+        req = urllib.request.Request(target_url, data=body if body else None, headers=headers, method=method)
+        
+        def _make_request():
+            try:
+                resp = urllib.request.urlopen(req)
+                return resp, resp.getcode()
+            except urllib.error.HTTPError as e:
+                return e, e.getcode()
+            except Exception as e:
+                return e, 500
+
+        result, status_code = await run_in_threadpool(_make_request)
+        
+        if isinstance(result, Exception) and not isinstance(result, urllib.error.HTTPError):
+            return JSONResponse({"error": str(result)}, status_code=500)
+            
+        def generate():
+            try:
+                while True:
+                    chunk = result.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                result.close()
+                
+        return StreamingResponse(generate(), status_code=status_code)
+
+    routes.append(Route("/proxy", llm_proxy, methods=["GET", "POST", "PUT", "DELETE", "PATCH"]))
 
     # 1. MCP Stdio-to-SSE Proxy
     if args.stdio_mcp_cfg and os.path.exists(args.stdio_mcp_cfg):

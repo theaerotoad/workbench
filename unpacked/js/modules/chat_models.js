@@ -52,9 +52,14 @@ async function fetchModelsForPicker() {
     try {
         const headers = {};
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        
+        const targetUrl = apiUrl;
+        const reqUrl = _modelPickerState.modelInfo?.useProxy ? '/proxy' : targetUrl;
+        if (_modelPickerState.modelInfo?.useProxy) headers['x-proxy-target'] = targetUrl;
+        
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5000);
-        const resp = await fetch(apiUrl, { headers, signal: controller.signal });
+        const resp = await fetch(reqUrl, { headers, signal: controller.signal });
         clearTimeout(timer);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
@@ -151,11 +156,13 @@ function findModelInfoForLine(filepath, targetLine) {
     const nameMatch = modelContent.match(/"name"\s*:\s*"([^"]+)"/);
     const urlMatch = providerContent.match(/"url"\s*:\s*"([^"]+)"/);
     const keyMatch = providerContent.match(/"key"\s*:\s*"([^"]*)"/);
+    const proxyMatch = providerContent.match(/"useProxy"\s*:\s*(true|false)/);
 
     return {
         label: nameMatch ? nameMatch[1] : null,
         url: urlMatch ? urlMatch[1] : null,
-        key: keyMatch ? keyMatch[1] : ''
+        key: keyMatch ? keyMatch[1] : '',
+        useProxy: proxyMatch ? proxyMatch[1] === 'true' : false
     };
 }
 
@@ -433,6 +440,10 @@ function renderModelsModal(focusField) {
                 </button>
             </div>
         </div>
+        <div class="mm-row" style="flex-direction:row; align-items:center; gap:8px; margin-top: 4px;">
+            <input type="checkbox" data-field="useProxy" ${p.useProxy ? 'checked' : ''} id="mm-proxy-chk" style="width:auto; margin:0;" />
+            <label for="mm-proxy-chk" style="margin:0; cursor:pointer;" title="Route API requests through the local Python server to bypass CORS">Use Local Proxy</label>
+        </div>
         <div class="mm-models-label">Models</div>
         ${(p.models || []).length ? `<div class="mm-models-cols"><span class="c-name">Model id</span><span class="c-ctx">Context</span><span class="c-vision">Vision</span><span class="c-rm"></span></div>` : ''}
         ${modelRows || '<div class="mm-empty" style="padding:8px 0;">No models yet</div>'}
@@ -651,11 +662,11 @@ function wireModelsDetailEvents() {
         renderModelsModal(); // refresh the left-pane label too
     });
 
-    // Other provider-level fields (url, key)
+    // Other provider-level fields (url, key, useProxy)
     mmDetailEl.querySelectorAll('.mm-row input[data-field]').forEach(inp => {
         inp.addEventListener('change', () => {
             const field = inp.getAttribute('data-field');
-            MODEL_PROVIDERS[pi][field] = inp.value;
+            MODEL_PROVIDERS[pi][field] = inp.type === 'checkbox' ? inp.checked : inp.value;
             commitModelsChange();
         });
     });
@@ -740,7 +751,7 @@ function wireModelsDetailEvents() {
             const mi = Number(btn.closest('.mm-model-row').getAttribute('data-mi'));
             const provider = MODEL_PROVIDERS[pi];
             const currentName = (provider.models[mi] && provider.models[mi].name) || '';
-            const modelInfo = { label: currentName, url: provider.url || '', key: provider.key || '' };
+            const modelInfo = { label: currentName, url: provider.url || '', key: provider.key || '', useProxy: !!provider.useProxy };
 
             const btnRect = btn.getBoundingClientRect();
             showModelPicker(null, null, { top: btnRect.bottom, left: btnRect.left }, currentName, modelInfo, (modelId) => {

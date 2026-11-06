@@ -30,7 +30,7 @@ window.ensureSessionLoaded = ensureSessionLoaded;
 
 // --- generateSessionTitleViaLLM.js ---
 async function generateSessionTitleViaLLM(prompt) {
-    const { url: apiUrl, model, key: apiKey } = getCurrentModelInfo();
+    const { url: apiUrl, model, key: apiKey, useProxy } = getCurrentModelInfo();
     const headers = { "Content-Type": "application/json" };
     if (apiKey) {
         headers["Authorization"] = `Bearer ${apiKey}`;
@@ -40,7 +40,11 @@ async function generateSessionTitleViaLLM(prompt) {
     const systemContent = injectPrompt ? renderPromptTemplate(titleTemplate, { userPrompt: prompt }) : titleTemplate;
     const userContent = injectPrompt ? prompt : `Generate a short descriptive title for this coding task:\n${prompt}`;
     try {
-        const resp = await fetch(`${apiUrl}/chat/completions`, {
+        const targetUrl = `${apiUrl}/chat/completions`;
+        const reqUrl = useProxy ? '/proxy' : targetUrl;
+        if (useProxy) headers["x-proxy-target"] = targetUrl;
+        
+        const resp = await fetch(reqUrl, {
             method: "POST",
             headers: headers,
             body: JSON.stringify({
