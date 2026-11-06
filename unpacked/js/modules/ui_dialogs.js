@@ -9,6 +9,7 @@ function applyConfigToUI() {
     
     setDuoSwitch(document.getElementById('settings-editor-word-wrap'), AppConfig.get('editor-word-wrap') === 'true');
     setDuoSwitch(document.getElementById('settings-show-code-preview'), AppConfig.get('show-code-preview', 'true') !== 'false');
+    setDuoSwitch(document.getElementById('settings-split-view'), AppConfig.get('split-view-enabled') === 'true');
 
     if (!window._qolSettingsBound && window.initDuoSwitch) {
         window._qolSettingsBound = true;
@@ -29,6 +30,10 @@ function applyConfigToUI() {
             } else {
                 document.body.classList.add('hide-code-preview');
             }
+        });
+        window.initDuoSwitch('settings-split-view', (isOn) => {
+            AppConfig.set('split-view-enabled', isOn ? 'true' : 'false');
+            if (window.applySplitView) window.applySplitView();
         });
     }
 
@@ -54,6 +59,7 @@ function applyConfigToUI() {
     if (ct) ct.value = AppConfig.get('compress-threshold', '75');
     if (cp) cp.value = AppConfig.get('compress-preserve', '6');
     updateAgentFilesSwitch();
+    if (window.applySplitView) window.applySplitView();
     renderAccentSwatches();
     applyTheme();
     refreshCustomModes();

@@ -5,6 +5,32 @@
     border: none; border-radius: 0;
 }
 
+body.split-view-active #main-pane {
+    flex-direction: row;
+}
+
+/* Editor Pane (Wrapper for split view) */
+#editor-pane {
+    display: flex; flex-direction: column; flex-grow: 1; min-width: 0;
+    overflow: hidden; background: var(--bg-main); position: relative;
+}
+
+body.split-view-active #editor-pane {
+    border-left: 1px solid var(--border);
+    flex: 1 1 50% !important;
+    display: flex !important;
+}
+
+body.split-view-active #chat-view {
+    display: flex !important;
+    flex: 1 1 50% !important;
+    min-width: 350px;
+}
+
+body.split-view-active .editor-tab[data-tab-id="chat"] {
+    display: none !important;
+}
+
 /* Tabs Bar & Tab Scrolling */
 #tabs-bar {
     height: 40px; background: var(--bg-main); border-bottom: 1px solid var(--border);
