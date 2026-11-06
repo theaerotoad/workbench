@@ -1,21 +1,30 @@
-@keyframes fadeInCentered {
-    from { opacity: 0; transform: translateX(-50%) translateY(-3px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+@keyframes popoverFadeIn {
+    from { opacity: 0; transform: translateY(-3px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* Sessions Pill & Popover */
-.session-pill-btn {
-    background: rgba(255, 255, 255, 0.04);
+#btn-session-toggle, .session-pill-btn {
+    width: 100%;
+    background: var(--bg-card, #181a22);
     border: 1px solid var(--border);
-    color: var(--fg); padding: 0 12px; border-radius: 6px;
-    cursor: pointer; font-family: inherit; font-size: 12px;
-    font-weight: 500; display: flex; align-items: center;
-    justify-content: space-between; gap: 8px;
-    transition: all 0.15s ease; width: 100%; height: 32px;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: var(--fg);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    font-family: inherit;
+    box-sizing: border-box;
 }
+#btn-session-toggle:hover, #btn-session-toggle.active,
 .session-pill-btn:hover, .session-pill-btn.active {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: var(--border-highlight); color: var(--fg);
+    background: var(--bg-hover, #1f222d);
+    border-color: var(--border-highlight);
 }
 .session-pill-name {
     overflow: hidden; text-overflow: ellipsis;
@@ -23,24 +32,69 @@
     font-size: 12px; font-weight: 500;
 }
 
-.workspace-pill-btn {
-    background: rgba(255, 255, 255, 0.04);
+#btn-workspace-display, .workspace-pill-btn {
+    background: var(--bg-card, #181a22);
     border: 1px solid var(--border);
-    color: var(--fg); padding: 0 10px; border-radius: 6px;
-    cursor: pointer; font-family: inherit; font-size: 12px;
-    font-weight: 600; display: flex; align-items: center;
-    gap: 7px; transition: all 0.15s ease; max-width: 220px;
-    height: 30px; flex-shrink: 0;
-}
-.workspace-pill-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: var(--border-highlight);
+    border-radius: 6px;
+    padding: 5px 10px;
     color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    max-width: 220px;
+    flex-shrink: 0;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+#btn-workspace-display:hover, .workspace-pill-btn:hover {
+    background: var(--bg-hover, #1f222d);
+    border-color: var(--border-highlight);
 }
 .workspace-pill-name {
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; flex-shrink: 1;
     font-weight: 600;
+}
+.workspace-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success, #3ecf8e);
+    display: inline-block;
+    flex-shrink: 0;
+}
+.session-palette-shortcut, .session-kbd-shortcut {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--dim);
+}
+
+#btn-exit-workspace {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: var(--dim);
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+#btn-exit-workspace:hover {
+    background: rgba(255, 107, 122, 0.12);
+    color: var(--danger, #ff6b7a);
+    border-color: rgba(255, 107, 122, 0.25);
 }
 
 #sessions-popover-overlay {
@@ -48,13 +102,13 @@
     right: 0; bottom: 0; background: rgba(0, 0, 0, 0.55); z-index: 100;
 }
 #sessions-popover {
-    position: absolute; top: 52px; left: 50%;
-    transform: translateX(-50%); background: var(--bg-panel);
+    position: absolute; top: 56px; left: 50%;
+    transform: none; background: var(--bg-panel);
     border: 1px solid var(--border-highlight); border-radius: 8px;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85);
     padding: 8px; width: min(420px, calc(100vw - 16px)); max-height: 420px;
     box-sizing: border-box;
-    z-index: 101; animation: fadeInCentered 0.12s ease-out;
+    z-index: 101; animation: popoverFadeIn 0.12s ease-out;
 }
 .popover-header {
     display: flex; align-items: center; justify-content: space-between;

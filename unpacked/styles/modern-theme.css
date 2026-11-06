@@ -1,7 +1,7 @@
 /* ===== Modern theme: dark surfaces, coral accent, soft rounded cards ===== */
 :root{
  --bg-canvas:#000;--bg-main:#0e0e10;--bg-win-title:transparent;--bg-panel:#151517;--bg-dock:#0e0e10;
- --bg-input:#1a1a1d;--bg-sidebar:#0e0e10;--bg-secondary:#0e0e10;--bg-hover:rgba(255,255,255,.055);
+ --bg-card:#181a22;--bg-input:#1a1a1d;--bg-sidebar:#0e0e10;--bg-secondary:#0e0e10;--bg-hover:rgba(255,255,255,.055);
  --border:rgba(255,255,255,.07);--border-highlight:rgba(255,255,255,.14);
  --fg:#ececf1;--dim:#85858f;
 
@@ -162,10 +162,16 @@ background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shado
 #newtool-browse-list,#newtool-dropzone{border-radius:3px}
 .session-item-row:hover,.recent-folder-item:hover,.cleardata-option:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.07)}
 .session-item-row.active{border-color:var(--accent);background:rgba(var(--accent-rgb),.13);box-shadow:0 0 20px rgba(var(--accent-rgb),.12)}
-.session-pill-btn{border-radius:6px;padding:0 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:all .15s ease}
-.session-pill-btn:hover,.session-pill-btn.active{background:rgba(255,255,255,.07);border-color:var(--border-highlight);color:var(--fg)}
-.workspace-pill-btn{border-radius:6px;padding:0 10px;max-width:220px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--fg);font-family:inherit;font-size:12px;font-weight:600;display:flex;align-items:center;gap:7px;cursor:pointer;transition:all .15s ease}
-.workspace-pill-btn:hover{background:rgba(255,255,255,.08);border-color:var(--border-highlight);color:var(--fg)}
+#btn-workspace-display,.workspace-pill-btn{background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--fg);font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background .15s,border-color .15s}
+#btn-workspace-display:hover,.workspace-pill-btn:hover{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight)}
+.workspace-status-dot{width:6px;height:6px;border-radius:50%;background:var(--success,#3ecf8e);display:inline-block}
+
+#btn-session-toggle,.session-pill-btn{width:100%;background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--fg);font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:background .15s,border-color .15s}
+#btn-session-toggle:hover,#btn-session-toggle.active,.session-pill-btn:hover,.session-pill-btn.active{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight)}
+.session-palette-shortcut,.session-kbd-shortcut{font-size:10px;font-family:var(--font-mono);background:rgba(255,255,255,.08);border:1px solid var(--border);padding:1px 5px;border-radius:3px;color:var(--dim)}
+
+#btn-exit-workspace{background:transparent;border:1px solid transparent;border-radius:6px;padding:5px 10px;color:var(--dim);font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:all .15s ease}
+#btn-exit-workspace:hover{background:rgba(255,107,122,.12);color:var(--danger,#ff6b7a);border-color:rgba(255,107,122,.25)}
 .mm-provider-item.active,.newtool-source-tab.active,.editor-view-segmented .seg-btn.active,.btn-tab-action.active,
 .icon-btn.active,.pill-btn.active{background:rgba(var(--accent-rgb),.14);border-color:rgba(var(--accent-rgb),.45);color:var(--accent)}
 .mm-provider-item,.newtool-source-tab,#newtool-source-tabs{border-radius:3px}
@@ -265,9 +271,11 @@ html.theme-light .sidebar-nav-tab.active { background: rgba(var(--accent-rgb),0.
 html.theme-light .tree-node.selected { color: var(--fg); }
 html.theme-light .settings-panel-head .head-label { color: var(--fg); }
 html.theme-light .ac-item.selected .ac-item-title { color: var(--fg); }
-html.theme-light .session-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
-html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--fg); background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); }
-html.theme-light .workspace-pill-btn { background: rgba(0,0,0,0.035); border-color: rgba(0,0,0,0.08); color: var(--fg); }
-html.theme-light .workspace-pill-btn:hover { color: var(--fg); background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); }
+html.theme-light #btn-session-toggle, html.theme-light .session-pill-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--fg); }
+html.theme-light #btn-session-toggle:hover, html.theme-light #btn-session-toggle.active, html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--fg); background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.2); }
+html.theme-light #btn-workspace-display, html.theme-light .workspace-pill-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--fg); }
+html.theme-light #btn-workspace-display:hover, html.theme-light .workspace-pill-btn:hover { color: var(--fg); background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.2); }
+html.theme-light #btn-exit-workspace { color: var(--dim); }
+html.theme-light #btn-exit-workspace:hover { color: var(--danger); background: rgba(255,107,122,0.1); }
 html.theme-light .toast { background: rgba(255,255,255,0.98); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
 html.theme-light #monaco-diff-container, html.theme-light #monaco-editor-container { background: #fff; }

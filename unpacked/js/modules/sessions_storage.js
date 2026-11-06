@@ -466,13 +466,13 @@ window.saveSession = saveSession;
 function showSessionPopover() {
     renderSessionPopoverList();
     sessionsPopoverOverlay.style.display = 'block';
-    btnSessionToggle.classList.add('active');
+    if (btnSessionToggle) btnSessionToggle.classList.add('active');
     if (btnSessionToggle && sessionsPopover) {
         const rect = btnSessionToggle.getBoundingClientRect();
         const popoverWidth = sessionsPopover.offsetWidth || 420;
         let left = rect.left + (rect.width / 2) - (popoverWidth / 2);
         left = Math.max(10, Math.min(left, window.innerWidth - popoverWidth - 10));
-        sessionsPopover.style.top = (rect.bottom + 6) + 'px';
+        sessionsPopover.style.top = (rect.bottom + 8) + 'px';
         sessionsPopover.style.left = left + 'px';
         sessionsPopover.style.transform = 'none';
     }

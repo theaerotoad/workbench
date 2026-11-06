@@ -635,8 +635,8 @@ async function setWorkspace(handle) {
     rootHandle = handle;
     updateWorkspaceTitle();
 
-    if (btnExitWorkspace) btnExitWorkspace.style.display = 'flex';
-    if (btnSessionToggle) btnSessionToggle.style.display = 'flex';
+    if (btnExitWorkspace) btnExitWorkspace.style.display = 'inline-flex';
+    if (btnSessionToggle) btnSessionToggle.style.display = 'inline-flex';
     const wsBtnSet = document.getElementById('btn-workspace-display');
     if (wsBtnSet) wsBtnSet.style.display = 'inline-flex';
 
@@ -883,6 +883,12 @@ function updateWorkspaceTitle() {
             wsBtn.style.display = 'none';
         }
     }
+
+    const btnSession = document.getElementById('btn-session-toggle');
+    if (btnSession) btnSession.style.display = (rootHandle && name) ? 'inline-flex' : 'none';
+
+    const btnExit = document.getElementById('btn-exit-workspace');
+    if (btnExit) btnExit.style.display = (rootHandle && name) ? 'inline-flex' : 'none';
 }
 
 // --- AST_EXPORTS_START ---
