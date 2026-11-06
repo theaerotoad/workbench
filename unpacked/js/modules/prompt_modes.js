@@ -205,19 +205,6 @@ function renderModeTabs() {
     const group = document.querySelector('.mode-segmented-group');
     if (!group) return;
 
-    const toolbar = document.getElementById('mode-toolbar');
-    let badge = document.getElementById('active-mode-tag');
-    if (!badge && toolbar) {
-        badge = document.createElement('span');
-        badge.id = 'active-mode-tag';
-        toolbar.insertBefore(badge, toolbar.firstChild);
-    }
-    if (badge) {
-        const curMode = state.mode || 'code';
-        badge.innerText = curMode.toUpperCase();
-        badge.className = `active-mode-badge mode-${curMode}`;
-    }
-
     const modesToShow = ['plan', 'ask', 'code', ...dynamicModes];
 
     group.innerHTML = modesToShow.map(mode => {
@@ -407,18 +394,7 @@ function setMode(mode) {
     input.placeholder = cfg.placeholder;
     updatePromptSendButton();
 
-    const activeBadge = document.getElementById('active-mode-tag') || document.getElementById('status-mode');
-    if (activeBadge) {
-        activeBadge.innerText = mode.toUpperCase();
-        activeBadge.className = `active-mode-badge mode-${mode}`;
-        if (!['mode-plan', 'mode-ask', 'mode-code', 'plan', 'ask', 'code'].includes(mode) && cfg.color) {
-            activeBadge.style.backgroundColor = cfg.color;
-        } else {
-            activeBadge.style.backgroundColor = '';
-        }
-    }
-
-    if (typeof statusModeBadge !== 'undefined' && statusModeBadge && statusModeBadge !== activeBadge) {
+    if (typeof statusModeBadge !== 'undefined' && statusModeBadge) {
         if (!isSessionRunning(state.activeSessionId)) {
             statusModeBadge.innerText = cfg.name;
             statusModeBadge.className = `status-badge ${cfg.badgeClass}`;

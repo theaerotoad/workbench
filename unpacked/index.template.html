@@ -967,7 +967,6 @@
                 <div id="prompt-bar">
                     <div id="prompt-top-row">
                         <div id="mode-toolbar">
-                            <span id="active-mode-tag" class="active-mode-badge mode-code">CODE</span>
                             <div class="mode-segmented-group">
                                 <button class="mode-tab-btn" data-mode="plan" title="Generate implementation plan in .agent_plan.md without modifying code">
                                     <span>PLAN</span>
@@ -982,13 +981,13 @@
                             <span id="status-info" class="dim" style="font-size:11px; margin-left:4px;"></span>
                         </div>
                         <div id="model-group">
-                            <span id="status-model" class="dim" style="display:none; font-size:11px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title=""></span>
+                            <span id="status-model" class="dim" style="display:none !important;" title=""></span>
+                            <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
                             <button type="button" id="model-select-btn" title="Model (from .agent/models.json)">
                                 <span class="msb-name" id="msb-name">—</span>
                                 <span class="msb-provider" id="msb-provider">—</span>
                                 <span class="icon msb-caret">expand_more</span>
                             </button>
-                            <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
                             <div id="model-select-overlay"></div>
                             <div id="model-select-dropdown">
                                 <div id="model-select-search-wrap">

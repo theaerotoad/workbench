@@ -126,6 +126,7 @@ box-shadow:0 6px 20px rgba(0,0,0,.55);transition:transform .15s,background .15s}
 #bottom-dock-area{background:transparent;border:none;border-radius:0;
  margin:0;padding:10px 18px 14px;box-shadow:none}
 #statusbar{display:none}
+#status-model{display:none!important}
 .status-badge{border-radius:3px;padding:2px 6px}
 .status-token-metric{border-radius:6px;background:var(--bg-card,#181a22);border:1px solid var(--border);padding:4px 8px;font-size:11px;font-family:var(--font-mono);color:var(--dim);display:inline-flex;align-items:center;gap:6px}
 .status-token-metric:hover{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight);color:var(--fg)}
