@@ -798,14 +798,6 @@
         <div id="sidebar-resizer" class="hidden" title="Drag to resize sidebar"></div>
 
         <div id="main-pane">
-            <div id="chat-view">
-                <div id="chat-container">
-                    <div id="chat"></div>
-                    <div id="prompt-rail" class="prompt-rail"></div>
-                </div>
-            </div>
-
-            <div id="editor-pane">
             <div id="tabs-bar">
                 <button id="btn-sidebar-toggle-mobile" class="icon-btn" title="Toggle sidebar" style="display:none;">
                     <span class="icon">menu</span>
@@ -832,6 +824,13 @@
                     <button id="btn-tab-save" class="btn-tab-action" title="Save file [Ctrl+S] · Save As [Ctrl+Shift+S]" style="display:none;">
                         <span class="icon" style="font-size: 15px;">save</span>
                     </button>
+                </div>
+            </div>
+
+            <div id="chat-view">
+                <div id="chat-container">
+                    <div id="chat"></div>
+                    <div id="prompt-rail" class="prompt-rail"></div>
                 </div>
             </div>
 
@@ -891,7 +890,6 @@
                 <div id="attachment-text-preview"></div>
                 <iframe id="html-preview-frame" sandbox="allow-scripts allow-modals"></iframe>
                 <div id="markdown-preview-container" class="md-content"></div>
-            </div>
             </div>
 
             <div id="webdav-modal-overlay" class="vws-backdrop" style="display:none; z-index:900;">

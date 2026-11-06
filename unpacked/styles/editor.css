@@ -5,28 +5,32 @@
     border: none; border-radius: 0;
 }
 
+/* Split View Grid Layout */
 body.split-view-active #main-pane {
-    flex-direction: row;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
 }
-
-/* Editor Pane (Wrapper for split view) */
-#editor-pane {
-    display: flex; flex-direction: column; flex-grow: 1; min-width: 0;
-    overflow: hidden; background: var(--bg-main); position: relative;
-}
-
-body.split-view-active #editor-pane {
-    border-left: 1px solid var(--border);
-    flex: 1 1 50% !important;
-    display: flex !important;
-}
-
 body.split-view-active #chat-view {
+    grid-column: 1;
+    grid-row: 1 / 3;
     display: flex !important;
-    flex: 1 1 50% !important;
-    min-width: 350px;
+    border-right: 1px solid var(--border);
 }
-
+body.split-view-active #bottom-dock-area {
+    grid-column: 1;
+    grid-row: 3;
+    border-right: 1px solid var(--border);
+}
+body.split-view-active #tabs-bar {
+    grid-column: 2;
+    grid-row: 1;
+}
+body.split-view-active #diff-view,
+body.split-view-active #editor-view {
+    grid-column: 2;
+    grid-row: 2 / 4;
+}
 body.split-view-active .editor-tab[data-tab-id="chat"] {
     display: none !important;
 }
