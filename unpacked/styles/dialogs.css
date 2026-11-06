@@ -7,20 +7,21 @@
 #btn-session-toggle, .session-pill-btn {
     width: auto;
     max-width: 380px;
-    min-width: 140px;
-    height: 30px;
-    background: var(--bg-card, #181a22);
-    border: 1px solid var(--border);
+    min-width: 0;
+    height: 28px;
+    background: transparent;
+    border: none;
     border-radius: 6px;
-    padding: 0 10px;
-    color: var(--fg);
+    padding: 0 8px;
+    color: var(--dim);
     font-size: 12px;
+    font-weight: 500;
     display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    justify-content: flex-start;
+    gap: 6px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, color 0.15s;
     font-family: inherit;
     box-sizing: border-box;
     flex-shrink: 1;
@@ -28,27 +29,29 @@
 #btn-session-toggle:hover, #btn-session-toggle.active,
 .session-pill-btn:hover, .session-pill-btn.active {
     background: var(--bg-hover, #1f222d);
-    border-color: var(--border-highlight);
+    color: var(--fg);
 }
 .session-pill-name {
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; flex: 1;
     font-size: 12px; font-weight: 500;
+    color: inherit;
 }
 
 #btn-workspace-display, .workspace-pill-btn {
-    background: var(--bg-card, #181a22);
-    border: 1px solid var(--border);
+    background: transparent;
+    border: none;
     border-radius: 6px;
-    padding: 5px 10px;
-    color: var(--fg);
+    padding: 0 8px;
+    height: 28px;
+    color: var(--dim);
     font-size: 12px;
     font-weight: 500;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, color 0.15s;
     max-width: 220px;
     flex-shrink: 0;
     font-family: inherit;
@@ -56,12 +59,14 @@
 }
 #btn-workspace-display:hover, .workspace-pill-btn:hover {
     background: var(--bg-hover, #1f222d);
-    border-color: var(--border-highlight);
+    color: var(--fg);
 }
 .workspace-pill-name {
     overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; flex-shrink: 1;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
+    color: inherit;
 }
 .workspace-status-dot {
     width: 6px;
@@ -425,11 +430,12 @@
 /* Light Theme Overrides */
 html.theme-light .session-pill-btn:hover,
 html.theme-light .session-pill-btn.active {
-    color: var(--primary);
+    color: var(--fg);
+    background: rgba(0, 0, 0, 0.05);
 }
 html.theme-light .workspace-pill-btn:hover {
-    color: var(--primary);
-    background: rgba(var(--primary-rgb), 0.1);
+    color: var(--fg);
+    background: rgba(0, 0, 0, 0.05);
 }
 
 /* Responsive Modal Overrides */
