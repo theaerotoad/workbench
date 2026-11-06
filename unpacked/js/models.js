@@ -107,7 +107,8 @@ function getAllModelEntries() {
                 url: p.url || '',
                 key: p.key || '',
                 contextWindow: Number(m.context_window) > 0 ? Number(m.context_window) : DEFAULT_CONTEXT_WINDOW,
-                vision: normalizeVisionFlag(m.vision)
+                vision: normalizeVisionFlag(m.vision),
+                useProxy: !!p.useProxy
             });
         });
     });
@@ -167,8 +168,8 @@ function getCurrentModelInfo() {
     const sel = getSelectedModelKey();
     const entry = sel && findModelEntry(sel.providerName, sel.modelName);
     return entry
-        ? { url: entry.url, model: entry.name, key: entry.key, contextWindow: entry.contextWindow, vision: entry.vision }
-        : { url: '', model: '', key: '', contextWindow: DEFAULT_CONTEXT_WINDOW, vision: false };
+        ? { url: entry.url, model: entry.name, key: entry.key, contextWindow: entry.contextWindow, vision: entry.vision, useProxy: !!entry.useProxy }
+        : { url: '', model: '', key: '', contextWindow: DEFAULT_CONTEXT_WINDOW, vision: false, useProxy: false };
 }
 
 // True when the currently selected model is configured with vision (image input) support.
@@ -206,7 +207,7 @@ function shortenModelName(name) {
     return base.replace(/\.(gguf|bin|safetensors)$/i, '');
 }
 
-async function fetchActiveModelName(apiUrl, apiKey, fallbackModel) {
+async function fetchActiveModelName(apiUrl, apiKey, fallbackModel, useProxy = false) {
     if (!apiUrl) return fallbackModel || '';
     const cacheKey = `${apiUrl}::${apiKey || ''}`;
     const cached = _modelsEndpointCache[cacheKey];
@@ -216,9 +217,14 @@ async function fetchActiveModelName(apiUrl, apiKey, fallbackModel) {
     try {
         const headers = {};
         if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+        
+        const targetUrl = `${apiUrl}/models`;
+        const reqUrl = useProxy ? '/proxy' : targetUrl;
+        if (useProxy) headers["x-proxy-target"] = targetUrl;
+        
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 4000);
-        const resp = await fetch(`${apiUrl}/models`, { headers, signal: controller.signal });
+        const resp = await fetch(reqUrl, { headers, signal: controller.signal });
         clearTimeout(timer);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();

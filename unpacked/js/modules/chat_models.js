@@ -246,7 +246,7 @@ window.hideModelPickerWidget = hideModelPickerWidget;
 
 // --- mmNewProvider.js ---
 function mmNewProvider() {
-    return { provider: 'New Provider', url: '', key: '', models: [{ name: '', context_window: DEFAULT_CONTEXT_WINDOW, vision: false }] };
+    return { provider: 'New Provider', url: '', key: '', useProxy: false, models: [{ name: '', context_window: DEFAULT_CONTEXT_WINDOW, vision: false }] };
 }
 
 // --- AST_EXPORTS_START ---
