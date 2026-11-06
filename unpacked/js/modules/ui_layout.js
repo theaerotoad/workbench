@@ -63,8 +63,10 @@ function applySplitView() {
     } else {
         document.body.classList.remove('split-view-active');
     }
-    if (window.monacoEditor) window.monacoEditor.layout();
-    if (window.monacoDiffEditor) window.monacoDiffEditor.layout();
+    requestAnimationFrame(() => {
+        if (window.monacoEditor) window.monacoEditor.layout();
+        if (window.monacoDiffEditor) window.monacoDiffEditor.layout();
+    });
 }
 
 // --- AST_EXPORTS_START ---
@@ -672,9 +674,11 @@ function setEditorSubView(mode, opts = {}) {
         btnViewPreview.classList.remove('active');
         htmlPreviewFrame.style.display = 'none';
         monacoContainer.style.display = 'block';
-        if (monacoEditor) {
-            monacoEditor.layout();
-            if (opts.focus !== false) monacoEditor.focus();
+        if (window.monacoEditor) {
+            requestAnimationFrame(() => {
+                window.monacoEditor.layout();
+                if (opts.focus !== false) window.monacoEditor.focus();
+            });
         }
     }
 }
@@ -756,6 +760,16 @@ window.showImgZoomBar = showImgZoomBar;
 
 // --- switchTab.js ---
 async function switchTab(tabId, opts = {}) {
+    const isSplit = document.body.classList.contains('split-view-active');
+    let focusChat = false;
+    if (isSplit && tabId === 'chat') {
+        focusChat = true;
+        const fileTabs = state.openTabs.filter(t => t !== 'chat');
+        if (fileTabs.length > 0) {
+            tabId = fileTabs[fileTabs.length - 1];
+        }
+    }
+    
     state.activeTab = tabId;
     // Any tab switch that did not come from an explorer click re-syncs the explorer highlight to the active tab.
     if (!opts.keepFocus) { explorerSelection.clear(); explorerAnchor = null; explorerSelectionCleared = false; }
@@ -927,6 +941,10 @@ async function switchTab(tabId, opts = {}) {
         } else {
             // keepFocus: opened from the explorer, so focus stays in the explorer instead of jumping into the editor.
             setEditorSubView('edit', { focus: !opts.keepFocus });
+        }
+
+        if (focusChat && window.focusPrompt) {
+            window.focusPrompt();
         }
     }
 }

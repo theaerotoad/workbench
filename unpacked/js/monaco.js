@@ -187,6 +187,10 @@ function initMonaco() {
 
             if (window.state && window.state.activeTab && window.state.activeTab !== 'chat') {
                 window.switchTab(window.state.activeTab, { keepFocus: true }).catch(console.error);
+            } else {
+                requestAnimationFrame(() => {
+                    if (window.monacoEditor) window.monacoEditor.layout();
+                });
             }
 
             clearTimeout(timeoutId);
