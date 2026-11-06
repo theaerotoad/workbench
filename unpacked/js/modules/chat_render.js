@@ -400,6 +400,40 @@ if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' &
 window.renderMermaidBlock = renderMermaidBlock;
 // --- AST_EXPORTS_END ---
 
+// --- renderSvgBlock.js ---
+function renderSvgBlock(escapedCode) {
+    const rawCode = unescapeHTML(escapedCode).trim();
+    if (!rawCode.toLowerCase().startsWith('<svg')) {
+        return `<div class="code-box svg-box show-code">
+            <div class="code-header">
+                <span class="tool-badge">svg</span>
+                <div style="display:flex; gap:4px; margin-left:auto;">
+                    <button class="btn-toggle-svg" type="button" title="Toggle code / preview" onclick="this.closest('.svg-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                    <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+                </div>
+            </div>
+            <div class="svg-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>Invalid SVG: Must start with &lt;svg</span></div>
+            <div class="code-box-content svg-code-view"><pre><code>${escapedCode}</code></pre></div>
+        </div>`;
+    }
+
+    return `<div class="code-box svg-box">
+        <div class="code-header">
+            <span class="tool-badge">svg</span>
+            <div style="display:flex; gap:4px; margin-left:auto;">
+                <button class="btn-toggle-svg" type="button" title="Toggle code / preview" onclick="this.closest('.svg-box').classList.toggle('show-code')"><span class="icon" style="font-size:13px;">code</span></button>
+                <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
+            </div>
+        </div>
+        <div class="svg-rendered">${rawCode}</div>
+        <div class="code-box-content svg-code-view"><pre><code>${escapedCode}</code></pre></div>
+    </div>`;
+}
+
+// --- AST_EXPORTS_START ---
+window.renderSvgBlock = renderSvgBlock;
+// --- AST_EXPORTS_END ---
+
 // --- formatMarkdownSnippet.js ---
 function formatMarkdownSnippet(text) {
     if (!text) return "";
@@ -412,6 +446,8 @@ function formatMarkdownSnippet(text) {
         const normalizedLang = (lang || '').trim().toLowerCase();
         if (normalizedLang === 'mermaid') {
             codeBlocks.push(renderMermaidBlock(code));
+        } else if (normalizedLang === 'svg') {
+            codeBlocks.push(renderSvgBlock(code));
         } else {
             codeBlocks.push(`<div class="code-box">
                 <div class="code-header">

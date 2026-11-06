@@ -407,6 +407,99 @@ html.theme-light .mermaid-box.show-code .btn-toggle-mermaid {
     background: rgba(var(--primary-rgb), 0.12);
 }
 
+/* SVG Image Boxes */
+.svg-box {
+    margin: 6px 0 10px 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-panel);
+    overflow: hidden;
+    white-space: normal;
+}
+.svg-box .code-header {
+    background: rgba(16, 16, 16, 0.5);
+    border-bottom: 1px solid var(--border);
+}
+.svg-box .btn-toggle-svg {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.15s ease;
+}
+.svg-box .btn-toggle-svg:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.1);
+}
+.svg-box.show-code .btn-toggle-svg {
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.15);
+}
+.svg-box .btn-copy-code {
+    margin-left: 0;
+}
+.svg-rendered {
+    padding: 14px 16px;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 48px;
+    background: rgba(0, 0, 0, 0.14);
+}
+.svg-rendered svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+.svg-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 10px;
+    background: rgba(224, 108, 117, 0.08);
+    border-bottom: 1px solid rgba(224, 108, 117, 0.2);
+    color: var(--red);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.svg-box .svg-code-view {
+    display: none;
+}
+.svg-box.show-code .svg-code-view {
+    display: block;
+    border-top: 1px solid var(--border);
+}
+.svg-box.show-code .svg-rendered {
+    display: none;
+}
+
+/* Light Theme SVG Overrides */
+html.theme-light .svg-box {
+    background: var(--bg-input);
+    border-color: var(--border);
+}
+html.theme-light .svg-rendered {
+    background: rgba(0, 0, 0, 0.02);
+}
+html.theme-light .svg-box .btn-toggle-svg:hover {
+    color: var(--fg);
+    background: rgba(0, 0, 0, 0.08);
+}
+html.theme-light .svg-box.show-code .btn-toggle-svg {
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.12);
+}
+
 /* Tool Execution UI & Groups */
 .tool-group { display: flex; flex-direction: column; gap: 1px; margin: 2px 0; }
 .tool-group-body { display: flex; flex-direction: column; gap: 1px; }
