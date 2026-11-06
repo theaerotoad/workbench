@@ -49,6 +49,28 @@ function applyWindowMode(mode) {}
 window.applyWindowMode = applyWindowMode;
 // --- AST_EXPORTS_END ---
 
+// --- applySplitView.js ---
+function applySplitView() {
+    const isSplit = AppConfig.get('split-view-enabled') === 'true';
+    if (isSplit) {
+        document.body.classList.add('split-view-active');
+        if (state.activeTab === 'chat' && state.openTabs.length > 1) {
+            const fileTabs = state.openTabs.filter(t => t !== 'chat');
+            if (fileTabs.length > 0) {
+                switchTab(fileTabs[fileTabs.length - 1]);
+            }
+        }
+    } else {
+        document.body.classList.remove('split-view-active');
+    }
+    if (window.monacoEditor) window.monacoEditor.layout();
+    if (window.monacoDiffEditor) window.monacoDiffEditor.layout();
+}
+
+// --- AST_EXPORTS_START ---
+window.applySplitView = applySplitView;
+// --- AST_EXPORTS_END ---
+
 // --- clearFileDirty.js ---
 function clearFileDirty(filepath) {
     if (state.dirtyFiles.has(filepath)) {
@@ -740,6 +762,7 @@ async function switchTab(tabId, opts = {}) {
     updateExplorerSelection();
     persistTabState();
 
+    const ep = document.getElementById('editor-pane');
     if (tabId === 'chat') {
         editorView.style.display = 'none';
         diffView.style.display = 'none';
@@ -747,6 +770,7 @@ async function switchTab(tabId, opts = {}) {
         editorModeToggle.style.display = 'none';
         btnTabSave.style.display = 'none';
         focusPrompt();
+        if (ep) ep.style.flex = '0 0 auto';
     } else if (tabId.startsWith('filediff:')) {
         chatView.style.display = 'none';
         editorView.style.display = 'none';
@@ -758,6 +782,7 @@ async function switchTab(tabId, opts = {}) {
         const fp = parts[0];
         const checkpointRange = (parts.length === 3) ? { from: parseInt(parts[1], 10), to: parseInt(parts[2], 10) } : null;
         renderFileDiffView(fp, checkpointRange);
+        if (ep) ep.style.flex = '1';
     } else if (tabId.startsWith('attachment:')) {
         chatView.style.display = 'none';
         diffView.style.display = 'none';
@@ -765,6 +790,7 @@ async function switchTab(tabId, opts = {}) {
         state.currentEditorPath = null;
         editorModeToggle.style.display = 'none';
         btnTabSave.style.display = 'none';
+        if (ep) ep.style.flex = '1';
 
         let att = state.attachmentStore[tabId.replace('attachment:', '')];
         monacoContainer.style.display = 'none';
@@ -810,6 +836,7 @@ async function switchTab(tabId, opts = {}) {
         state.currentEditorPath = null;
         editorModeToggle.style.display = 'none';
         btnTabSave.style.display = 'none';
+        if (ep) ep.style.flex = '1';
 
         monacoContainer.style.display = 'none';
         htmlPreviewFrame.style.display = 'none';
@@ -828,6 +855,7 @@ async function switchTab(tabId, opts = {}) {
         editorView.style.display = 'flex';
         state.currentEditorPath = tabId;
         hideEditorSaveError();
+        if (ep) ep.style.flex = '1';
         attachmentTextPreview.style.display = 'none';
         const mdContainer = document.getElementById('markdown-preview-container');
         if (mdContainer) mdContainer.style.display = 'none';

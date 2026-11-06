@@ -23,7 +23,8 @@ const CONFIG_DEFAULTS = {
     'sidebar-width': '314',
     'webdav-sync-agent': 'false',
     'editor-word-wrap': 'false',
-    'show-code-preview': 'true'
+    'show-code-preview': 'true',
+    'split-view-enabled': 'false'
 };
 
 const CONFIG_FILE = '.agent/config.json';
