@@ -101,17 +101,18 @@ body{font-family:var(--font-ui);
 #chat{padding:22px 28px;font-size:13.5px;line-height:1.65}
 #chat>*{animation:rise .3s ease both}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.chat-bubble{max-width:72%;padding:10px 16px;border-radius:4px;
- background:#151517;border:1px solid var(--border);
- box-shadow:none}
-#chat>.log-entry.md-content{background:#151517;border:1px solid var(--border);
- border-radius:4px;padding:12px 18px;margin:6px 0 6px auto; width:fit-content; max-width:85%; display:block;}
+.chat-bubble{max-width:720px;padding:10px 16px;border-radius:12px;
+ background:var(--bg-card,#181a22);border:1px solid var(--border);
+ box-shadow:0 2px 8px rgba(0,0,0,.25)}
+#chat>.log-entry.md-content{background:rgba(24,26,34,.75);border:1px solid var(--border);
+ border-radius:12px;padding:18px 22px;margin:10px 0;width:100%;max-width:900px;display:block;
+ box-shadow:0 4px 16px rgba(0,0,0,.3)}
 .md-content .md-link{color:var(--accent)}
 .md-content .md-table{border-radius:3px}
 .code-box{border-radius:3px;background:#111113}
 .code-header{background:rgba(255,255,255,.03)}
-.thought-body,.tool-output-text,.compression-summary{background:#101012;border:1px solid var(--border);border-radius:3px}
-.thought-header,.tool-box-header,.tool-group-header{border-radius:2px}
+.thought-body,.tool-output-text,.compression-summary{background:#101012;border:1px solid var(--border);border-radius:6px}
+.thought-header,.tool-box-header,.tool-group-header{border-radius:4px}
 .running-tool-box .tool-box-header{background:linear-gradient(90deg,transparent 0%,rgba(var(--accent-rgb),.05) 35%,
  rgba(var(--accent-rgb),.16) 50%,rgba(var(--accent-rgb),.05) 65%,transparent 100%);background-size:250% 100%}
 .mode-chat-chip{border-radius:3px}
@@ -211,7 +212,8 @@ padding:7px 14px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
  #sidebar{border-radius:0 4px 4px 0;background:#0e0e10;margin-right:0}
  #bottom-dock-area{margin:0 8px 8px;border-radius:4px}
  #chat{padding:14px}
- .chat-bubble{max-width:90%}
+ .chat-bubble{max-width:92%}
+ #chat>.log-entry.md-content{max-width:100%;padding:14px}
 }
 
 /* ===== Light Theme Overrides ===== */
@@ -251,7 +253,8 @@ html.theme-light #sidebar, html.theme-light #main-pane {
  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 12px 32px rgba(0,0,0,0.08);
 }
 html.theme-light #chat-view, html.theme-light #chat-container, html.theme-light #chat, html.theme-light #tabs-bar { background: transparent; }
-html.theme-light #chat>.log-entry.md-content, html.theme-light .chat-bubble { background: #f7f7f9; }
+html.theme-light #chat>.log-entry.md-content, html.theme-light .chat-bubble { background: #f7f7f9; border-color: var(--border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+html.theme-light .gen-stat-pill { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--dim); }
 html.theme-light .code-box { background: var(--bg-input); border-color: var(--border); }
 html.theme-light .code-box pre, html.theme-light .code-box code { color: var(--fg); }
 html.theme-light .code-box .btn-copy-code, html.theme-light .code-box .tool-badge { color: var(--dim); }
