@@ -131,7 +131,8 @@ box-shadow:0 6px 20px rgba(0,0,0,.55);transition:transform .15s,background .15s}
  margin:0;padding:10px 18px 14px;box-shadow:none}
 #statusbar{display:none}
 .status-badge{border-radius:3px;padding:2px 6px}
-.status-token-metric{border-radius:6px;background:#111216;border:1px solid var(--border);padding:3px 8px}
+.status-token-metric{border-radius:6px;background:var(--bg-card,#181a22);border:1px solid var(--border);padding:4px 8px;font-size:11px;font-family:var(--font-mono);color:var(--dim);display:inline-flex;align-items:center;gap:6px}
+.status-token-metric:hover{background:var(--bg-hover,#1f222d);border-color:var(--border-highlight);color:var(--fg)}
 #prompt-bar{background:transparent;border-top:none;padding:0}
 #prompt-input-row{background:var(--bg-card,#181a22);border:1px solid var(--border);border-radius:12px;padding:6px 10px;transition:border-color .2s,box-shadow .2s}
 #prompt-input-row:focus-within{border-color:rgba(var(--accent-rgb),.5);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.12)}
@@ -270,7 +271,8 @@ html.theme-light #bottom-dock-area { background: transparent; box-shadow: none; 
 html.theme-light #prompt-input-row { background: #ffffff; border-color: rgba(0,0,0,0.12); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
 html.theme-light .mode-segmented-group { background: #ffffff; border-color: rgba(0,0,0,0.1); }
 html.theme-light .mode-tab-btn.active { background: rgba(0,0,0,0.08); color: var(--fg); }
-html.theme-light .status-token-metric { background: #ffffff; border-color: rgba(0,0,0,0.1); }
+html.theme-light .status-token-metric { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--dim); }
+html.theme-light .status-token-metric:hover { background: rgba(0,0,0,0.04); color: var(--fg); }
 html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 html.theme-light .session-item-row.active { box-shadow: 0 0 20px rgba(var(--accent-rgb),0.15); }
 html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }

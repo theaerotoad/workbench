@@ -106,6 +106,22 @@
     cursor: pointer; max-width: 320px;
     transition: background 0.15s, border-color 0.15s;
 }
+.status-token-metric {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-card, #181a22); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font-size: 11px;
+    font-weight: 500; font-family: var(--font-mono);
+    color: var(--dim); cursor: default;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    flex-shrink: 0; user-select: none;
+}
+.status-token-metric:hover {
+    background: var(--bg-hover, #1f222d); border-color: var(--border-highlight);
+    color: var(--fg);
+}
+.status-token-metric svg {
+    display: block; flex-shrink: 0;
+}
 #model-select-btn:hover, #model-select-btn.open { border-color: var(--primary); }
 #model-select-btn .msb-name {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
