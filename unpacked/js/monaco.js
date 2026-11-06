@@ -106,7 +106,10 @@ function initMonaco() {
                         endLine: sel.endLineNumber,
                         code: selectedCode
                     });
-                    switchTab('chat');
+                    
+                    if (!document.body.classList.contains('split-view-active')) {
+                        switchTab('chat');
+                    }
                 }
             });
 
