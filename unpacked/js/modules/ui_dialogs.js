@@ -31,6 +31,9 @@ function applyConfigToUI() {
                 document.body.classList.add('hide-code-preview');
             }
         });
+    }
+    if (!window._splitViewBound && window.initDuoSwitch) {
+        window._splitViewBound = true;
         window.initDuoSwitch('settings-split-view', (isOn) => {
             AppConfig.set('split-view-enabled', isOn ? 'true' : 'false');
             if (window.applySplitView) window.applySplitView();

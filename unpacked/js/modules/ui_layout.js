@@ -1133,7 +1133,7 @@ window.withStorageShim = withStorageShim;
 // --- keyboardShortcuts.js ---
 document.addEventListener('keydown', (e) => {
     // Ctrl+[ or Cmd+[ -> Toggle Sidebar
-    if ((e.ctrlKey || e.metaKey) && e.key === '[') {
+    if ((e.ctrlKey || e.metaKey) && (e.key === '[' || e.code === 'BracketLeft')) {
         const sidebar = document.getElementById('sidebar');
         if (sidebar && window.setSidebarCollapsed) {
             window.setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
@@ -1146,7 +1146,7 @@ document.addEventListener('keydown', (e) => {
     }
     
     // Ctrl+] or Cmd+] -> Toggle Widescreen Split View
-    if ((e.ctrlKey || e.metaKey) && e.key === ']') {
+    if ((e.ctrlKey || e.metaKey) && (e.key === ']' || e.code === 'BracketRight')) {
         const current = AppConfig.get('split-view-enabled') === 'true';
         AppConfig.set('split-view-enabled', current ? 'false' : 'true');
         const sw = document.getElementById('settings-split-view');
