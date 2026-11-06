@@ -1129,3 +1129,30 @@ function withStorageShim(html) {
 // --- AST_EXPORTS_START ---
 window.withStorageShim = withStorageShim;
 // --- AST_EXPORTS_END ---
+
+// --- keyboardShortcuts.js ---
+document.addEventListener('keydown', (e) => {
+    // Ctrl+[ or Cmd+[ -> Toggle Sidebar
+    if ((e.ctrlKey || e.metaKey) && e.key === '[') {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && window.setSidebarCollapsed) {
+            window.setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
+        } else {
+            const collapseBtn = document.getElementById('btn-sidebar-collapse');
+            if (collapseBtn) collapseBtn.click();
+        }
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    // Ctrl+] or Cmd+] -> Toggle Widescreen Split View
+    if ((e.ctrlKey || e.metaKey) && e.key === ']') {
+        const current = AppConfig.get('split-view-enabled') === 'true';
+        AppConfig.set('split-view-enabled', current ? 'false' : 'true');
+        const sw = document.getElementById('settings-split-view');
+        if (sw) setDuoSwitch(sw, !current);
+        if (window.applySplitView) window.applySplitView();
+        e.preventDefault();
+        e.stopPropagation();
+    }
+}, true); // Use capture phase to intercept the keys before the Monaco editor can
