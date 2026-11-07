@@ -158,15 +158,16 @@ body {
     width: 20px;
     height: 20px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.06);
+    background: transparent;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--dim);
     flex-shrink: 0;
 }
 .header-crumb-badge svg {
     display: block;
+    width: 20px;
+    height: 20px;
 }
 .header-crumb-title {
     color: var(--dim);

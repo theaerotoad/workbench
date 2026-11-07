@@ -307,12 +307,9 @@
 }
 #about-modal-close:hover { color: var(--fg); background: rgba(255,255,255,0.06); }
 #about-modal .about-logo { width: 72px; height: 72px; margin: 4px auto 14px; }
-#about-modal .about-logo svg { width: 100%; height: 100%; }
-#about-modal .about-logo path { stroke: rgb(88, 88, 88); }
-#about-modal .about-logo .ion-bolt {
-    stroke: rgb(229, 192, 123);
-    filter: drop-shadow(0 0 2px rgba(229, 192, 123, 0.5)) drop-shadow(0 0 5px rgba(229, 192, 123, 0.25));
-    animation: ionBoltBreathe 4.5s ease-in-out infinite;
+#about-modal .about-logo svg { width: 100%; height: 100%; display: block; border-radius: 13px; }
+#about-modal .about-logo .workbench-mark {
+    filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.6)) drop-shadow(0 0 8px rgba(56, 189, 248, 0.3));
 }
 #about-modal .about-name { text-align: center; font-size: 16px; font-weight: 700; color: var(--fg); }
 #about-modal .about-version {

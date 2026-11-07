@@ -691,14 +691,14 @@ window.setEditorSubView = setEditorSubView;
 function setFaviconBoltColor(rgbTriple) {
     const link = document.getElementById('ion-favicon');
     if (!link) return;
-    const hex = '#' + rgbTriple
+    const hex = rgbTriple.startsWith('#') ? rgbTriple : ('#' + rgbTriple
         .split(',')
         .map(n => parseInt(n.trim(), 10).toString(16).padStart(2, '0'))
-        .join('');
-    const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'>"
-        + "<path d='M7 6L3 12L7 18' stroke='#585858' stroke-width='2'/>"
-        + "<path d='M13 4L8 12H16L11 20' stroke='" + hex + "' stroke-width='2'/>"
-        + "<path d='M17 6L21 12L17 18' stroke='#585858' stroke-width='2'/></svg>";
+        .join(''));
+    const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>"
+        + "<rect width='200' height='200' rx='36' fill='#0F172A'/>"
+        + "<polygon points='100,30 160,65 160,135 100,170 40,135 40,65' fill='none' stroke='#334155' stroke-width='8' stroke-linejoin='round'/>"
+        + "<path d='M68 82 L84 120 L100 94 L116 120 L132 82' fill='none' stroke='" + hex + "' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>";
     link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
@@ -1047,7 +1047,7 @@ function updateGenGlow() {
         }
     }
 
-    setFaviconBoltColor(logoActive ? resolveGlowColor(status) : '88, 88, 88');
+    setFaviconBoltColor(logoActive ? resolveGlowColor(status) : '56, 189, 248');
 }
 
 // --- AST_EXPORTS_START ---
