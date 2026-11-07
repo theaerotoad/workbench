@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="workbench logo" width="96" height="96">
+</p>
+
 # workbench
 
 This is a modified version of the [Ion](https://github.com/fredconex/Ion).  It is intended as an entirely browser-based LLM coding / research setup you can run locally, with external OpenAI compatible LLM API calls.
