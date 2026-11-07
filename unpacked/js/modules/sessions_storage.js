@@ -500,7 +500,7 @@ function updateSessionPillLabel() {
     // name. Show the app-level "Workspaces" title instead of a session id.
     if (!rootHandle) {
         if (el) el.innerText = '';
-        document.title = 'Ion - Workspaces';
+        document.title = 'workbench';
         return;
     }
 
@@ -508,7 +508,7 @@ function updateSessionPillLabel() {
     let display = (s && s.title) ? sanitizeSessionTitle(s.title) : '';
     if (!display) display = 'Untitled Session';
     if (el) el.innerText = display;
-    document.title = `Ion - ${display}`;
+    document.title = `workbench - ${display}`;
 }
 
 // --- AST_EXPORTS_START ---

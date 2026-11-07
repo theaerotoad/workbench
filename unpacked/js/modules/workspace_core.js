@@ -29,7 +29,7 @@ function closeWorkspace() {
     if (rootHandle.isVirtual) vfsFlush(rootHandle);
     rootHandle = null;
     updateWorkspaceTitle();
-    updateSessionPillLabel();   // -> "Ion - Workspaces"
+    updateSessionPillLabel();   // -> "workbench - Workspaces"
 
     // Drop the session that belonged to the workspace we just left: the next
     // workspace creates its own set, and nothing from this one can leak back.

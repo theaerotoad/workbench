@@ -163,7 +163,7 @@ const FILE_ICON_MAP = {
 const DEFAULT_TOOLS_SOURCE = '/api/jsutils';
 const GITHUB_TOOLS_BRANCH = 'main';
 const GITHUB_TOOLS_PATH = '';
-const GITHUB_TOOLS_REPO = 'theaerotoad/Ion-tools';
+const GITHUB_TOOLS_REPO = 'theaerotoad/workbench-tools';
 const GLOW_STATUS_COLORS = {
     generating: 'var(--primary-rgb)',
     asking: '224, 108, 117',
