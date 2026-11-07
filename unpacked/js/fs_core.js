@@ -330,10 +330,47 @@ export async function readFileTextSniffed(file) {
     return { binary: false, text, encoding: s.encoding };
 }
 
+export async function readImageBlobUrl(filepath) {
+    if (!filepath) return null;
+    if (typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
+        return registry.files[filepath];
+    }
+    try {
+        let blob = null;
+        if (window.rootHandle) {
+            try {
+                const handle = await getHandleByPath(filepath);
+                if (handle && typeof handle.getFile === 'function') {
+                    const file = await handle.getFile();
+                    const mime = file.type || (window.guessImageMimeType ? window.guessImageMimeType(filepath) : '') || 'image/png';
+                    blob = file.slice(0, file.size, mime);
+                }
+            } catch (e) {}
+        }
+        if (!blob && registry.files[filepath] !== undefined) {
+            const val = registry.files[filepath];
+            if (val instanceof Blob) {
+                blob = val;
+            } else if (typeof val === 'string' && val.startsWith('data:')) {
+                return val;
+            } else {
+                const mime = (window.guessImageMimeType ? window.guessImageMimeType(filepath) : '') || 'image/png';
+                blob = new Blob([val], { type: mime });
+            }
+        }
+        if (blob) {
+            return URL.createObjectURL(blob);
+        }
+    } catch (e) {
+        console.warn('readImageBlobUrl error for', filepath, e);
+    }
+    return null;
+}
+
 export async function readImageDataUrl(filepath) {
     if (!window.isImageFilePath(filepath)) return null;
 
-    if (registry.meta[filepath]?.virtual && typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
+    if (typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
         return registry.files[filepath];
     }
 
@@ -341,11 +378,21 @@ export async function readImageDataUrl(filepath) {
     if (!handle && window.rootHandle) {
         try { handle = await getHandleByPath(filepath); } catch (e) { handle = null; }
     }
+    if (!handle && registry.files[filepath] instanceof Blob) {
+        const blob = registry.files[filepath];
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+            reader.readAsDataURL(blob);
+        });
+    }
     if (!handle) return null;
 
     try {
         const file = await handle.getFile();
-        const blob = file.slice(0, file.size, file.type || window.guessImageMimeType(filepath));
+        const mime = file.type || (window.guessImageMimeType ? window.guessImageMimeType(filepath) : '') || 'image/png';
+        const blob = file.slice(0, file.size, mime);
         return await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
@@ -774,7 +821,7 @@ Object.entries({
     fs,
     vfsChanged, vfsCheckName, vfsErr, vfsFlushIfDirty, vfsFlush, vfsPutDir, vfsPutFile,
     vfsReadBlob, vfsRoot, vfsWrap, rawRename, writeAgentFileToDisk, writeDisk,
-    readFileTextSniffed, readImageDataUrl, sniffBytes, sniffWorkspaceFile,
+    readFileTextSniffed, readImageDataUrl, readImageBlobUrl, sniffBytes, sniffWorkspaceFile,
     isBinaryByExtension, isBinaryContent, resolveIsBinary, encodeForDisk,
     getDirectoryHandleByPath, getHandleByPath, fileExistsOnDisk, workspaceDirExists,
     isHardProtectedPath, isUnderDirPattern, matchesPattern, globToRegExp, dirnameOf

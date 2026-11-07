@@ -1079,8 +1079,11 @@ async function updateMarkdownPreview(filepath, content) {
     }
     
     const scrollPos = mdContainer.scrollTop;
-    mdContainer.innerHTML = `<div class="md-content">${window.formatMarkdownSnippet(latestContent)}</div>`;
+    mdContainer.innerHTML = `<div class="md-content">${window.formatMarkdownSnippet(latestContent, filepath)}</div>`;
     mdContainer.scrollTop = scrollPos;
+    if (window.resolveMarkdownImages) {
+        await window.resolveMarkdownImages(mdContainer, filepath);
+    }
 }
 
 // --- AST_EXPORTS_START ---

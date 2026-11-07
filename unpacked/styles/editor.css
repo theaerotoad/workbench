@@ -233,6 +233,34 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
 #markdown-preview-container > *:first-child { margin-top: 0; }
 #markdown-preview-container > *:last-child { margin-bottom: 0; }
 
+/* Markdown Images & Placeholders */
+.md-content img,
+.md-image {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    margin: 8px 0;
+    display: block;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    background: var(--bg-input, rgba(0, 0, 0, 0.1));
+}
+.md-image.md-image-loading {
+    min-width: 32px;
+    min-height: 32px;
+    opacity: 0.5;
+}
+.md-image.md-image-error {
+    display: inline-block;
+    padding: 6px 10px;
+    background: rgba(224, 108, 117, 0.08);
+    border: 1px dashed var(--red, #e06c75);
+    color: var(--red, #e06c75);
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+    border-radius: 4px;
+}
+
 /* Pill Buttons (Toolbar actions) */
 .pill-btn {
     background: var(--bg-input); color: var(--fg);

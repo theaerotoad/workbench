@@ -434,8 +434,43 @@ function renderSvgBlock(escapedCode) {
 window.renderSvgBlock = renderSvgBlock;
 // --- AST_EXPORTS_END ---
 
+// --- resolveRelativePath.js ---
+function resolveRelativePath(baseFileOrDir, relPath) {
+    if (!relPath) return '';
+    if (/^(?:https?:|data:|blob:|\/\/)/i.test(relPath)) return relPath;
+
+    let cleanRel = relPath.split('?')[0].split('#')[0];
+    try { cleanRel = decodeURIComponent(cleanRel); } catch (e) {}
+
+    const isRootRelative = cleanRel.startsWith('/') || cleanRel.startsWith('\\');
+    cleanRel = cleanRel.replace(/^[/\\]+/, '');
+
+    let dirParts = [];
+    if (baseFileOrDir && !isRootRelative) {
+        const parts = baseFileOrDir.split('/').filter(Boolean);
+        parts.pop();
+        dirParts = parts;
+    }
+
+    const segments = cleanRel.split(/[/\\]+/).filter(Boolean);
+    const resolved = [...dirParts];
+    for (const seg of segments) {
+        if (seg === '.') continue;
+        if (seg === '..') {
+            if (resolved.length > 0) resolved.pop();
+        } else {
+            resolved.push(seg);
+        }
+    }
+    return resolved.join('/');
+}
+
+// --- AST_EXPORTS_START ---
+window.resolveRelativePath = resolveRelativePath;
+// --- AST_EXPORTS_END ---
+
 // --- formatMarkdownSnippet.js ---
-function formatMarkdownSnippet(text) {
+function formatMarkdownSnippet(text, basePath = "") {
     if (!text) return "";
     const cleanText = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     let html = escapeHTML(cleanText);
@@ -570,11 +605,11 @@ function formatMarkdownSnippet(text) {
                 j++;
             }
             let tableHTML = '<table class="md-table"><thead><tr>';
-            headerCells.forEach((c, ci) => { tableHTML += `<th${aligns[ci] ? ` style="text-align:${aligns[ci]}"` : ''}>${inlineMarkdown(c)}</th>`; });
+            headerCells.forEach((c, ci) => { tableHTML += `<th${aligns[ci] ? ` style="text-align:${aligns[ci]}"` : ''}>${inlineMarkdown(c, basePath)}</th>`; });
             tableHTML += '</tr></thead><tbody>';
             rows.forEach(r => {
                 tableHTML += '<tr>';
-                r.forEach((c, ci) => { tableHTML += `<td${aligns[ci] ? ` style="text-align:${aligns[ci]}"` : ''}>${inlineMarkdown(c)}</td>`; });
+                r.forEach((c, ci) => { tableHTML += `<td${aligns[ci] ? ` style="text-align:${aligns[ci]}"` : ''}>${inlineMarkdown(c, basePath)}</td>`; });
                 tableHTML += '</tr>';
             });
             tableHTML += '</tbody></table>';
@@ -593,7 +628,7 @@ function formatMarkdownSnippet(text) {
         if (headingMatch) {
             flushParagraph(); closeLists(); closeBlockquote();
             const level = headingMatch[1].length;
-            out.push(`<h${level} class="md-heading">${inlineMarkdown(headingMatch[2])}</h${level}>`);
+            out.push(`<h${level} class="md-heading">${inlineMarkdown(headingMatch[2], basePath)}</h${level}>`);
             continue;
         }
 
@@ -601,7 +636,7 @@ function formatMarkdownSnippet(text) {
         if (bqMatch) {
             flushParagraph(); closeLists();
             if (!inBlockquote) { out.push('<blockquote>'); inBlockquote = true; }
-            out.push(`<div>${inlineMarkdown(bqMatch[1])}</div>`);
+            out.push(`<div>${inlineMarkdown(bqMatch[1], basePath)}</div>`);
             continue;
         } else {
             closeBlockquote();
@@ -629,7 +664,7 @@ function formatMarkdownSnippet(text) {
             } else {
                 if (listStack[listStack.length - 1].liOpen) out.push('</li>');
             }
-            out.push(`<li>${inlineMarkdown(content)}`);
+            out.push(`<li>${inlineMarkdown(content, basePath)}`);
             listStack[listStack.length - 1].liOpen = true;
             continue;
         } else {
@@ -647,7 +682,7 @@ function formatMarkdownSnippet(text) {
             continue;
         }
 
-        paragraphBuf.push(inlineMarkdown(line));
+        paragraphBuf.push(inlineMarkdown(line, basePath));
     }
     flushParagraph();
     closeLists();
@@ -667,8 +702,40 @@ window.formatMarkdownSnippet = formatMarkdownSnippet;
 // --- AST_EXPORTS_END ---
 
 // --- inlineMarkdown.js ---
-function inlineMarkdown(text) {
+function inlineMarkdown(text, basePath = "") {
     let s = text;
+
+    // Parse images: ![alt](url "title")
+    s = s.replace(/!\[([^\]\n]*)\]\(([\s\S]*?)\)/g, (m, alt, target) => {
+        target = (target || '').trim();
+        if (!target) return m;
+
+        let url = target;
+        let title = '';
+        const titleMatch = target.match(/^([^\s]+)(?:\s+(?:&quot;|&#39;|["'])(.*?)(?:&quot;|&#39;|["']))?$/);
+        if (titleMatch) {
+            url = titleMatch[1];
+            title = titleMatch[2] || '';
+        }
+
+        if (/^javascript:/i.test(url.trim())) return escapeHTML(m);
+
+        const isWebOrData = /^(?:https?:|data:image\/|blob:|\/\/)/i.test(url);
+        const titleAttr = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+        const altAttr = alt ? alt.replace(/"/g, '&quot;') : '';
+
+        if (isWebOrData) {
+            return `<img class="md-image" src="${url}" alt="${altAttr}"${titleAttr} loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('md-image-error');" />`;
+        } else {
+            const fileBase = basePath || '';
+            const resolvedPath = resolveRelativePath(fileBase, url);
+            const baseAttr = fileBase ? ` data-base-path="${fileBase.replace(/"/g, '&quot;')}"` : '';
+            const resolvedAttr = resolvedPath ? ` data-resolved-path="${resolvedPath.replace(/"/g, '&quot;')}"` : '';
+            const placeholder = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
+            return `<img class="md-image md-image-loading" src="${placeholder}" data-src="${url.replace(/"/g, '&quot;')}"${resolvedAttr}${baseAttr} alt="${altAttr}"${titleAttr} loading="lazy" />`;
+        }
+    });
+
     s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|#[^\s)]*)\)/g, (m, label, url) => {
         if (/^javascript:|^data:/i.test(url)) return escapeHTML(m);
         return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="md-link">${label}</a>`;
@@ -685,6 +752,118 @@ function inlineMarkdown(text) {
 // --- AST_EXPORTS_START ---
 window.inlineMarkdown = inlineMarkdown;
 // --- AST_EXPORTS_END ---
+
+// --- resolveMarkdownImages.js ---
+async function resolveMarkdownImages(container, basePath = '') {
+    if (!container) return;
+    const images = container.querySelectorAll('img[data-src]:not([data-resolved])');
+    if (!images.length) return;
+
+    for (const img of images) {
+        img.setAttribute('data-resolved', 'pending');
+        const rawSrc = img.getAttribute('data-src');
+        if (!rawSrc) continue;
+
+        if (/^(?:https?:|data:|blob:|\/\/)/i.test(rawSrc)) {
+            img.src = rawSrc;
+            img.classList.remove('md-image-loading');
+            img.setAttribute('data-resolved', 'true');
+            continue;
+        }
+
+        const fileBase = img.getAttribute('data-base-path') || basePath || '';
+        const targetPath = img.getAttribute('data-resolved-path') || resolveRelativePath(fileBase, rawSrc);
+
+        try {
+            let url = null;
+            if (window.readImageBlobUrl) {
+                url = await window.readImageBlobUrl(targetPath);
+            }
+            if (!url && window.readImageDataUrl) {
+                url = await window.readImageDataUrl(targetPath);
+            }
+            if (!url && window.vfsReadBlob) {
+                const blob = await window.vfsReadBlob(targetPath);
+                if (blob) {
+                    url = URL.createObjectURL(blob);
+                }
+            }
+
+            if (url) {
+                img.src = url;
+                img.classList.remove('md-image-loading');
+                img.setAttribute('data-resolved', 'true');
+            } else {
+                img.classList.remove('md-image-loading');
+                img.classList.add('md-image-error');
+                img.alt = `[Image not found: ${rawSrc}]`;
+                img.setAttribute('data-resolved', 'failed');
+            }
+        } catch (e) {
+            console.warn('Failed to resolve markdown image:', targetPath, e);
+            img.classList.remove('md-image-loading');
+            img.classList.add('md-image-error');
+            img.alt = `[Failed to load image: ${rawSrc}]`;
+            img.setAttribute('data-resolved', 'failed');
+        }
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.resolveMarkdownImages = resolveMarkdownImages;
+// --- AST_EXPORTS_END ---
+
+let mdImageDebounceTimer = null;
+function scheduleChatImageResolution() {
+    if (mdImageDebounceTimer) return;
+    mdImageDebounceTimer = setTimeout(() => {
+        mdImageDebounceTimer = null;
+        const chatEl = document.getElementById('chat');
+        if (chatEl) {
+            resolveMarkdownImages(chatEl, '');
+        }
+    }, 50);
+}
+
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && !window._mdImageObserver) {
+    window._mdImageObserver = new MutationObserver((mutations) => {
+        let hasNewImages = false;
+        for (const m of mutations) {
+            for (const node of m.addedNodes) {
+                if (node.nodeType === 1) {
+                    if (node.tagName === 'IMG' && node.hasAttribute('data-src') && !node.hasAttribute('data-resolved')) {
+                        hasNewImages = true;
+                        break;
+                    }
+                    if (node.querySelector && node.querySelector('img[data-src]:not([data-resolved])')) {
+                        hasNewImages = true;
+                        break;
+                    }
+                }
+            }
+            if (hasNewImages) break;
+        }
+        if (hasNewImages) {
+            scheduleChatImageResolution();
+        }
+    });
+
+    const setupChatImageObserver = () => {
+        const chatEl = document.getElementById('chat');
+        if (chatEl) {
+            scheduleChatImageResolution();
+            window._mdImageObserver.observe(chatEl, { childList: true, subtree: true });
+        } else {
+            setTimeout(setupChatImageObserver, 50);
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupChatImageObserver);
+    } else {
+        setupChatImageObserver();
+    }
+}
 
 // --- moveCopyActionIntoStatsRow.js ---
 function moveCopyActionIntoStatsRow(targetDiv, statsRow) {
