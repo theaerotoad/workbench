@@ -688,21 +688,85 @@ window.setEditorSubView = setEditorSubView;
 // --- AST_EXPORTS_END ---
 
 // --- setFaviconBoltColor.js ---
+const WORKBENCH_SVG_STATIC = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <polygon points="100,30 160,65 160,135 100,170 40,135 40,65" fill="none" stroke="#334155" stroke-width="8" stroke-linejoin="round" />
+  <path d="M68 82 L84 120 L100 94 L116 120 L132 82" fill="none" stroke="#38BDF8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+</svg>`;
+
+const WORKBENCH_SVG_ANIMATED = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <style>
+      .hex-edge {
+        stroke: #38BDF8;
+        stroke-width: 8;
+        stroke-linecap: round;
+        opacity: 0;
+        animation: pulseEdge 6s infinite ease-in-out;
+      }
+      .edge-1 { animation-delay: 0s; }
+      .edge-2 { animation-delay: 1s; }
+      .edge-3 { animation-delay: 2s; }
+      .edge-4 { animation-delay: 3s; }
+      .edge-5 { animation-delay: 4s; }
+      .edge-6 { animation-delay: 5s; }
+
+      @keyframes pulseEdge {
+        0% {
+          opacity: 0;
+          filter: drop-shadow(0 0 0px transparent);
+        }
+        3% {
+          opacity: 1;
+          filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.7));
+        }
+        14% {
+          opacity: 1;
+          filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.7));
+        }
+        20% {
+          opacity: 0;
+          filter: drop-shadow(0 0 0px transparent);
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+    </style>
+  </defs>
+  <polygon points="100,30 160,65 160,135 100,170 40,135 40,65" fill="none" stroke="#334155" stroke-width="8" stroke-linejoin="round" />
+  <line x1="100" y1="30" x2="160" y2="65" class="hex-edge edge-1" />
+  <line x1="160" y1="65" x2="160" y2="135" class="hex-edge edge-2" />
+  <line x1="160" y1="135" x2="100" y2="170" class="hex-edge edge-3" />
+  <line x1="100" y1="170" x2="40" y2="135" class="hex-edge edge-4" />
+  <line x1="40" y1="135" x2="40" y2="65" class="hex-edge edge-5" />
+  <line x1="40" y1="65" x2="100" y2="30" class="hex-edge edge-6" />
+  <path d="M68 82 L84 120 L100 94 L116 120 L132 82" fill="none" stroke="#38BDF8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+</svg>`;
+
+let isBrandLogoActive = null;
+
+function setBrandLogoActive(active) {
+    const isAct = !!active;
+    if (isBrandLogoActive === isAct) return;
+    isBrandLogoActive = isAct;
+
+    const badge = document.getElementById('header-brand-icon') || document.querySelector('.header-crumb-badge');
+    if (badge) {
+        badge.innerHTML = isAct ? WORKBENCH_SVG_ANIMATED : WORKBENCH_SVG_STATIC;
+    }
+
+    const favicon = document.getElementById('ion-favicon');
+    if (favicon) {
+        favicon.href = 'data:image/svg+xml,' + encodeURIComponent(isAct ? WORKBENCH_SVG_ANIMATED : WORKBENCH_SVG_STATIC);
+    }
+}
+
 function setFaviconBoltColor(rgbTriple) {
-    const link = document.getElementById('ion-favicon');
-    if (!link) return;
-    const hex = rgbTriple.startsWith('#') ? rgbTriple : ('#' + rgbTriple
-        .split(',')
-        .map(n => parseInt(n.trim(), 10).toString(16).padStart(2, '0'))
-        .join(''));
-    const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>"
-        + "<rect width='200' height='200' rx='36' fill='#0F172A'/>"
-        + "<polygon points='100,30 160,65 160,135 100,170 40,135 40,65' fill='none' stroke='#334155' stroke-width='8' stroke-linejoin='round'/>"
-        + "<path d='M68 82 L84 120 L100 94 L116 120 L132 82' fill='none' stroke='" + hex + "' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/></svg>";
-    link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+    setBrandLogoActive(!!rgbTriple && rgbTriple !== '88, 88, 88' && rgbTriple !== '56, 189, 248');
 }
 
 // --- AST_EXPORTS_START ---
+window.setBrandLogoActive = setBrandLogoActive;
 window.setFaviconBoltColor = setFaviconBoltColor;
 // --- AST_EXPORTS_END ---
 
@@ -1038,16 +1102,16 @@ function updateGenGlow() {
     if (status) glowEl.style.setProperty('--glow-rgb', GLOW_STATUS_COLORS[status]);
     else glowEl.style.removeProperty('--glow-rgb');
 
+    const logoActive = !!status && (status === 'generating' || status === 'asking' || status === 'retrying');
+    setBrandLogoActive(logoActive);
+
     const logoEl = document.getElementById('ion-logo');
-    const logoActive = !!status && (status === 'generating' || status === 'asking');
     if (logoEl) {
         logoEl.classList.toggle('active', logoActive);
-        if (logoActive) {
+        if (logoActive && status) {
             logoEl.style.setProperty('--glow-rgb', GLOW_STATUS_COLORS[status]);
         }
     }
-
-    setFaviconBoltColor(logoActive ? resolveGlowColor(status) : '56, 189, 248');
 }
 
 // --- AST_EXPORTS_START ---
