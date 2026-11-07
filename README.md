@@ -6,6 +6,8 @@
 
 This is a modified version of the [Ion](https://github.com/fredconex/Ion).  It is intended as an entirely browser-based LLM coding / research setup you can run locally, with external OpenAI compatible LLM API calls.
 
+![Screenshot](screenshot.png)
+
 The main changes are:
 - Split into smaller, more maintainable (by me and LLMs) chunks, that can be re-minified easily with `esbuild`
 - Optionally pull in Network MCP-tools in
