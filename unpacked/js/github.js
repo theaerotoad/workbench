@@ -35,38 +35,159 @@ async function gitBlobSha(data) {
     } catch (e) { return null; }
 }
 
+let currentBrowseSourceInfo = null;
+
+function getToolsBrowseLocation() {
+    const input = document.getElementById('newtool-browse-location');
+    if (input && input.value.trim()) {
+        return input.value.trim();
+    }
+    const saved = localStorage.getItem('tools_browse_location');
+    if (saved && saved.trim()) {
+        return saved.trim();
+    }
+    return (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+}
+
+function setToolsBrowseLocation(loc) {
+    localStorage.setItem('tools_browse_location', loc);
+    const input = document.getElementById('newtool-browse-location');
+    if (input && input.value !== loc) {
+        input.value = loc;
+    }
+}
+
+function parseToolsSource(sourceStr) {
+    let src = (sourceStr || '').trim();
+    if (!src) {
+        src = (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+    }
+
+    // 1. Full GitHub web URL: https://github.com/owner/repo or github.com/owner/repo
+    const ghHttpMatch = src.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^\/]+)\/([^\/]+?)(?:\/(?:tree|blob)\/([^\/]+)(?:\/(.*))?)?$/i);
+    if (ghHttpMatch) {
+        const owner = ghHttpMatch[1];
+        const repo = ghHttpMatch[2].replace(/\.git$/i, '');
+        const branch = ghHttpMatch[3] || (typeof GITHUB_TOOLS_BRANCH !== 'undefined' ? GITHUB_TOOLS_BRANCH : 'main');
+        const path = (ghHttpMatch[4] || '').replace(/^\/+|\/+$/g, '');
+        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path ? encodeURIComponent(path).replace(/%2F/g, '/') : ''}?ref=${encodeURIComponent(branch)}`;
+        return {
+            type: 'github',
+            label: `${owner}/${repo}${path ? '/' + path : ''} (${branch})`,
+            apiUrl
+        };
+    }
+
+    // 2. Direct GitHub API URL: https://api.github.com/repos/owner/repo/contents/...
+    if (/^https?:\/\/api\.github\.com\/repos\//i.test(src)) {
+        return {
+            type: 'github',
+            label: src,
+            apiUrl: src
+        };
+    }
+
+    // 3. Shorthand GitHub repo: "owner/repo" or "owner/repo@branch" or "owner/repo/path"
+    const isUrl = /^https?:\/\//i.test(src);
+    const isPath = src.startsWith('/') || src.startsWith('.') || src.includes('\\');
+    if (!isUrl && !isPath) {
+        const ghShortMatch = src.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:@([a-zA-Z0-9_.-]+))?(?:\/(.*))?$/);
+        if (ghShortMatch) {
+            const owner = ghShortMatch[1];
+            const repo = ghShortMatch[2];
+            const branch = ghShortMatch[3] || (typeof GITHUB_TOOLS_BRANCH !== 'undefined' ? GITHUB_TOOLS_BRANCH : 'main');
+            const path = (ghShortMatch[4] || '').replace(/^\/+|\/+$/g, '');
+            const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path ? encodeURIComponent(path).replace(/%2F/g, '/') : ''}?ref=${encodeURIComponent(branch)}`;
+            return {
+                type: 'github',
+                label: `${owner}/${repo}${path ? '/' + path : ''} (${branch})`,
+                apiUrl
+            };
+        }
+    }
+
+    // 4. Server endpoint (default /api/jsutils, or full URL, or relative path)
+    return {
+        type: 'server',
+        label: src,
+        url: src
+    };
+}
+
 async function loadGithubToolsList(forceRefresh) {
     newToolBrowseSelected = null;
     newToolBrowseRefresh.classList.add('spinning');
-    newToolBrowseSetStatus('<span class="icon">hourglass_top</span><span>Loading tools from GitHub…</span>');
-    try {
-        const apiUrl = `https://api.github.com/repos/${GITHUB_TOOLS_REPO}/contents/${encodeURIComponent(GITHUB_TOOLS_PATH)}?ref=${encodeURIComponent(GITHUB_TOOLS_BRANCH)}`;
-        const resp = await fetch(apiUrl, { headers: { 'Accept': 'application/vnd.github+json' } });
-        if (!resp.ok) {
-            if (resp.status === 404) {
-                newToolBrowseFiles = [];
-                newToolBrowseSetStatus(`<span class="icon">folder_off</span><span>No <code>${GITHUB_TOOLS_PATH}/</code> directory found in ${GITHUB_TOOLS_REPO}.</span>`);
-                return;
+
+    const loc = getToolsBrowseLocation();
+    const sourceInfo = parseToolsSource(loc);
+    currentBrowseSourceInfo = sourceInfo;
+
+    const safeLabel = (window.escapeHTML || (s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))))(sourceInfo.label);
+
+    if (sourceInfo.type === 'github') {
+        newToolBrowseSetStatus(`<span class="icon">hourglass_top</span><span>Loading tools from GitHub (${safeLabel})…</span>`);
+        try {
+            const resp = await fetch(sourceInfo.apiUrl, { headers: { 'Accept': 'application/vnd.github+json' } });
+            if (!resp.ok) {
+                if (resp.status === 404) {
+                    newToolBrowseFiles = [];
+                    newToolBrowseSetStatus(`<span class="icon">folder_off</span><span>No tools found at ${safeLabel}.</span>`);
+                    return;
+                }
+                if (resp.status === 403) {
+                    newToolBrowseFiles = null;
+                    newToolBrowseSetStatus('<span class="icon">warning</span><span>GitHub rate limit hit. Try again in a bit.</span>');
+                    return;
+                }
+                throw new Error(`GitHub API responded ${resp.status}`);
             }
-            if (resp.status === 403) {
-                newToolBrowseFiles = null;
-                newToolBrowseSetStatus('<span class="icon">warning</span><span>GitHub rate limit hit. Try again in a bit.</span>');
-                return;
-            }
-            throw new Error(`GitHub API responded ${resp.status}`);
+            const data = await resp.json();
+            newToolBrowseFiles = (Array.isArray(data) ? data : [])
+                .filter(entry => entry.type === 'file' && /\.js$/i.test(entry.name))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            newToolBrowseFetchedAt = Date.now();
+            await refreshGithubLocalHashes();
+            renderGithubToolsList();
+        } catch (e) {
+            newToolBrowseFiles = null;
+            newToolBrowseSetStatus(`<span class="icon">error</span><span>Could not reach GitHub: ${(e && e.message) ? e.message : 'network error'}</span>`);
+        } finally {
+            newToolBrowseRefresh.classList.remove('spinning');
         }
-        const data = await resp.json();
-        newToolBrowseFiles = (Array.isArray(data) ? data : [])
-            .filter(entry => entry.type === 'file' && /\.js$/i.test(entry.name))
-            .sort((a, b) => a.name.localeCompare(b.name));
-        newToolBrowseFetchedAt = Date.now();
-        await refreshGithubLocalHashes();
-        renderGithubToolsList();
-    } catch (e) {
-        newToolBrowseFiles = null;
-        newToolBrowseSetStatus(`<span class="icon">error</span><span>Could not reach GitHub: ${(e && e.message) ? e.message : 'network error'}</span>`);
-    } finally {
-        newToolBrowseRefresh.classList.remove('spinning');
+    } else {
+        newToolBrowseSetStatus(`<span class="icon">hourglass_top</span><span>Loading tools from server (${safeLabel})…</span>`);
+        try {
+            const resp = await fetch(sourceInfo.url);
+            if (!resp.ok) {
+                if (resp.status === 404) {
+                    newToolBrowseFiles = [];
+                    newToolBrowseSetStatus(`<span class="icon">folder_off</span><span>Endpoint <code>${safeLabel}</code> not found (ensure server.py is running).</span>`);
+                    return;
+                }
+                throw new Error(`Server responded ${resp.status}`);
+            }
+            const data = await resp.json();
+            if (!Array.isArray(data)) {
+                throw new Error('Expected array of tools from server');
+            }
+            const endpointBase = new URL(sourceInfo.url, window.location.href);
+            for (const entry of data) {
+                if (entry.download_url) {
+                    entry.download_url = new URL(entry.download_url, endpointBase).href;
+                }
+            }
+            newToolBrowseFiles = data
+                .filter(entry => (entry.type === 'file' || !entry.type) && /\.js$/i.test(entry.name))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            newToolBrowseFetchedAt = Date.now();
+            await refreshGithubLocalHashes();
+            renderGithubToolsList();
+        } catch (e) {
+            newToolBrowseFiles = null;
+            newToolBrowseSetStatus(`<span class="icon">error</span><span>Could not load tools from server: ${(e && e.message) ? e.message : 'network error'}</span>`);
+        } finally {
+            newToolBrowseRefresh.classList.remove('spinning');
+        }
     }
 }
 
@@ -137,9 +258,11 @@ function renderGithubToolsList() {
         : newToolBrowseFiles;
 
     if (!files.length) {
+        const label = currentBrowseSourceInfo ? currentBrowseSourceInfo.label : 'source';
+        const safeLabel = (window.escapeHTML || (s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))))(label);
         newToolBrowseSetStatus(filter
             ? '<span class="icon">search_off</span><span>No tools match that filter.</span>'
-            : `<span class="icon">folder_off</span><span>No .js tools found in <code>${GITHUB_TOOLS_PATH}/</code>.</span>`);
+            : `<span class="icon">folder_off</span><span>No .js tools found in <code>${safeLabel}</code>.</span>`);
         return;
     }
 
@@ -285,4 +408,7 @@ window.updateAllGithubTools = updateAllGithubTools;
 window.renderGithubToolsList = renderGithubToolsList;
 window.selectGithubTool = selectGithubTool;
 window.installGithubEntry = installGithubEntry;
+window.getToolsBrowseLocation = getToolsBrowseLocation;
+window.setToolsBrowseLocation = setToolsBrowseLocation;
+window.parseToolsSource = parseToolsSource;
 // --- AST_EXPORTS_END ---

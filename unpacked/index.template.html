@@ -196,7 +196,7 @@
                         <span class="icon">upload_file</span><span>Import file</span>
                     </div>
                     <div class="newtool-source-tab active" data-pane="browse">
-                        <span class="icon">code</span><span>Browse GitHub</span>
+                        <span class="icon">code</span><span>Browse Tools</span>
                     </div>
                     <div class="newtool-source-tab" data-pane="mcp">
                         <span class="icon">cable</span><span>Connect MCP</span>
@@ -259,6 +259,15 @@
                 </div>
 
                 <div id="newtool-col-browse" class="newtool-pane active" data-pane="browse">
+                    <div style="margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px;">
+                        <label for="newtool-browse-location" style="font-size: 11px; color: var(--dim);">Tool Source (Server endpoint or GitHub repo)</label>
+                        <div style="display:flex; gap:6px;">
+                            <input type="text" id="newtool-browse-location" placeholder="/api/jsutils" autocomplete="off" spellcheck="false" style="flex:1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 5px 8px; border-radius: 4px; font-family: inherit; font-size: 12px;">
+                            <button type="button" id="newtool-browse-location-reset" class="icon-btn" title="Reset to default (/api/jsutils)" style="padding: 4px 6px;">
+                                <span class="icon" style="font-size:15px;">restart_alt</span>
+                            </button>
+                        </div>
+                    </div>
                     <div id="newtool-browse-toolbar">
                         <input type="text" id="newtool-browse-search" placeholder="Filter tools..." autocomplete="off" spellcheck="false">
                         <button type="button" id="newtool-browse-refresh" title="Refresh">

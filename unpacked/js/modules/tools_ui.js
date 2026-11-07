@@ -441,6 +441,11 @@ function openNewToolModal() {
     newToolUpdateCreateLabel();
     setNewToolPane('browse');
     newToolModalOverlay.style.display = 'flex';
+    const locInput = document.getElementById('newtool-browse-location');
+    if (locInput) {
+        const savedLoc = localStorage.getItem('tools_browse_location');
+        locInput.value = savedLoc !== null ? savedLoc : (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+    }
     if (!newToolBrowseFiles) {
         loadGithubToolsList();
     } else {
@@ -764,6 +769,51 @@ async function handler(args, api) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const locInput = document.getElementById('newtool-browse-location');
+    const locResetBtn = document.getElementById('newtool-browse-location-reset');
+    const browseRefreshBtn = document.getElementById('newtool-browse-refresh');
+    const browseSearchInput = document.getElementById('newtool-browse-search');
+
+    if (locInput) {
+        locInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const val = locInput.value.trim() || (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+                localStorage.setItem('tools_browse_location', val);
+                if (typeof loadGithubToolsList === 'function') loadGithubToolsList(true);
+            }
+        });
+        locInput.addEventListener('change', () => {
+            const val = locInput.value.trim() || (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+            localStorage.setItem('tools_browse_location', val);
+        });
+    }
+
+    if (locResetBtn) {
+        locResetBtn.addEventListener('click', () => {
+            const def = (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+            if (locInput) locInput.value = def;
+            localStorage.setItem('tools_browse_location', def);
+            if (typeof loadGithubToolsList === 'function') loadGithubToolsList(true);
+        });
+    }
+
+    if (browseRefreshBtn) {
+        browseRefreshBtn.addEventListener('click', () => {
+            if (locInput) {
+                const val = locInput.value.trim() || (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+                localStorage.setItem('tools_browse_location', val);
+            }
+            if (typeof loadGithubToolsList === 'function') loadGithubToolsList(true);
+        });
+    }
+
+    if (browseSearchInput) {
+        browseSearchInput.addEventListener('input', () => {
+            if (typeof renderGithubToolsList === 'function') renderGithubToolsList();
+        });
+    }
+
     const connectBtn = document.getElementById('newtool-mcp-connect');
     const urlInput = document.getElementById('newtool-mcp-url');
     const statusEl = document.getElementById('newtool-mcp-status');

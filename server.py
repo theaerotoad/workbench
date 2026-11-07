@@ -3,6 +3,7 @@ import logging
 import argparse
 import uvicorn
 import yaml
+import hashlib
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
@@ -48,6 +49,7 @@ def main():
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--webdav-dir", type=str, default=".", help="Directory to serve via WebDAV")
     parser.add_argument("--static-dir", type=str, default="extracted", help="Directory to serve static HTML frontend from")
+    parser.add_argument("--jsutils-dir", type=str, default="jsutils", help="Directory containing JS tool utilities to serve")
     parser.add_argument("--mcp-command", type=str, nargs="+", help="Command to run for MCP stdio (e.g., npx -y @modelcontextprotocol/server-everything)")
     parser.add_argument("--stdio-mcp-cfg", type=str, help="Path to YAML config for multiple dynamic stdio MCP servers")
     
@@ -144,6 +146,42 @@ def main():
         routes.append(Mount("/webdav", app=WSGIMiddleware(webdav_wsgi)))
     else:
         logger.error(f"WebDAV directory '{webdav_path}' does not exist! Skipping.")
+
+    # 2.5 JS Utils File Serving & API
+    jsutils_path = os.path.abspath(args.jsutils_dir)
+    os.makedirs(jsutils_path, exist_ok=True)
+    logger.info(f"Configuring JS Utils serving for directory: {jsutils_path} at /jsutils and /api/jsutils")
+
+    async def list_jsutils(request: Request):
+        try:
+            if not os.path.exists(jsutils_path):
+                return JSONResponse([])
+            items = []
+            for entry in sorted(os.listdir(jsutils_path)):
+                if entry.endswith(".js") and os.path.isfile(os.path.join(jsutils_path, entry)):
+                    fp = os.path.join(jsutils_path, entry)
+                    try:
+                        with open(fp, "rb") as f:
+                            content = f.read()
+                        header = f"blob {len(content)}\0".encode("utf-8")
+                        sha = hashlib.sha1(header + content).hexdigest()
+                        items.append({
+                            "name": entry,
+                            "type": "file",
+                            "size": len(content),
+                            "sha": sha,
+                            "download_url": f"/jsutils/{entry}"
+                        })
+                    except Exception as fe:
+                        logger.warning(f"Could not read {entry}: {fe}")
+            return JSONResponse(items)
+        except Exception as e:
+            logger.error(f"Failed to list jsutils: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    routes.append(Route("/api/jsutils", list_jsutils, methods=["GET"]))
+    routes.append(Route("/api/tools", list_jsutils, methods=["GET"]))
+    routes.append(Mount("/jsutils", app=StaticFiles(directory=jsutils_path), name="jsutils"))
 
     # 3. Static Files (Frontend UI)
     static_dir = os.path.abspath(args.static_dir)
