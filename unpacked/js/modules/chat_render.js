@@ -896,5 +896,56 @@ function updateWelcomeVisibility() {
 }
 
 // --- AST_EXPORTS_START ---
-window.updateWelcomeVisibility = updateWelcomeVisibility;
+    window.updateWelcomeVisibility = updateWelcomeVisibility;
+// --- AST_EXPORTS_END ---
+
+// --- detachModeDividers.js ---
+function detachModeDividers(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const dividers = scope.querySelectorAll('.chat-prompt-wrap > .mode-divider');
+    dividers.forEach(div => {
+        const wrap = div.parentElement;
+        if (wrap && wrap.parentElement) {
+            wrap.parentElement.insertBefore(div, wrap);
+        }
+    });
+}
+
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && !window._modeDividerObserver) {
+    window._modeDividerObserver = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            for (const node of m.addedNodes) {
+                if (node.nodeType === 1) {
+                    if (node.classList && node.classList.contains('chat-prompt-wrap')) {
+                        const div = node.querySelector(':scope > .mode-divider');
+                        if (div && node.parentElement) {
+                            node.parentElement.insertBefore(div, node);
+                        }
+                    } else if (node.querySelectorAll) {
+                        detachModeDividers(node);
+                    }
+                }
+            }
+        }
+    });
+
+    const setupModeDividerObserver = () => {
+        const chatEl = document.getElementById('chat');
+        if (chatEl) {
+            detachModeDividers(chatEl);
+            window._modeDividerObserver.observe(chatEl, { childList: true, subtree: true });
+        } else {
+            setTimeout(setupModeDividerObserver, 50);
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupModeDividerObserver);
+    } else {
+        setupModeDividerObserver();
+    }
+}
+
+// --- AST_EXPORTS_START ---
+    window.detachModeDividers = detachModeDividers;
 // --- AST_EXPORTS_END ---

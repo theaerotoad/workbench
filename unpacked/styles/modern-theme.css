@@ -99,7 +99,7 @@ body{font-family:var(--font-ui);
 #chat>*{animation:rise .3s ease both}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .chat-prompt-wrap{max-width:720px;width:fit-content;min-width:120px;
- display:inline-flex;flex-direction:column;
+ display:flex;flex-direction:column;
  padding:10px 14px 6px 16px;border-radius:12px;
  background:var(--bg-card,#181a22);border:1px solid var(--border);
  box-shadow:0 2px 8px rgba(0,0,0,.25);box-sizing:border-box}

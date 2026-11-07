@@ -116,7 +116,7 @@
 }
 .chat-prompt-wrap {
     margin-top: 6px; margin-bottom: 6px; text-align: left; min-width: 120px;
-    display: inline-flex; flex-direction: column;
+    display: flex; flex-direction: column;
     max-width: 720px; width: fit-content;
     background: var(--bg-card, #181a22);
     border: 1px solid var(--border); border-radius: 12px;
