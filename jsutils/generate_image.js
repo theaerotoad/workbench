@@ -205,8 +205,9 @@ function resolveDimensions(args) {
 function cleanBase64(str) {
     if (!str) return '';
     let s = String(str).trim();
-    if (s.includes(',')) {
-        s = s.split(',')[1];
+    const commaIdx = s.indexOf(',');
+    if (commaIdx !== -1 && s.slice(0, commaIdx).includes('base64')) {
+        s = s.slice(commaIdx + 1);
     }
     // Strip quotes and non-base64 whitespace/control characters
     return s.replace(/[^A-Za-z0-9+/=]/g, '');
@@ -216,6 +217,7 @@ function cleanBase64(str) {
  * Robustly extracts the base64 image data from the /sdapi/v1/txt2img response.
  * Handles standard JSON, responses with unescaped control characters in metadata/info fields,
  * and key whitespace variations like {" images" : ["..."]}.
+ * Rejects unclosed / truncated JSON to prevent saving corrupted images.
  */
 function extractImageBase64(rawText) {
     if (!rawText || typeof rawText !== 'string') return null;
@@ -237,16 +239,10 @@ function extractImageBase64(rawText) {
         }
     } catch (_) {}
 
-    // 3. Regex match for images array: captures {"images":["..."]} or {" images" : [ "..." ]}
-    const match = rawText.match(/["']?\s*images?\s*["']?\s*:\s*\[\s*["']\s*([^"']+)/i);
+    // 3. Regex match for images array: only match if closed with a matching quote, ensuring it wasn't cut off mid-stream
+    const match = rawText.match(/["']?\s*images?\s*["']?\s*:\s*\[\s*["']\s*([^"']+?)["']/i);
     if (match && match[1]) {
         return cleanBase64(match[1]);
-    }
-
-    // 4. Regex fallback: extract any long base64 block
-    const b64Candidate = rawText.match(/[A-Za-z0-9+/=]{1000,}/);
-    if (b64Candidate && b64Candidate[0]) {
-        return cleanBase64(b64Candidate[0]);
     }
 
     return null;
@@ -261,6 +257,29 @@ function base64ToUint8Array(b64) {
         bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
+}
+
+/**
+ * Validates that binary image data is not truncated by checking file-type-specific end-of-file markers.
+ */
+function isImageComplete(bytes) {
+    if (!bytes || bytes.length < 16) return false;
+    // PNG check: starts with PNG signature and contains IEND chunk (0x49 0x45 0x4E 0x44) within the last 32 bytes
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+        const len = bytes.length;
+        const iend = [0x49, 0x45, 0x4E, 0x44];
+        for (let i = len - 8; i >= Math.max(0, len - 32); i--) {
+            if (bytes[i] === iend[0] && bytes[i + 1] === iend[1] && bytes[i + 2] === iend[2] && bytes[i + 3] === iend[3]) {
+                return true;
+            }
+        }
+        return false;
+    }
+    // JPEG check: starts with 0xFF 0xD8 and ends with 0xFF 0xD9
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+        return bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9;
+    }
+    return bytes.length > 32;
 }
 
 // --- UI Helpers --------------------------------------------------------------
@@ -520,6 +539,10 @@ async function handler(args, api) {
 
     // 6. Write image bytes to workspace file
     const imageBytes = base64ToUint8Array(rawB64);
+    if (!isImageComplete(imageBytes)) {
+        return fail(api, fp, `Image payload was truncated by the server/proxy (${(imageBytes.length / 1024).toFixed(1)} KB received, missing IEND marker).`);
+    }
+
     const writeError = await api.writeFile(fp, imageBytes);
     if (writeError) {
         return fail(api, fp, `Failed to save image to ${fp}: ${writeError}`);
@@ -528,7 +551,7 @@ async function handler(args, api) {
     const dataUrl = `data:image/png;base64,${rawB64}`;
     await updateStatus(`Saved ${fp} (${elapsedSec.toFixed(1)}s)`);
 
-    // 7. Render final card
+    // 7. Render final card for the user in the tool box UI
     if (typeof api?.showUI === 'function') {
         try {
             await api.showUI(renderFinalCard({
@@ -543,9 +566,12 @@ async function handler(args, api) {
         } catch (_) {}
     }
 
+    // Do not return `image: dataUrl` in the tool result object. Returning `image` causes
+    // Ion's task runner to inject the entire 1.5MB+ dataUrl back into the calling LLM's conversation history
+    // (marked as a preview_image call). If truncated or oversized, the vision API (e.g. Gemini) rejects
+    // the request with "Failed to load image or audio file", poisoning the session into a permanent retry loop.
     return {
         output: `Successfully generated image with model "${modelName || 'default'}" and saved to "${fp}" (${width}×${height}) in ${elapsedSec.toFixed(2)}s. Prompt: "${promptText}".`,
-        summary: `${fp} (${width}×${height}) - ${elapsedSec.toFixed(1)}s`,
-        image: dataUrl
+        summary: `${fp} (${width}×${height}) - ${elapsedSec.toFixed(1)}s`
     };
 }

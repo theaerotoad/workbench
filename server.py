@@ -67,36 +67,63 @@ def main():
         
         headers = {}
         for k, v in request.headers.items():
-            if k.lower() not in ("host", "x-proxy-target", "content-length", "connection"):
+            # Exclude accept-encoding so urllib doesn't receive compressed (gzip/br) bytes
+            # that it does not automatically decompress for the caller.
+            if k.lower() not in ("host", "x-proxy-target", "content-length", "connection", "accept-encoding"):
                 headers[k] = v
                 
         req = urllib.request.Request(target_url, data=body if body else None, headers=headers, method=method)
         
         def _make_request():
             try:
-                resp = urllib.request.urlopen(req)
-                return resp, resp.getcode()
-            except urllib.error.HTTPError as e:
-                return e, e.getcode()
-            except Exception as e:
-                return e, 500
+                # 600-second timeout to accommodate long generation runs on local diffusion/LLM backends
+                resp = urllib.request.urlopen(req, timeout=600)
+                content_type = resp.headers.get("content-type", "")
+                is_sse = "text/event-stream" in content_type
+                resp_headers = {}
+                for k in ("content-type", "cache-control"):
+                    if k in resp.headers:
+                        resp_headers[k] = resp.headers[k]
 
-        result, status_code = await run_in_threadpool(_make_request)
+                if is_sse:
+                    return resp, resp.getcode(), resp_headers, True
+
+                # For non-SSE responses (like /sdapi/v1/txt2img or /models), read the entire response body
+                # in the threadpool so network buffers aren't truncated by Starlette's chunk iterator.
+                content = resp.read()
+                return content, resp.getcode(), resp_headers, False
+            except urllib.error.HTTPError as e:
+                try:
+                    err_content = e.read()
+                except Exception:
+                    err_content = b""
+                err_headers = {"content-type": e.headers.get("content-type", "application/json")}
+                return err_content, e.getcode(), err_headers, False
+            except Exception as e:
+                return e, 500, {}, False
+
+        result, status_code, resp_headers, is_sse = await run_in_threadpool(_make_request)
         
         if isinstance(result, Exception) and not isinstance(result, urllib.error.HTTPError):
             return JSONResponse({"error": str(result)}, status_code=500)
             
-        def generate():
-            try:
-                while True:
-                    chunk = result.read(8192)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                result.close()
-                
-        return StreamingResponse(generate(), status_code=status_code)
+        if is_sse:
+            def generate():
+                try:
+                    while True:
+                        chunk = result.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+                except Exception as stream_err:
+                    logger.warning(f"SSE stream interrupted: {stream_err}")
+                finally:
+                    result.close()
+                    
+            return StreamingResponse(generate(), status_code=status_code, media_type="text/event-stream", headers=resp_headers)
+
+        from starlette.responses import Response
+        return Response(content=result, status_code=status_code, headers=resp_headers)
 
     routes.append(Route("/proxy", llm_proxy, methods=["GET", "POST", "PUT", "DELETE", "PATCH"]))
 
