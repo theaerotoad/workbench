@@ -1,25 +1,25 @@
-// generate_image - tool definition for stable-diffusion.cpp native server API (/sdcpp/v1/*).
+// generate_image - tool definition for stable-diffusion.cpp / llama-swap via SDAPI (/sdapi/v1/txt2img).
 const TOOL_META = {
     "name": "generate_image",
-    "description": "Generates an image from a text prompt using stable-diffusion.cpp and saves it to a workspace file. Supports customizable aspect ratios (e.g., '1:1', '16:9', '9:16', '4:3', '3:2', '21:9'), resolutions, negative prompts, and random seeds. Streams progressive preview frames during sampling and saves the finished image directly to the designated filepath.",
+    "description": "Generates an image from a text prompt using stable-diffusion.cpp / llama-swap (/sdapi/v1/txt2img) and saves it to a workspace file. Supports customizable aspect ratios ('1:1', '16:9', '9:16', '4:3', '3:2', '21:9'), sizes, negative prompts, and random seeds.",
     "parameters": {
         "type": "object",
         "properties": {
             "prompt": {
                 "type": "string",
-                "description": "Detailed text description of the image to generate. Be specific regarding subject, artistic style, composition, lighting, and details."
+                "description": "Detailed text description of the image to generate (subject, lighting, composition, artistic style)."
             },
             "filepath": {
                 "type": "string",
-                "description": "Workspace-relative destination file path (e.g. 'public/assets/hero.png', 'images/banner.jpg', 'assets/icon.webp')."
+                "description": "Workspace-relative destination file path (e.g. 'public/hero.png', 'assets/banner.png', 'images/sample.png')."
             },
             "aspect_ratio": {
                 "type": "string",
-                "description": "Desired aspect ratio: '1:1' (square), '16:9' (widescreen/landscape), '9:16' (portrait/story), '4:3' (standard landscape), '3:4' (standard portrait), '3:2' (classic photo), '2:3' (vertical photo), '21:9' (ultrawide). Ignored if exact width and height are provided."
+                "description": "Desired aspect ratio: '1:1' (square), '16:9' (landscape), '9:16' (portrait/story), '4:3' (standard landscape), '3:4' (standard portrait), '3:2' (classic photo), '2:3' (vertical photo), '21:9' (ultrawide). Ignored if explicit width and height are provided."
             },
             "size": {
                 "type": "string",
-                "description": "Optional resolution preset: 'small' (512px base), 'medium' (768px base), 'large' (1024px base, default), or explicit 'WIDTHxHEIGHT' (e.g. '1024x768')."
+                "description": "Resolution preset: 'small' (512px base), 'medium' (768px base), 'large' (1024px base, default), or explicit 'WIDTHxHEIGHT' (e.g. '1024x768')."
             },
             "width": {
                 "type": "integer",
@@ -29,13 +29,25 @@ const TOOL_META = {
                 "type": "integer",
                 "description": "Explicit height in pixels (rounded to nearest multiple of 16). Overrides aspect_ratio when provided with width."
             },
+            "steps": {
+                "type": "integer",
+                "description": "Number of sampling steps. Defaults to configured setting or 20."
+            },
+            "cfg_scale": {
+                "type": "number",
+                "description": "Text guidance scale (CFG). Defaults to configured setting or 7.0."
+            },
             "negative_prompt": {
                 "type": "string",
-                "description": "Optional negative prompt specifying unwanted elements, styles, or artifacts to exclude."
+                "description": "Optional negative prompt specifying elements or artifacts to exclude."
             },
             "seed": {
                 "type": "integer",
-                "description": "Random seed for generation reproducibility (-1 for random). Defaults to -1."
+                "description": "Random seed for reproducibility (-1 for random). Defaults to -1."
+            },
+            "model": {
+                "type": "string",
+                "description": "Optional model ID / alias configured in llama-swap (e.g., 'krea2', 'sdxl', 'flux'). Overrides the model's configured name."
             }
         },
         "required": [
@@ -57,15 +69,7 @@ const TOOL_META = {
             "label": "Image Model",
             "type": "model",
             "default": "",
-            "description": "Pick the stable-diffusion.cpp model provider configured in your models.json."
-        },
-        {
-            "key": "previewMode",
-            "label": "Preview Mode",
-            "type": "select",
-            "options": ["proj", "tae", "vae", "none"],
-            "default": "proj",
-            "description": "Preview rendering method during sampling ('proj' is fastest, 'tae' uses Tiny AutoEncoder weights, 'vae' decodes full VAE)."
+            "description": "Pick the image model from your models.json providers (Ion resolves the server URL, model name, and key automatically)."
         },
         {
             "key": "defaultSteps",
@@ -78,21 +82,21 @@ const TOOL_META = {
         },
         {
             "key": "cfgScale",
-            "label": "CFG / Guidance Scale",
+            "label": "Default CFG Scale",
             "type": "number",
             "default": 7.0,
             "min": 0,
             "max": 30,
-            "description": "Text guidance scale (txt_cfg)."
+            "description": "Default text guidance scale (cfg_scale)."
         },
         {
             "key": "timeoutMs",
             "label": "Request Timeout (ms)",
             "type": "number",
-            "default": 180000,
+            "default": 300000,
             "min": 10000,
-            "max": 600000,
-            "description": "Generation timeout in milliseconds (default: 180s)."
+            "max": 900000,
+            "description": "Timeout in milliseconds for model swapping and generation (default: 300s / 5min)."
         }
     ]
 };
@@ -141,7 +145,6 @@ function roundToMultiple(val, multiple = 16, min = 64, max = 2048) {
 }
 
 function resolveDimensions(args) {
-    // 1. Explicit width and height provided
     if (typeof args.width === 'number' && typeof args.height === 'number' && args.width > 0 && args.height > 0) {
         return {
             width: roundToMultiple(args.width),
@@ -149,7 +152,6 @@ function resolveDimensions(args) {
         };
     }
 
-    // 2. Explicit "WIDTHxHEIGHT" in size string
     if (typeof args.size === 'string') {
         const sizeMatch = args.size.trim().match(/^(\d+)\s*[xX×*]\s*(\d+)$/);
         if (sizeMatch) {
@@ -160,7 +162,6 @@ function resolveDimensions(args) {
         }
     }
 
-    // 3. Determine base scale
     let base = 1024;
     const sizeStr = String(args.size || '').toLowerCase().trim();
     if (sizeStr === 'small' || sizeStr === '512') {
@@ -174,14 +175,12 @@ function resolveDimensions(args) {
         if (num >= 64 && num <= 2048) base = num;
     }
 
-    // 4. Look up known aspect ratio preset
     const ratioStr = String(args.aspect_ratio || '1:1').trim();
     const table = ASPECT_RATIO_PRESETS[base] || ASPECT_RATIO_PRESETS[1024];
     if (table && table[ratioStr]) {
         return { width: table[ratioStr][0], height: table[ratioStr][1] };
     }
 
-    // 5. Dynamic aspect ratio calculation (e.g. custom "16:10" or "5:4")
     const customRatio = ratioStr.match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
     if (customRatio) {
         const rW = parseFloat(customRatio[1]);
@@ -198,8 +197,70 @@ function resolveDimensions(args) {
         }
     }
 
-    // Default 1:1 fallback
     return { width: base, height: base };
+}
+
+// --- Response Parser Helpers -------------------------------------------------
+
+function cleanBase64(str) {
+    if (!str) return '';
+    let s = String(str).trim();
+    if (s.includes(',')) {
+        s = s.split(',')[1];
+    }
+    // Strip quotes and non-base64 whitespace/control characters
+    return s.replace(/[^A-Za-z0-9+/=]/g, '');
+}
+
+/**
+ * Robustly extracts the base64 image data from the /sdapi/v1/txt2img response.
+ * Handles standard JSON, responses with unescaped control characters in metadata/info fields,
+ * and key whitespace variations like {" images" : ["..."]}.
+ */
+function extractImageBase64(rawText) {
+    if (!rawText || typeof rawText !== 'string') return null;
+
+    // 1. Direct JSON parse
+    try {
+        const data = JSON.parse(rawText);
+        if (data && Array.isArray(data.images) && data.images.length > 0 && typeof data.images[0] === 'string') {
+            return cleanBase64(data.images[0]);
+        }
+    } catch (_) {}
+
+    // 2. Sanitized parse (removes unescaped ASCII control codes that crash standard JSON.parse)
+    try {
+        const sanitized = rawText.replace(/[\x00-\x1F\x7F]/g, c => (c === '\t' || c === '\n' || c === '\r' ? ' ' : ''));
+        const data = JSON.parse(sanitized);
+        if (data && Array.isArray(data.images) && data.images.length > 0 && typeof data.images[0] === 'string') {
+            return cleanBase64(data.images[0]);
+        }
+    } catch (_) {}
+
+    // 3. Regex match for images array: captures {"images":["..."]} or {" images" : [ "..." ]}
+    const match = rawText.match(/["']?\s*images?\s*["']?\s*:\s*\[\s*["']\s*([^"']+)/i);
+    if (match && match[1]) {
+        return cleanBase64(match[1]);
+    }
+
+    // 4. Regex fallback: extract any long base64 block
+    const b64Candidate = rawText.match(/[A-Za-z0-9+/=]{1000,}/);
+    if (b64Candidate && b64Candidate[0]) {
+        return cleanBase64(b64Candidate[0]);
+    }
+
+    return null;
+}
+
+function base64ToUint8Array(b64) {
+    const clean = cleanBase64(b64);
+    const binary = atob(clean);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
 }
 
 // --- UI Helpers --------------------------------------------------------------
@@ -236,45 +297,33 @@ function errorHtml(fp, msg) {
         </div>`;
 }
 
-function renderLiveCard({ fp, prompt, width, height, status, step, totalSteps, previewB64 }) {
-    const pct = totalSteps > 0 ? Math.min(100, Math.max(0, Math.round((step / totalSteps) * 100))) : 0;
-    const isQueued = status === 'queued';
-    const statusText = isQueued
-        ? 'Queued on server...'
-        : `Sampling step ${step || 0} / ${totalSteps || 0} (${pct}%)`;
-
-    const previewBlock = previewB64
-        ? `<img src="data:image/png;base64,${previewB64}" alt="Preview" style="max-width:280px; max-height:200px; border-radius:6px; border:1px solid var(--border); display:block; margin:4px 0;" />`
-        : `<div style="height:140px; width:220px; border-radius:6px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:11px; margin:4px 0; background:var(--bg-input);">
-             <span>Awaiting initial frame...</span>
-           </div>`;
-
+function renderWaitingCard({ fp, prompt, width, height, model, elapsedSec }) {
+    const timeText = elapsedSec ? `${elapsedSec}s` : 'starting...';
     return `
         <div class="tool-ui-wrap">
             <div class="tool-ui-bar">
                 <div class="tool-ui-header-info">
-                    <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">autorenew</span>
+                    <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">hourglass_top</span>
                     ${pathHtml(fp)}
-                    ${badge(isQueued ? 'queued' : `${pct}%`, isQueued ? 'var(--yellow)' : 'var(--primary)')}
+                    ${badge(model || 'generating', 'var(--primary)')}
                 </div>
                 <div class="tool-ui-header-stats">
+                    <span style="color:var(--dim); font-size:10px; margin-right:6px;">${timeText}</span>
                     <span style="color:var(--dim); font-size:10px; flex-shrink:0;">${width}×${height}</span>
                 </div>
             </div>
-            <div style="padding:2px 0;">
-                ${previewBlock}
-            </div>
-            <div style="background:var(--bg-input); border-radius:3px; height:4px; overflow:hidden; margin:6px 0 4px 0;">
-                <div style="background:var(--primary); height:100%; width:${pct}%; transition:width 0.2s ease;"></div>
+            <div style="height:110px; border-radius:6px; border:1px dashed var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin:4px 0; background:var(--bg-input);">
+                <span class="icon" style="font-size:24px; color:var(--primary);">autorenew</span>
+                <span style="font-size:11px; color:var(--dim);">Waiting for model routing & generation...</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; font-size:10.5px; color:var(--dim); padding:0 2px;">
-                <span>${esc(statusText)}</span>
+                <span>SDAPI /txt2img</span>
                 <span style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;">${esc(prompt)}</span>
             </div>
         </div>`;
 }
 
-function renderFinalCard({ fp, prompt, width, height, dataUrl, elapsedSec }) {
+function renderFinalCard({ fp, prompt, width, height, dataUrl, elapsedSec, model }) {
     const base = String(fp).split('/').pop().split('\\').pop() || 'image';
     const attId = `prev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
     const timeBadge = elapsedSec ? `${elapsedSec.toFixed(1)}s` : '';
@@ -288,6 +337,7 @@ function renderFinalCard({ fp, prompt, width, height, dataUrl, elapsedSec }) {
                     ${badge('Saved', 'var(--green)')}
                 </div>
                 <div class="tool-ui-header-stats">
+                    ${model ? `<span style="color:var(--dim); font-size:10px; margin-right:6px;">${esc(model)}</span>` : ''}
                     ${timeBadge ? `<span style="color:var(--dim); font-size:10px; margin-right:6px;">${timeBadge}</span>` : ''}
                     <span style="color:var(--dim); font-size:10px; flex-shrink:0;">${width}×${height}</span>
                 </div>
@@ -311,17 +361,6 @@ async function fail(api, fp, msg) {
         try { await api.showUI(errorHtml(fp, clean)); } catch (_) {}
     }
     return { output: `ERROR: ${clean}` };
-}
-
-function base64ToUint8Array(b64) {
-    const raw = b64.replace(/^data:image\/[a-z]+;base64,/, '');
-    const binary = atob(raw);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
 }
 
 // --- Handler -----------------------------------------------------------------
@@ -351,226 +390,145 @@ async function handler(args, api) {
 
     const modelId = String(await getSetting('imageModel', '')).trim();
     if (!modelId) {
-        return fail(api, fp, "No Image Model configured. Select your stable-diffusion.cpp provider in Settings > Tools > generate_image > Image Model.");
+        return fail(api, fp, "No Image Model selected. Pick your model in Settings > Tools > generate_image > Image Model.");
     }
     if (typeof api?.callModel !== 'function') {
-        return fail(api, fp, "Ion host environment does not support model gateway delegation (api.callModel is missing).");
+        return fail(api, fp, "This version of Ion does not support api.callModel. Update Ion.");
     }
 
-    const previewMode = String(await getSetting('previewMode', 'proj')).trim();
+    // Resolve model name from models.json or argument
+    let modelName = String(args.model || '').trim();
+    if (!modelName && typeof api?.listModels === 'function') {
+        try {
+            const models = await api.listModels();
+            const matched = models.find(m => m.id === modelId);
+            if (matched && matched.name) {
+                modelName = matched.name;
+            }
+        } catch (_) {}
+    }
+
     const defaultSteps = Number(await getSetting('defaultSteps', 20));
     const cfgScale = Number(await getSetting('cfgScale', 7.0));
-    const timeoutSetting = Number(await getSetting('timeoutMs', 180000));
-    const TIMEOUT_MS = Number.isFinite(timeoutSetting) && timeoutSetting > 0 ? timeoutSetting : 180000;
-
-    // 2. Resolve Output Format & Dimensions
-    const ext = fp.split('.').pop().toLowerCase();
-    let outputFormat = 'png';
-    let mimeType = 'image/png';
-    if (ext === 'jpg' || ext === 'jpeg') {
-        outputFormat = 'jpeg';
-        mimeType = 'image/jpeg';
-    } else if (ext === 'webp') {
-        outputFormat = 'webp';
-        mimeType = 'image/webp';
-    }
+    const timeoutSetting = Number(await getSetting('timeoutMs', 300000));
+    const TIMEOUT_MS = Number.isFinite(timeoutSetting) && timeoutSetting > 0 ? timeoutSetting : 300000;
 
     const { width, height } = resolveDimensions(args);
+    const steps = typeof args.steps === 'number' && args.steps > 0
+        ? args.steps
+        : (Number.isFinite(defaultSteps) && defaultSteps > 0 ? defaultSteps : 20);
+    const cfg = typeof args.cfg_scale === 'number'
+        ? args.cfg_scale
+        : (Number.isFinite(cfgScale) ? cfgScale : 7.0);
     const seed = typeof args.seed === 'number' ? args.seed : -1;
-    const steps = Number.isFinite(defaultSteps) && defaultSteps > 0 ? defaultSteps : 20;
 
-    await updateStatus(`Submitting image request (${width}×${height})...`);
-
-    // 3. Submit async job to stable-diffusion.cpp (/sdcpp/v1/img_gen)
-    const requestPayload = {
+    // 2. Build SDAPI payload
+    const payload = {
         prompt: promptText,
         negative_prompt: String(args.negative_prompt || ''),
         width,
         height,
+        steps,
+        cfg_scale: cfg,
         seed,
-        batch_count: 1,
-        sample_params: {
-            sample_steps: steps,
-            guidance: {
-                txt_cfg: Number.isFinite(cfgScale) ? cfgScale : 7.0
-            }
-        },
-        preview: previewMode,
-        preview_interval: 1,
-        output_format: outputFormat,
-        output_compression: 100
+        batch_size: 1
     };
 
-    let submitRes;
+    if (modelName) {
+        payload.model = modelName;
+    }
+
+    await updateStatus(`Generating image with ${modelName || 'selected model'} (${width}×${height})...`);
+
+    // Show initial live card
+    if (typeof api?.showUI === 'function') {
+        try {
+            await api.showUI(renderWaitingCard({
+                fp,
+                prompt: promptText,
+                width,
+                height,
+                model: modelName,
+                elapsedSec: 0
+            }), { live: true });
+        } catch (_) {}
+    }
+
+    const startTime = Date.now();
+    let isFinished = false;
+
+    // Live timer
+    const progressTimer = setInterval(() => {
+        if (isFinished) return;
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        updateStatus(`Generating image with ${modelName || 'model'} (${elapsed}s)...`);
+        if (typeof api?.showUI === 'function') {
+            try {
+                api.showUI(renderWaitingCard({
+                    fp,
+                    prompt: promptText,
+                    width,
+                    height,
+                    model: modelName,
+                    elapsedSec: elapsed
+                }), { live: true });
+            } catch (_) {}
+        }
+    }, 1000);
+
+    // 3. Call endpoint via Ion's secure model gateway
+    let res;
     try {
-        submitRes = await api.callModel(modelId, {
-            method: 'POST',
-            path: '/sdcpp/v1/img_gen',
-            body: JSON.stringify(requestPayload),
-            timeoutMs: 15000
+        res = await api.callModel(modelId, {
+            path: '/sdapi/v1/txt2img',
+            body: JSON.stringify(payload),
+            timeoutMs: TIMEOUT_MS
         });
     } catch (e) {
-        return fail(api, fp, `Connection to stable-diffusion.cpp failed: ${e.message}`);
+        isFinished = true;
+        clearInterval(progressTimer);
+        return fail(api, fp, `Model call threw exception: ${e.message}`);
+    } finally {
+        isFinished = true;
+        clearInterval(progressTimer);
     }
 
-    if (!submitRes || submitRes.error) {
-        const err = submitRes?.error || 'submission failed';
-        return fail(api, fp, `Failed to submit generation job: ${err}`);
+    const elapsedSec = (Date.now() - startTime) / 1000;
+
+    // 4. Validate response
+    if (!res || res.error) {
+        const err = res && res.error;
+        if (err === 'timeout') return fail(api, fp, `Generation timed out after ${TIMEOUT_MS / 1000}s.`);
+        if (err === 'unreachable') return fail(api, fp, "Could not reach the server. Verify that llama-swap is running.");
+        return fail(api, fp, `Model call failed: ${err || 'unknown error'}`);
     }
 
-    if (!submitRes.ok) {
-        let errDetail = submitRes.text || '';
+    if (!res.ok) {
+        let detail = res.text || '';
         try {
-            const errObj = JSON.parse(submitRes.text);
-            errDetail = errObj.error?.message || errObj.error || submitRes.text;
+            const errObj = JSON.parse(res.text);
+            detail = errObj.error?.message || errObj.detail || errObj.error || res.text;
         } catch (_) {}
-        if (submitRes.status === 503) {
-            return fail(api, fp, `Server returned 503 (Model not loaded or currently busy). Details: ${errDetail}`);
-        }
-        return fail(api, fp, `Server rejected request (HTTP ${submitRes.status}): ${errDetail}`);
+        return fail(api, fp, `Server returned HTTP ${res.status}: ${detail}`);
     }
 
-    let jobData;
-    try {
-        jobData = JSON.parse(submitRes.text);
-    } catch (_) {
-        return fail(api, fp, `Unexpected non-JSON response from server: ${String(submitRes.text).slice(0, 200)}`);
+    // 5. Extract image base64 robustly
+    const rawB64 = extractImageBase64(res.text);
+    if (!rawB64) {
+        return fail(api, fp, `Could not extract image from server response: ${String(res.text).slice(0, 200)}`);
     }
 
-    const jobId = jobData?.id;
-    if (!jobId) {
-        return fail(api, fp, `Server did not return a valid job ID: ${JSON.stringify(jobData)}`);
-    }
-
-    // 4. Poll /sdcpp/v1/jobs/{id} and stream preview frames
-    const startTime = Date.now();
-    let lastPreviewB64 = null;
-    let completedResult = null;
-    let consecutiveErrors = 0;
-
-    while (Date.now() - startTime < TIMEOUT_MS) {
-        await new Promise(r => setTimeout(r, 400));
-
-        let pollRes;
-        try {
-            pollRes = await api.callModel(modelId, {
-                method: 'GET',
-                path: `/sdcpp/v1/jobs/${jobId}`,
-                timeoutMs: 10000
-            });
-        } catch (_) {
-            consecutiveErrors++;
-            if (consecutiveErrors > 8) {
-                return fail(api, fp, "Lost connection while polling server status.");
-            }
-            continue;
-        }
-
-        if (!pollRes || !pollRes.ok) {
-            consecutiveErrors++;
-            if (consecutiveErrors > 8) {
-                return fail(api, fp, `Job polling failed with HTTP ${pollRes ? pollRes.status : 'error'}`);
-            }
-            continue;
-        }
-        consecutiveErrors = 0;
-
-        let job;
-        try {
-            job = JSON.parse(pollRes.text);
-        } catch (_) {
-            continue;
-        }
-
-        const status = job.status;
-
-        // Process preview frame if present
-        if (job.preview && job.preview.b64_json) {
-            lastPreviewB64 = job.preview.b64_json;
-        }
-
-        const currentStep = job.preview?.step || 0;
-        const totalSteps = job.preview?.total_steps || steps;
-
-        if (status === 'queued') {
-            const queuePos = job.queue_position !== undefined ? ` (pos: ${job.queue_position})` : '';
-            await updateStatus(`Generation queued${queuePos}...`);
-            if (typeof api?.showUI === 'function') {
-                try {
-                    await api.showUI(renderLiveCard({
-                        fp,
-                        prompt: promptText,
-                        width,
-                        height,
-                        status: 'queued',
-                        step: 0,
-                        totalSteps,
-                        previewB64: null
-                    }), { live: true });
-                } catch (_) {}
-            }
-        } else if (status === 'generating') {
-            const pct = totalSteps > 0 ? Math.round((currentStep / totalSteps) * 100) : 0;
-            await updateStatus(`Sampling ${currentStep}/${totalSteps} (${pct}%)...`);
-            if (typeof api?.showUI === 'function') {
-                try {
-                    await api.showUI(renderLiveCard({
-                        fp,
-                        prompt: promptText,
-                        width,
-                        height,
-                        status: 'generating',
-                        step: currentStep,
-                        totalSteps,
-                        previewB64: lastPreviewB64
-                    }), { live: true });
-                } catch (_) {}
-            }
-        } else if (status === 'completed') {
-            completedResult = job;
-            break;
-        } else if (status === 'failed') {
-            const errCode = job.error?.code || 'generation_failed';
-            const errMsg = job.error?.message || 'Server reported generation failure.';
-            return fail(api, fp, `${errCode}: ${errMsg}`);
-        } else if (status === 'cancelled') {
-            return fail(api, fp, "Job was cancelled on the server.");
-        }
-    }
-
-    if (!completedResult) {
-        // Attempt server-side cancellation upon client timeout
-        try {
-            await api.callModel(modelId, {
-                method: 'POST',
-                path: `/sdcpp/v1/jobs/${jobId}/cancel`,
-                timeoutMs: 4000
-            });
-        } catch (_) {}
-        return fail(api, fp, `Generation timed out after ${TIMEOUT_MS / 1000} seconds.`);
-    }
-
-    // 5. Extract completed image and save to workspace
-    const images = completedResult.result?.images || [];
-    const mainImage = images[0];
-    if (!mainImage || !mainImage.b64_json) {
-        return fail(api, fp, "Completed job result did not contain valid image data.");
-    }
-
-    const imageBytes = base64ToUint8Array(mainImage.b64_json);
+    // 6. Write image bytes to workspace file
+    const imageBytes = base64ToUint8Array(rawB64);
     const writeError = await api.writeFile(fp, imageBytes);
     if (writeError) {
-        return fail(api, fp, `Failed to write image to ${fp}: ${writeError}`);
+        return fail(api, fp, `Failed to save image to ${fp}: ${writeError}`);
     }
 
-    const dataUrl = `data:${mimeType};base64,${mainImage.b64_json}`;
-    const elapsedSec = (completedResult.completed && completedResult.started)
-        ? (completedResult.completed - completedResult.started) / 1000
-        : (Date.now() - startTime) / 1000;
+    const dataUrl = `data:image/png;base64,${rawB64}`;
+    await updateStatus(`Saved ${fp} (${elapsedSec.toFixed(1)}s)`);
 
-    await updateStatus(`Generated: ${fp}`);
-
-    // 6. Final Static Card UI
+    // 7. Render final card
     if (typeof api?.showUI === 'function') {
         try {
             await api.showUI(renderFinalCard({
@@ -579,14 +537,15 @@ async function handler(args, api) {
                 width,
                 height,
                 dataUrl,
-                elapsedSec
+                elapsedSec,
+                model: modelName
             }));
         } catch (_) {}
     }
 
     return {
-        output: `Successfully generated image and saved to "${fp}" (${width}×${height}, ${outputFormat}). Prompt: "${promptText}".`,
-        summary: `${fp} (${width}×${height})`,
+        output: `Successfully generated image with model "${modelName || 'default'}" and saved to "${fp}" (${width}×${height}) in ${elapsedSec.toFixed(2)}s. Prompt: "${promptText}".`,
+        summary: `${fp} (${width}×${height}) - ${elapsedSec.toFixed(1)}s`,
         image: dataUrl
     };
 }
