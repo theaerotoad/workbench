@@ -148,5 +148,5 @@ async function handler(args, api) {
         </div>`;
 
     await api.showUI(displayHtml);
-    return { output, summary: header, image: dataUrl };
+    return { output, summary: header, image: dataUrl, displayHtml };
 }
