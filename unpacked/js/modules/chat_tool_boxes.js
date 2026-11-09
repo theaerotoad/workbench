@@ -1,6 +1,13 @@
 // --- abortToolRunsForSession.js ---
 // [AST_MERGED]: ./js/worker.js
 
+// Patch for visual tools disappearing when "Show code previews" is disabled
+if (typeof document !== 'undefined' && !document.getElementById('fix-tool-ui-wrap')) {
+    const style = document.createElement('style');
+    style.id = 'fix-tool-ui-wrap';
+    style.textContent = `body.hide-code-preview .tool-ui-wrap { display: block !important; }`;
+    document.head.appendChild(style);
+}
 
 function abortToolRunsForSession(sid, reason = 'Aborted by user') {
     const mine = [...toolWorkerPending].filter(([, e]) => e.sessionId === sid);
