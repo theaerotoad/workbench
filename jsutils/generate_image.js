@@ -1,7 +1,7 @@
-// generate_image - tool definition for stable-diffusion.cpp / llama-swap via SDAPI (/sdapi/v1/txt2img).
+// generate_image - tool definition for stable-diffusion.cpp / llama-swap via OpenAI API (/v1/images/generations).
 const TOOL_META = {
     "name": "generate_image",
-    "description": "Generates an image from a text prompt using stable-diffusion.cpp / llama-swap (/sdapi/v1/txt2img) and saves it to a workspace file. Supports customizable aspect ratios ('1:1', '16:9', '9:16', '4:3', '3:2', '21:9'), sizes, negative prompts, and random seeds.",
+    "description": "Generates an image from a text prompt using an OpenAI-compatible endpoint (/v1/images/generations) and saves it to a workspace file. Supports customizable aspect ratios ('1:1', '16:9', '9:16', '4:3', '3:2', '21:9'), sizes, negative prompts, and random seeds.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -214,9 +214,7 @@ function cleanBase64(str) {
 }
 
 /**
- * Robustly extracts the base64 image data from the /sdapi/v1/txt2img response.
- * Handles standard JSON, responses with unescaped control characters in metadata/info fields,
- * and key whitespace variations like {" images" : ["..."]}.
+ * Robustly extracts the base64 image data from the OpenAI /v1/images/generations response.
  * Allows extraction of truncated strings so subsequent byte-checking can analyze the payload.
  */
 function extractImageBase64(rawText) {
@@ -225,34 +223,22 @@ function extractImageBase64(rawText) {
     // 1. Direct JSON parse
     try {
         const data = JSON.parse(rawText);
-        if (data && Array.isArray(data.images) && data.images.length > 0 && typeof data.images[0] === 'string') {
-            return cleanBase64(data.images[0]);
+        if (data && data.data && Array.isArray(data.data) && data.data.length > 0 && typeof data.data[0].b64_json === 'string') {
+            return cleanBase64(data.data[0].b64_json);
         }
     } catch (_) {}
 
-    // 2. Sanitized parse (removes unescaped ASCII control codes that crash standard JSON.parse)
-    try {
-        const sanitized = rawText.replace(/[\x00-\x1F\x7F]/g, c => (c === '\t' || c === '\n' || c === '\r' ? ' ' : ''));
-        const data = JSON.parse(sanitized);
-        if (data && Array.isArray(data.images) && data.images.length > 0 && typeof data.images[0] === 'string') {
-            return cleanBase64(data.images[0]);
-        }
-    } catch (_) {}
-
-    // 3. Fallback: Manual string extraction (Regex can fail on 1.5MB+ strings due to engine limits, and we want to recover truncated strings)
-    const imgKeyIdx = rawText.indexOf('"images"');
+    // 2. Fallback: Manual string extraction for truncated/oversized responses
+    const imgKeyIdx = rawText.indexOf('"b64_json"');
     if (imgKeyIdx !== -1) {
-        const arrayStart = rawText.indexOf('[', imgKeyIdx);
-        if (arrayStart !== -1) {
-            const quoteStart = rawText.indexOf('"', arrayStart);
-            if (quoteStart !== -1) {
-                const quoteEnd = rawText.indexOf('"', quoteStart + 1);
-                if (quoteEnd !== -1) {
-                    return cleanBase64(rawText.slice(quoteStart + 1, quoteEnd));
-                } else {
-                    // Truncated JSON response - extract everything available so isImageComplete can analyze it
-                    return cleanBase64(rawText.slice(quoteStart + 1));
-                }
+        const quoteStart = rawText.indexOf('"', imgKeyIdx + 10);
+        if (quoteStart !== -1) {
+            const quoteEnd = rawText.indexOf('"', quoteStart + 1);
+            if (quoteEnd !== -1) {
+                return cleanBase64(rawText.slice(quoteStart + 1, quoteEnd));
+            } else {
+                // Truncated JSON response - extract everything available so isImageComplete can analyze it
+                return cleanBase64(rawText.slice(quoteStart + 1));
             }
         }
     }
@@ -271,30 +257,24 @@ function base64ToUint8Array(b64) {
     return bytes;
 }
 
-/**
- * Validates that binary image data is not truncated by checking file-type-specific end-of-file markers.
- */
 function isImageComplete(bytes) {
     if (!bytes || bytes.length < 16) return false;
     // PNG check: starts with PNG signature
     if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
         const len = bytes.length;
         const iend = [0x49, 0x45, 0x4E, 0x44];
-        // Search backwards for IEND. Image generators frequently inject massive metadata chunks 
-        // or append trailing data AFTER the IEND marker, so we search the whole file if necessary.
-        for (let i = len - 8; i >= 0; i--) {
+        // Search backwards for IEND (image generators often append metadata chunks after it)
+        for (let i = len - 8; i >= Math.max(0, len - 102400); i--) {
             if (bytes[i] === iend[0] && bytes[i + 1] === iend[1] && bytes[i + 2] === iend[2] && bytes[i + 3] === iend[3]) {
                 return true;
             }
         }
-        // If IEND is strictly missing but we received >100KB of data, it's overwhelmingly likely 
-        // a usable (if slightly truncated) image payload. Browsers handle this gracefully.
-        return len > 102400;
+        return len > 102400; // Assume complete if >100KB to salvage gracefully truncated images
     }
     // JPEG check: starts with 0xFF 0xD8
     if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
         if (bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9) return true;
-        return bytes.length > 102400; // Allow JPEGs >100KB even if EOI marker is missing.
+        return bytes.length > 102400; // Allow JPEGs >100KB even if missing EOI marker
     }
     return bytes.length > 32;
 }
@@ -353,7 +333,7 @@ function renderWaitingCard({ fp, prompt, width, height, model, elapsedSec }) {
                 <span style="font-size:11px; color:var(--dim);">Waiting for model routing & generation...</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center; font-size:10.5px; color:var(--dim); padding:0 2px;">
-                <span>SDAPI /txt2img</span>
+                <span>OpenAI /v1/images/generations</span>
                 <span style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;">${esc(prompt)}</span>
             </div>
         </div>`;
@@ -458,16 +438,24 @@ async function handler(args, api) {
         : (Number.isFinite(cfgScale) ? cfgScale : 7.0);
     const seed = typeof args.seed === 'number' ? args.seed : -1;
 
-    // 2. Build SDAPI payload
-    const payload = {
-        prompt: promptText,
+    // 2. Build OpenAI-compatible payload with sd_cpp_extra_args for native features
+    const extraArgs = {
         negative_prompt: String(args.negative_prompt || ''),
-        width,
-        height,
-        steps,
-        cfg_scale: cfg,
-        seed,
-        batch_size: 1
+        seed: seed,
+        sample_params: {
+            sample_steps: steps,
+            guidance: {
+                txt_cfg: cfg
+            }
+        }
+    };
+
+    const payload = {
+        prompt: promptText + ` <sd_cpp_extra_args>${JSON.stringify(extraArgs)}</sd_cpp_extra_args>`,
+        n: 1,
+        size: `${width}x${height}`,
+        output_format: "jpeg",
+        output_compression: 92
     };
 
     if (modelName) {
@@ -516,7 +504,7 @@ async function handler(args, api) {
     let res;
     try {
         res = await api.callModel(modelId, {
-            path: '/sdapi/v1/txt2img',
+            path: '/v1/images/generations',
             body: JSON.stringify(payload),
             timeoutMs: TIMEOUT_MS
         });
@@ -557,7 +545,7 @@ async function handler(args, api) {
     // 6. Write image bytes to workspace file
     const imageBytes = base64ToUint8Array(rawB64);
     if (!isImageComplete(imageBytes)) {
-        return fail(api, fp, `Image payload was truncated by the server/proxy (${(imageBytes.length / 1024).toFixed(1)} KB received, missing IEND marker).`);
+        return fail(api, fp, `Image payload was truncated by the server/proxy (${(imageBytes.length / 1024).toFixed(1)} KB received, missing marker).`);
     }
 
     const writeError = await api.writeFile(fp, imageBytes);
@@ -565,7 +553,8 @@ async function handler(args, api) {
         return fail(api, fp, `Failed to save image to ${fp}: ${writeError}`);
     }
 
-    const dataUrl = `data:image/png;base64,${rawB64}`;
+    const isJpeg = imageBytes[0] === 0xFF && imageBytes[1] === 0xD8;
+    const dataUrl = `data:image/${isJpeg ? 'jpeg' : 'png'};base64,${rawB64}`;
     await updateStatus(`Saved ${fp} (${elapsedSec.toFixed(1)}s)`);
 
     // 7. Render final card for the user in the tool box UI
