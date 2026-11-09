@@ -1,12 +1,28 @@
 // --- addToRecentFolders.js ---
 async function addToRecentFolders(handle) {
     const folders = getRecentFolders();
-    const entry = { name: handle.name, lastAccessed: Date.now() };
-    const existingIdx = folders.findIndex(f => f.name === handle.name);
+    let entry;
+    let existingIdx;
+    if (handle.isWebDAV) {
+        entry = {
+            name: handle.name,
+            type: 'webdav',
+            url: handle.url,
+            webdavPath: handle.path,
+            auth: handle.auth,
+            lastAccessed: Date.now()
+        };
+        existingIdx = folders.findIndex(f => f.type === 'webdav' && f.url === handle.url && (f.webdavPath || '') === (handle.path || ''));
+    } else {
+        entry = { name: handle.name, lastAccessed: Date.now() };
+        existingIdx = folders.findIndex(f => f.name === handle.name && !f.virtual && f.type !== 'webdav');
+    }
     if (existingIdx !== -1) folders.splice(existingIdx, 1);
     folders.unshift(entry);
     saveRecentFolders(folders);
-    await saveRecentHandleToDB(handle.name, handle);
+    if (!handle.isWebDAV && !handle.isVirtual) {
+        await saveRecentHandleToDB(handle.name, handle);
+    }
     renderRecentFoldersList();
 }
 
@@ -27,6 +43,14 @@ function closeWorkspace() {
     }
 
     if (rootHandle.isVirtual) vfsFlush(rootHandle);
+    if (rootHandle.isWebDAV && typeof AppConfig !== 'undefined' && AppConfig.get('webdav-sync-agent') !== 'true') {
+        const wsKey = wsStorageName(rootHandle);
+        try {
+            if (AppConfig._data) localStorage.setItem(`app_config_${wsKey}`, JSON.stringify(AppConfig._data));
+            if (typeof MODEL_PROVIDERS !== 'undefined') localStorage.setItem(`models_${wsKey}`, JSON.stringify(MODEL_PROVIDERS));
+            if (typeof MODE_PROMPTS !== 'undefined') localStorage.setItem(`mode_prompts_${wsKey}`, JSON.stringify(MODE_PROMPTS));
+        } catch(e) {}
+    }
     rootHandle = null;
     updateWorkspaceTitle();
     updateSessionPillLabel();   // -> "workbench - Workspaces"
@@ -240,9 +264,11 @@ window.markNoFsApi = markNoFsApi;
 // --- AST_EXPORTS_END ---
 
 // --- markRecentFolderAccessed.js ---
-function markRecentFolderAccessed(folderName) {
+function markRecentFolderAccessed(folderName, matchObj = null) {
     const folders = getRecentFolders();
-    const folder = folders.find(f => f.name === folderName);
+    const folder = matchObj && matchObj.type === 'webdav'
+        ? folders.find(f => f.type === 'webdav' && f.name === folderName && (f.url || '') === (matchObj.url || '') && (f.webdavPath || '') === (matchObj.webdavPath || ''))
+        : folders.find(f => f.name === folderName);
     if (folder) {
         folder.lastAccessed = Date.now();
         saveRecentFolders(folders);
@@ -390,7 +416,11 @@ function renderRecentFoldersList() {
                 ? `<button class="recent-folder-edit icon-btn" data-edit-webdav="${escapeHTML(folder.name)}" data-webdav-url="${escapeHTML(folder.url || '')}" data-webdav-path="${escapeHTML(folder.webdavPath || '')}" title="Edit WebDAV setup"><span class="icon" style="font-size:14px;">edit</span></button>`
                 : '');
         const iconStr = folder.virtual ? 'cloud_queue' : (isWebDAV ? 'dns' : 'folder');
-        const dataAttrs = folder.virtual ? `data-vid="${escapeHTML(folder.vid)}"` : (isWebDAV ? `data-webdav="${escapeHTML(folder.url)}"` : '');
+        const dataAttrs = folder.virtual 
+            ? `data-vid="${escapeHTML(folder.vid)}"` 
+            : (isWebDAV 
+                ? `data-webdav="true" data-webdav-url="${escapeHTML(folder.url || '')}" data-webdav-path="${escapeHTML(folder.webdavPath || '')}"` 
+                : '');
         return `
         <div class="recent-folder-item" data-folder-name="${escapeHTML(folder.name)}" ${dataAttrs} title="${escapeHTML(folder.name)}">
             <span class="icon folder-icon ${folder.virtual || isWebDAV ? 'filled' : ''}">${iconStr}</span>
@@ -398,7 +428,7 @@ function renderRecentFoldersList() {
                 <div class="recent-folder-name">${escapeHTML(folder.name)}</div>
             </div>
             ${editBtn}
-            <button class="recent-folder-remove icon-btn" data-remove-name="${escapeHTML(folder.name)}" ${folder.virtual ? `data-remove-vid="${escapeHTML(folder.vid)}"` : ''} title="${folder.virtual ? 'Delete virtual workspace' : 'Remove from list'}">
+            <button class="recent-folder-remove icon-btn" data-remove-name="${escapeHTML(folder.name)}" ${folder.virtual ? `data-remove-vid="${escapeHTML(folder.vid)}"` : ''} ${isWebDAV ? `data-remove-webdav="true" data-remove-url="${escapeHTML(folder.url || '')}" data-remove-path="${escapeHTML(folder.webdavPath || '')}"` : ''} title="${folder.virtual ? 'Delete virtual workspace' : 'Remove from list'}">
                 <span class="icon" style="font-size:14px;">close</span>
             </button>
         </div>
@@ -415,13 +445,17 @@ function renderRecentFoldersList() {
             if (item.dataset.vid) { await openVirtualWorkspaceById(item.dataset.vid); return; }
             if (item.dataset.webdav) {
                 const folders = getRecentFolders();
-                const f = folders.find(x => x.name === folderName && x.type === 'webdav');
+                const reqUrl = item.dataset.webdavUrl || '';
+                const reqPath = item.dataset.webdavPath || '';
+                const f = folders.find(x => x.type === 'webdav' && x.name === folderName && (x.url || '') === reqUrl && (x.webdavPath || '') === reqPath)
+                    || folders.find(x => x.type === 'webdav' && (x.url || '') === reqUrl && (x.webdavPath || '') === reqPath)
+                    || folders.find(x => x.name === folderName && x.type === 'webdav');
                 if (f) {
                     try {
                         const handle = new WebDAVDirHandle(f.url, f.webdavPath || '/', f.auth, f.name);
                         await handle._checkExists('');
                         await setWorkspace(handle);
-                        markRecentFolderAccessed(folderName);
+                        markRecentFolderAccessed(folderName, f);
                     } catch(e) {
                         showToast('Failed to connect to WebDAV workspace: ' + e.message, 'error');
                     }
@@ -455,6 +489,12 @@ function renderRecentFoldersList() {
             e.stopPropagation();
             if (isNoFolderOverlayHidden()) return;
             if (btn.dataset.removeVid) { removeVirtualWorkspace(btn.dataset.removeVid, btn.dataset.removeName); return; }
+            if (btn.dataset.removeWebdav) {
+                const folders = getRecentFolders().filter(f => !(f.type === 'webdav' && f.name === btn.dataset.removeName && (f.url || '') === (btn.dataset.removeUrl || '') && (f.webdavPath || '') === (btn.dataset.removePath || '')));
+                saveRecentFolders(folders);
+                renderRecentFoldersList();
+                return;
+            }
             removeFromRecentFolders(btn.dataset.removeName);
         });
     });
@@ -641,6 +681,9 @@ window.saveRecentHandleToDB = saveRecentHandleToDB;
 
 // --- setWorkspace.js ---
 async function setWorkspace(handle) {
+    if (rootHandle && rootHandle !== handle) {
+        await closeWorkspaceNoConfirm();
+    }
     rootHandle = handle;
     updateWorkspaceTitle();
 
@@ -700,7 +743,39 @@ window.setWorkspace = setWorkspace;
 // --- syncAgentFilesWithWorkspace.js ---
 async function syncAgentFilesWithWorkspace() {
     if (!rootHandle) return;
-    if (rootHandle.isWebDAV && AppConfig.get('webdav-sync-agent') !== 'true') return;
+    const wsKey = wsStorageName(rootHandle);
+
+    if (rootHandle.isWebDAV && AppConfig.get('webdav-sync-agent') !== 'true') {
+        try {
+            const wsConfigKey = `app_config_${wsKey}`;
+            const storedConfig = localStorage.getItem(wsConfigKey);
+            if (storedConfig) {
+                AppConfig._data = { ...CONFIG_DEFAULTS, ...JSON.parse(storedConfig) };
+            } else {
+                AppConfig._data = { ...CONFIG_DEFAULTS };
+            }
+            localStorage.setItem('app_config_json', JSON.stringify(AppConfig._data));
+
+            const wsModelsKey = `models_${wsKey}`;
+            const storedModels = localStorage.getItem(wsModelsKey);
+            if (storedModels) {
+                const p = JSON.parse(storedModels);
+                if (isValidProvidersShape(p)) {
+                    MODEL_PROVIDERS = p;
+                    ensureModelUuids();
+                    localStorage.setItem('models_json', JSON.stringify(MODEL_PROVIDERS));
+                }
+            }
+
+            const wsPromptsKey = `mode_prompts_${wsKey}`;
+            const storedPrompts = localStorage.getItem(wsPromptsKey);
+            if (storedPrompts) {
+                MODE_PROMPTS = JSON.parse(storedPrompts);
+                localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
+            }
+        } catch(e) {}
+        return;
+    }
 
     let hasAgentDir = false;
     try {
@@ -928,7 +1003,21 @@ window.updateWorkspaceTitle = updateWorkspaceTitle;
 // --- wsStorageName.js ---
 function wsStorageName(h) { 
     if (h && h.isVirtual) return 'virtual_' + h.vid; 
-    if (h && h.isWebDAV) return 'webdav_' + btoa(h.url).replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
+    if (h && h.isWebDAV) {
+        if (h.wsKey) return h.wsKey;
+        const cleanName = (h.name || 'webdav').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24);
+        const raw = `${(h.url || '').toLowerCase()}|${h.path || '/'}|${h.auth?.user || ''}|${h.name || ''}`;
+        let h1 = 0xdeadbeef ^ 0, h2 = 0x41c64e6d ^ 0;
+        for (let i = 0; i < raw.length; i++) {
+            const ch = raw.charCodeAt(i);
+            h1 = Math.imul(h1 ^ ch, 2654435761);
+            h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        const hash = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+        return `webdav_${cleanName}_${hash}`;
+    }
     return h ? h.name : ''; 
 }
 

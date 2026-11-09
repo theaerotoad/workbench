@@ -8,6 +8,23 @@ class WebDAVHandle {
         this.isWebDAV = true;
         this.isVirtual = false;
     }
+    get wsKey() {
+        const cleanName = (this.name || 'webdav').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24);
+        const raw = `${(this.url || '').toLowerCase()}|${this.path || '/'}|${this.auth?.user || ''}|${this.name || ''}`;
+        let h1 = 0xdeadbeef ^ 0, h2 = 0x41c64e6d ^ 0;
+        for (let i = 0; i < raw.length; i++) {
+            const ch = raw.charCodeAt(i);
+            h1 = Math.imul(h1 ^ ch, 2654435761);
+            h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        const hash = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+        return `webdav_${cleanName}_${hash}`;
+    }
+    async isSameEntry(other) {
+        return !!(other && other.isWebDAV && other.url === this.url && other.path === this.path && other.kind === this.kind);
+    }
     getHeaders() {
         const headers = {};
         if (this.auth && this.auth.user) {
