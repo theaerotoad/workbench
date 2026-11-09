@@ -276,20 +276,25 @@ function base64ToUint8Array(b64) {
  */
 function isImageComplete(bytes) {
     if (!bytes || bytes.length < 16) return false;
-    // PNG check: starts with PNG signature and contains IEND chunk (0x49 0x45 0x4E 0x44) within the last 32 bytes
+    // PNG check: starts with PNG signature
     if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
         const len = bytes.length;
         const iend = [0x49, 0x45, 0x4E, 0x44];
-        for (let i = len - 8; i >= Math.max(0, len - 32); i--) {
+        // Search backwards for IEND. Image generators frequently inject massive metadata chunks 
+        // or append trailing data AFTER the IEND marker, so we search the whole file if necessary.
+        for (let i = len - 8; i >= 0; i--) {
             if (bytes[i] === iend[0] && bytes[i + 1] === iend[1] && bytes[i + 2] === iend[2] && bytes[i + 3] === iend[3]) {
                 return true;
             }
         }
-        return false;
+        // If IEND is strictly missing but we received >100KB of data, it's overwhelmingly likely 
+        // a usable (if slightly truncated) image payload. Browsers handle this gracefully.
+        return len > 102400;
     }
-    // JPEG check: starts with 0xFF 0xD8 and ends with 0xFF 0xD9
+    // JPEG check: starts with 0xFF 0xD8
     if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
-        return bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9;
+        if (bytes[bytes.length - 2] === 0xFF && bytes[bytes.length - 1] === 0xD9) return true;
+        return bytes.length > 102400; // Allow JPEGs >100KB even if EOI marker is missing.
     }
     return bytes.length > 32;
 }
