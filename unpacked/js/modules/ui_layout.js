@@ -501,7 +501,44 @@ async function saveDiffModifiedFile() {
     try {
         const modEditor = monacoDiffEditor.getModifiedEditor();
         const content = modEditor.getValue();
+        const isToolsConfig = state.currentDiffFilepath === (typeof TOOLS_FILE !== 'undefined' ? TOOLS_FILE : window.TOOLS_FILE) || state.currentDiffFilepath === '.agent/tools.json';
+
+        if (isToolsConfig) {
+            let parsed;
+            try {
+                parsed = JSON.parse(content);
+            } catch (jsonErr) {
+                showToast(`Invalid JSON in tools.json: ${jsonErr.message}`, 'error');
+                return;
+            }
+            if (typeof setWorkspaceToolsConfig === 'function') {
+                setWorkspaceToolsConfig(parsed);
+            }
+            const wsKey = typeof getWorkspaceToolsKey === 'function' ? getWorkspaceToolsKey() : null;
+            if (typeof saveWorkspaceToolsState === 'function') {
+                saveWorkspaceToolsState(wsKey, parsed);
+            }
+            if (typeof rebuildToolRegistryFromFiles === 'function') {
+                rebuildToolRegistryFromFiles();
+            }
+            if (typeof renderToolsList === 'function') {
+                renderToolsList();
+            }
+            if (typeof refreshPermBanner === 'function') {
+                refreshPermBanner();
+            }
+        }
+
         await writeDisk(state.currentDiffFilepath, content);
+
+        if (typeof isToolFilePath === 'function' && isToolFilePath(state.currentDiffFilepath)) {
+            if (typeof rebuildToolRegistryFromFiles === 'function') {
+                rebuildToolRegistryFromFiles();
+            }
+            if (typeof renderToolsList === 'function') {
+                renderToolsList();
+            }
+        }
     } catch(e) {
         showToast(`Diff save error: ${e.message}`, 'error');
     } finally {
@@ -522,12 +559,49 @@ async function saveEditorFile() {
 
     try {
         const content = monacoEditor.getValue();
+        const isToolsConfig = state.currentEditorPath === (typeof TOOLS_FILE !== 'undefined' ? TOOLS_FILE : window.TOOLS_FILE) || state.currentEditorPath === '.agent/tools.json';
+
+        if (isToolsConfig) {
+            let parsed;
+            try {
+                parsed = JSON.parse(content);
+            } catch (jsonErr) {
+                showEditorSaveError(`Invalid JSON in tools.json: ${jsonErr.message}`);
+                return;
+            }
+            if (typeof setWorkspaceToolsConfig === 'function') {
+                setWorkspaceToolsConfig(parsed);
+            }
+            const wsKey = typeof getWorkspaceToolsKey === 'function' ? getWorkspaceToolsKey() : null;
+            if (typeof saveWorkspaceToolsState === 'function') {
+                saveWorkspaceToolsState(wsKey, parsed);
+            }
+            if (typeof rebuildToolRegistryFromFiles === 'function') {
+                rebuildToolRegistryFromFiles();
+            }
+            if (typeof renderToolsList === 'function') {
+                renderToolsList();
+            }
+            if (typeof refreshPermBanner === 'function') {
+                refreshPermBanner();
+            }
+        }
+
         const res = await writeDisk(state.currentEditorPath, content);
         const saveFailed = res && res.output && res.output.startsWith('ERROR:');
 
         if (saveFailed) {
             showEditorSaveError(res.output);
             return;
+        }
+
+        if (typeof isToolFilePath === 'function' && isToolFilePath(state.currentEditorPath)) {
+            if (typeof rebuildToolRegistryFromFiles === 'function') {
+                rebuildToolRegistryFromFiles();
+            }
+            if (typeof renderToolsList === 'function') {
+                renderToolsList();
+            }
         }
 
         clearFileDirty(state.currentEditorPath);
