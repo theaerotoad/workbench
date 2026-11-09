@@ -217,7 +217,7 @@ function cleanBase64(str) {
  * Robustly extracts the base64 image data from the /sdapi/v1/txt2img response.
  * Handles standard JSON, responses with unescaped control characters in metadata/info fields,
  * and key whitespace variations like {" images" : ["..."]}.
- * Rejects unclosed / truncated JSON to prevent saving corrupted images.
+ * Allows extraction of truncated strings so subsequent byte-checking can analyze the payload.
  */
 function extractImageBase64(rawText) {
     if (!rawText || typeof rawText !== 'string') return null;
@@ -239,10 +239,22 @@ function extractImageBase64(rawText) {
         }
     } catch (_) {}
 
-    // 3. Regex match for images array: only match if closed with a matching quote, ensuring it wasn't cut off mid-stream
-    const match = rawText.match(/["']?\s*images?\s*["']?\s*:\s*\[\s*["']\s*([^"']+?)["']/i);
-    if (match && match[1]) {
-        return cleanBase64(match[1]);
+    // 3. Fallback: Manual string extraction (Regex can fail on 1.5MB+ strings due to engine limits, and we want to recover truncated strings)
+    const imgKeyIdx = rawText.indexOf('"images"');
+    if (imgKeyIdx !== -1) {
+        const arrayStart = rawText.indexOf('[', imgKeyIdx);
+        if (arrayStart !== -1) {
+            const quoteStart = rawText.indexOf('"', arrayStart);
+            if (quoteStart !== -1) {
+                const quoteEnd = rawText.indexOf('"', quoteStart + 1);
+                if (quoteEnd !== -1) {
+                    return cleanBase64(rawText.slice(quoteStart + 1, quoteEnd));
+                } else {
+                    // Truncated JSON response - extract everything available so isImageComplete can analyze it
+                    return cleanBase64(rawText.slice(quoteStart + 1));
+                }
+            }
+        }
     }
 
     return null;
