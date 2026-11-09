@@ -272,7 +272,20 @@ window.renderSessionPopoverList = renderSessionPopoverList;
 // --- restoreActiveSessionContent.js ---
 async function restoreActiveSessionContent() {
     const current = state.sessions[state.activeSessionId];
-    if (!current) return;
+    if (!current) {
+        state.messages = [];
+        state.linesAdded = 0;
+        state.linesRemoved = 0;
+        state.lastTokenUsage = null;
+        updateTokenStatus(null);
+        term.innerHTML = '';
+        updateSessionPillLabel();
+        renderChangesPanel();
+        renderExplorerTree();
+        updateStatusInfo();
+        updateWelcomeVisibility();
+        return;
+    }
 
     state.messages = current.messages || [];
     state.linesAdded = current.linesAdded || 0;
@@ -443,7 +456,7 @@ async function saveSession(sessionId, force) {
         };
     }
 
-    const prevIndex = state._lastSavedIndex;
+    const prevIndex = (state._lastSavedWsKey === wsKey) ? state._lastSavedIndex : null;
     const nextIndex = {
         sessionIds: state.sessionIds.slice(),
         activeSessionId: state.activeSessionId,
@@ -457,6 +470,7 @@ async function saveSession(sessionId, force) {
     if (indexChanged) {
         await saveSessionIndexToDB(wsKey, nextIndex);
         state._lastSavedIndex = nextIndex;
+        state._lastSavedWsKey = wsKey;
     }
 
     if (isLive) updateSessionPillLabel();

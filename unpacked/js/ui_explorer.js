@@ -553,18 +553,24 @@ window.promptDialog = promptDialog;
             let folders = getRecentFolders();
             const originalEditing = editingWebDAVFolder;
             if (originalEditing) {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && f.webdavPath === originalEditing.webdavPath));
+                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true)));
             } else {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && f.webdavPath === normPath));
+                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === normPath));
             }
             folders.unshift({ name, type: 'webdav', url: urlObj.origin, webdavPath: normPath, auth, lastAccessed: Date.now() });
             saveRecentFolders(folders);
 
             if (rootHandle && rootHandle.isWebDAV && originalEditing && rootHandle.url === originalEditing.url && rootHandle.path === originalEditing.webdavPath) {
-                rootHandle.name = name;
-                rootHandle.path = normPath;
+                if (rootHandle.url !== urlObj.origin || rootHandle.path !== normPath) {
+                    if (typeof closeWorkspaceNoConfirm === 'function') {
+                        closeWorkspaceNoConfirm();
+                    }
+                } else {
+                    rootHandle.name = name;
+                    rootHandle.path = normPath;
                 if (auth) rootHandle.auth = auth;
                 updateWorkspaceTitle();
+                }
             }
 
             renderRecentFoldersList();
@@ -607,9 +613,9 @@ window.promptDialog = promptDialog;
             if (rootHandle) await closeWorkspaceNoConfirm();
             let folders = getRecentFolders();
             if (originalEditing) {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && f.webdavPath === originalEditing.webdavPath));
+                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true)));
             } else {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && f.webdavPath === handle.path));
+                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === (handle.path || '')));
             }
             folders.unshift({ name: handle.name, type: 'webdav', url: urlObj.origin, webdavPath: handle.path, auth, lastAccessed: Date.now() });
             saveRecentFolders(folders);

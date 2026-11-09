@@ -33,7 +33,11 @@ const AppConfig = {
     _data: {},
     load() {
         try {
-            const stored = JSON.parse(localStorage.getItem('app_config_json') || 'null');
+            const wsKey = window.rootHandle && window.rootHandle.isWebDAV && typeof window.wsStorageName === 'function'
+                ? window.wsStorageName(window.rootHandle)
+                : null;
+            const lsKey = wsKey ? `app_config_${wsKey}` : 'app_config_json';
+            const stored = JSON.parse(localStorage.getItem(lsKey) || localStorage.getItem('app_config_json') || 'null');
             this._data = (stored && typeof stored === 'object' && !Array.isArray(stored))
                 ? { ...CONFIG_DEFAULTS, ...stored }
                 : { ...CONFIG_DEFAULTS };
@@ -44,7 +48,15 @@ const AppConfig = {
     },
     save() {
         localStorage.setItem('app_config_json', JSON.stringify(this._data));
-        window.writeAgentFileToDisk(CONFIG_FILE, window.configFileText());
+        if (window.rootHandle && window.rootHandle.isWebDAV && typeof window.wsStorageName === 'function') {
+            const wsKey = window.wsStorageName(window.rootHandle);
+            if (wsKey) {
+                localStorage.setItem(`app_config_${wsKey}`, JSON.stringify(this._data));
+            }
+        }
+        if (typeof window.writeAgentFileToDisk === 'function') {
+            window.writeAgentFileToDisk(CONFIG_FILE, window.configFileText ? window.configFileText() : JSON.stringify(this._data, null, 2));
+        }
     },
     get(key, fallback) {
         const val = this._data[key];
@@ -53,7 +65,9 @@ const AppConfig = {
     set(key, value) {
         this._data[key] = value;
         this.save();
-        window.registerConfigVirtualFile();
+        if (typeof window.registerConfigVirtualFile === 'function') {
+            window.registerConfigVirtualFile();
+        }
     },
     all() {
         return { ...this._data };
