@@ -478,6 +478,9 @@ window.refreshAgentFileTab = refreshAgentFileTab;
 function registerToolsVirtualFiles() {
     registry.meta[CUSTOM_TOOLS_DIR] = { kind: 'directory' };
     registry.meta[TOOLS_DIR] = { kind: 'directory' };
+    if (typeof window.registerToolsVirtualFile === 'function') {
+        window.registerToolsVirtualFile();
+    }
 
     const persisted = loadToolFilesState();
     const seeded = seedBuiltinToolSources();
@@ -572,6 +575,14 @@ function restoreAgentFile(path) {
         registerConfigVirtualFile();
         applyConfigToUI();
         updateGenGlow();
+    } else if (kind === 'tools_config') {
+        if (typeof window.setWorkspaceToolsConfig === 'function' && typeof window.toolsDefaults === 'function') {
+            window.setWorkspaceToolsConfig(window.toolsDefaults());
+        }
+        if (typeof window.registerToolsVirtualFile === 'function') {
+            window.registerToolsVirtualFile();
+        }
+        if (typeof renderToolsList === 'function') renderToolsList();
     } else if (kind === 'prompt') {
         MODE_PROMPTS[PROMPT_FILE_MODES[path]] = seedDefaultModePrompts()[PROMPT_FILE_MODES[path]];
         saveModePrompts();
@@ -582,7 +593,7 @@ function restoreAgentFile(path) {
 
     refreshAgentFileTab(path, registry.files[path]);
     renderExplorerTree();
-    if (kind === 'tool') renderToolsList();
+    if (kind === 'tool' || kind === 'tools_config') renderToolsList();
     return {};
 }
 

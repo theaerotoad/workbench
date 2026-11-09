@@ -2,6 +2,7 @@
 function agentFileKind(path) {
     if (path === MODELS_FILE) return 'models';
     if (path === CONFIG_FILE) return 'config';
+    if (path === TOOLS_FILE) return 'tools_config';
     if (isPromptFileMode(path)) return 'prompt';
     if (isToolFilePath(path)) return 'tool';
     return null;
@@ -210,6 +211,7 @@ window.formatFileSize = formatFileSize;
 function getFileVisualInfo(filepath) {
     const ext = filepath.split('.').pop().toLowerCase();
     const basename = filepath.split('/').pop().toLowerCase();
+    if (basename === 'tools.json') return { icon: 'build', color: 'var(--yellow)' };
     if (basename.startsWith('.git')) return FILE_ICON_MAP.gitignore;
     if (FILE_ICON_MAP[ext]) return FILE_ICON_MAP[ext];
     return { icon: 'draft', color: 'var(--dim)' };
@@ -363,7 +365,7 @@ window.isSecurityProtectedPath = isSecurityProtectedPath;
 
 // --- isSensitiveUserFile.js ---
 function isSensitiveUserFile(path) {
-    return SENSITIVE_USER_FILES.includes(path);
+    return SENSITIVE_USER_FILES.includes(path) || path === TOOLS_FILE;
 }
 
 // --- AST_EXPORTS_START ---
@@ -391,7 +393,7 @@ window.isToolOrAgentPath = isToolOrAgentPath;
 
 // --- isVirtualAgentFile.js ---
 function isVirtualAgentFile(path) {
-    return VIRTUAL_AGENT_FILES.includes(path) || isToolFilePath(path) || isAttachmentPath(path) || isSkillPath(path) || !!PROMPT_FILE_MODES[path];
+    return VIRTUAL_AGENT_FILES.includes(path) || path === TOOLS_FILE || isToolFilePath(path) || isAttachmentPath(path) || isSkillPath(path) || !!PROMPT_FILE_MODES[path];
 }
 
 // --- AST_EXPORTS_START ---

@@ -344,6 +344,34 @@ function registerConfigVirtualFile() {
 window.registerConfigVirtualFile = registerConfigVirtualFile;
 // --- AST_EXPORTS_END ---
 
+// --- toolsFileText.js ---
+function toolsFileText(data) {
+    let cfg = data;
+    if (cfg === undefined) {
+        cfg = typeof window.getWorkspaceToolsConfig === 'function'
+            ? window.getWorkspaceToolsConfig()
+            : (typeof window.toolsDefaults === 'function' ? window.toolsDefaults() : {});
+    }
+    return JSON.stringify(cfg, null, 2) + '\n';
+}
+
+// --- AST_EXPORTS_START ---
+window.toolsFileText = toolsFileText;
+// --- AST_EXPORTS_END ---
+
+// --- registerToolsVirtualFile.js ---
+function registerToolsVirtualFile() {
+    if (!window.registry || !window.registry.files || !window.registry.meta) return;
+    const text = toolsFileText();
+    registry.files[TOOLS_FILE] = text;
+    registry.meta[CUSTOM_TOOLS_DIR] = { kind: 'directory' };
+    registry.meta[TOOLS_FILE] = { kind: 'file', size: text.length, isBinary: false, virtual: true };
+}
+
+// --- AST_EXPORTS_START ---
+window.registerToolsVirtualFile = registerToolsVirtualFile;
+// --- AST_EXPORTS_END ---
+
 // --- showToast.js ---
 function showToast(message, kind = 'info', durationMs = 2600) {
     if (!toastContainer) return;
