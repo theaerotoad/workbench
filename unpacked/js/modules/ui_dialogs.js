@@ -115,6 +115,35 @@ async function clearSelectedData(opts) {
     }
     if (opts.customTools) {
         clearLocalStorageKeys(CLEARDATA_LS_KEYS.customTools);
+        try {
+            const toRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && (
+                    k.startsWith('tools_config_') ||
+                    k.startsWith('tool_files_') ||
+                    k.startsWith('tool_lock_state_') ||
+                    k.startsWith('tool_perm_state_') ||
+                    k.startsWith('tool_settings_state_')
+                )) {
+                    toRemove.push(k);
+                }
+            }
+            toRemove.forEach(k => localStorage.removeItem(k));
+        } catch(e) {}
+        if (typeof resetToolRegistry === 'function') {
+            resetToolRegistry();
+        }
+        if (typeof saveWorkspaceToolsState === 'function' && typeof toolsDefaults === 'function') {
+            const wsKey = typeof getWorkspaceToolsKey === 'function' ? getWorkspaceToolsKey() : null;
+            saveWorkspaceToolsState(wsKey, toolsDefaults());
+        }
+        if (typeof renderToolsList === 'function') {
+            renderToolsList();
+        }
+        if (typeof refreshPermBanner === 'function') {
+            refreshPermBanner();
+        }
     }
     if (opts.settings) {
         clearLocalStorageKeys(CLEARDATA_LS_KEYS.settings);

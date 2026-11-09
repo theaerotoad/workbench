@@ -49,6 +49,10 @@ function closeWorkspace() {
             if (AppConfig._data) localStorage.setItem(`app_config_${wsKey}`, JSON.stringify(AppConfig._data));
             if (typeof MODEL_PROVIDERS !== 'undefined') localStorage.setItem(`models_${wsKey}`, JSON.stringify(MODEL_PROVIDERS));
             if (typeof MODE_PROMPTS !== 'undefined') localStorage.setItem(`mode_prompts_${wsKey}`, JSON.stringify(MODE_PROMPTS));
+            if (typeof getWorkspaceToolsConfig === 'function') {
+                const cfg = getWorkspaceToolsConfig();
+                if (cfg) localStorage.setItem(`tools_config_${wsKey}`, JSON.stringify(cfg));
+            }
         } catch(e) {}
     }
     rootHandle = null;
@@ -78,10 +82,23 @@ function closeWorkspace() {
     term.innerHTML = '';
     resetScrollState();
 
-    registerToolsVirtualFiles();
+    if (typeof resetToolRegistry === 'function') {
+        resetToolRegistry();
+    } else {
+        registerToolsVirtualFiles();
+    }
     registerModelsVirtualFile();
     registerConfigVirtualFile();
     registerPromptsVirtualFile();
+    if (typeof registerToolsVirtualFile === 'function') {
+        registerToolsVirtualFile();
+    }
+    if (typeof renderToolsList === 'function') {
+        renderToolsList();
+    }
+    if (typeof refreshPermBanner === 'function') {
+        refreshPermBanner();
+    }
 
     if (btnExitWorkspace) btnExitWorkspace.style.display = 'none';
     if (btnSessionToggle) btnSessionToggle.style.display = 'none';
@@ -329,7 +346,7 @@ async function refreshPathMeta(fp) {
     if (!rootHandle || typeof fp !== 'string' || !fp) return;
     const cur = registry.meta[fp];
     if (cur && (cur.virtual || cur.attachment)) return;
-    if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || isPromptFileMode(fp)) return;
+    if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || fp === TOOLS_FILE || isPromptFileMode(fp)) return;
     if (fp === PLAN_FILE || !isScanVisiblePath(fp)) return;   // the plan file can live only in memory
 
     const parts = fp.split('/').filter(Boolean);
@@ -684,6 +701,9 @@ async function setWorkspace(handle) {
     if (rootHandle && rootHandle !== handle) {
         await closeWorkspaceNoConfirm();
     }
+    if (typeof resetToolRegistry === 'function') {
+        resetToolRegistry();
+    }
     rootHandle = handle;
     updateWorkspaceTitle();
 
@@ -713,6 +733,15 @@ async function setWorkspace(handle) {
 
     applyConfigToUI();
     registerConfigVirtualFile();
+    if (typeof registerToolsVirtualFile === 'function') {
+        registerToolsVirtualFile();
+    }
+    if (typeof renderToolsList === 'function') {
+        renderToolsList();
+    }
+    if (typeof refreshPermBanner === 'function') {
+        refreshPermBanner();
+    }
 
     await selectInitialSession();
     await syncWorkspace(true);
@@ -772,6 +801,35 @@ async function syncAgentFilesWithWorkspace() {
             if (storedPrompts) {
                 MODE_PROMPTS = JSON.parse(storedPrompts);
                 localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
+            }
+
+            const wsToolsKey = `tools_config_${wsKey}`;
+            const storedTools = localStorage.getItem(wsToolsKey);
+            let toolsCfg = null;
+            if (storedTools) {
+                try { toolsCfg = JSON.parse(storedTools); } catch(e) {}
+            }
+            if (!toolsCfg || typeof toolsCfg !== 'object') {
+                toolsCfg = typeof toolsDefaults === 'function' ? toolsDefaults() : {};
+            }
+            if (typeof setWorkspaceToolsConfig === 'function') {
+                setWorkspaceToolsConfig(toolsCfg);
+            }
+            const filesMap = typeof loadToolFilesState === 'function' ? loadToolFilesState() : {};
+            if (Array.isArray(toolsCfg.customTools)) {
+                for (const t of toolsCfg.customTools) {
+                    if (t.enabled !== false && filesMap[t.name]) {
+                        const fp = t.file || toolFilePath(t.name);
+                        registry.files[fp] = filesMap[t.name];
+                        registry.meta[fp] = { kind: 'file', size: filesMap[t.name].length, isBinary: false, virtual: true };
+                    }
+                }
+            }
+            if (typeof rebuildToolRegistryFromFiles === 'function') {
+                rebuildToolRegistryFromFiles();
+            }
+            if (typeof registerToolsVirtualFiles === 'function') {
+                registerToolsVirtualFiles();
             }
         } catch(e) {}
         return;
@@ -853,37 +911,64 @@ async function syncAgentFilesWithWorkspace() {
         }
         localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
 
+        let tDir = null;
         try {
-            const tDir = await getDirectoryHandleByPath(TOOLS_DIR, false);
-            if (tDir) {
-                const filesMap = loadToolFilesState();
-                const diskTools = new Set();
-                for await (const entry of tDir.values()) {
-                    if (entry.kind === 'file' && entry.name.endsWith('.js')) {
-                        const text = await (await entry.getFile()).text();
-                        const tName = entry.name.replace(/\.js$/, '');
-                        filesMap[tName] = text;
-                        diskTools.add(tName);
-                        unmarkToolDeleted(tName);
-                    }
-                }
-                saveToolFilesState(filesMap);
+            tDir = await getDirectoryHandleByPath(TOOLS_DIR, false);
+        } catch(e) {}
 
-                for (const [tName, text] of Object.entries(filesMap)) {
-                    if (!diskTools.has(tName) && !wasToolEverDeleted(tName)) {
-                        await writeAgentFileToDisk(toolFilePath(tName), text);
-                    }
-                }
-            } else {
-                throw new Error('No tools dir');
+        const toolsManifestText = await readDisk(TOOLS_FILE);
+        let toolsConfig = null;
+        if (toolsManifestText) {
+            try {
+                toolsConfig = JSON.parse(toolsManifestText);
+            } catch(e) {}
+        }
+
+        if (toolsConfig && typeof toolsConfig === 'object') {
+            if (typeof reconcileWorkspaceTools === 'function') {
+                await reconcileWorkspaceTools(tDir);
+            } else if (typeof setWorkspaceToolsConfig === 'function') {
+                setWorkspaceToolsConfig(toolsConfig);
             }
-        } catch(e) {
-            const filesMap = loadToolFilesState();
-            for (const [tName, text] of Object.entries(filesMap)) {
-                if (!wasToolEverDeleted(tName)) {
-                    await writeAgentFileToDisk(toolFilePath(tName), text);
+        } else {
+            if (typeof reconcileWorkspaceTools === 'function') {
+                toolsConfig = await reconcileWorkspaceTools(tDir);
+            } else if (typeof setWorkspaceToolsConfig === 'function') {
+                toolsConfig = typeof toolsDefaults === 'function' ? toolsDefaults() : {};
+                setWorkspaceToolsConfig(toolsConfig);
+            }
+            if (toolsConfig) {
+                await writeAgentFileToDisk(TOOLS_FILE, JSON.stringify(toolsConfig, null, 2) + '\n');
+            }
+        }
+
+        const activeCfg = typeof getWorkspaceToolsConfig === 'function' ? getWorkspaceToolsConfig() : null;
+        if (activeCfg && Array.isArray(activeCfg.customTools)) {
+            const filesMap = typeof loadToolFilesState === 'function' ? loadToolFilesState() : {};
+            let filesMapChanged = false;
+            for (const t of activeCfg.customTools) {
+                const fp = t.file || toolFilePath(t.name);
+                const diskContent = await readDisk(fp);
+                if (diskContent !== null) {
+                    registry.files[fp] = diskContent;
+                    registry.meta[fp] = { kind: 'file', size: diskContent.length, isBinary: false, virtual: true };
+                    filesMap[t.name] = diskContent;
+                    filesMapChanged = true;
+                } else if (filesMap[t.name]) {
+                    registry.files[fp] = filesMap[t.name];
+                    registry.meta[fp] = { kind: 'file', size: filesMap[t.name].length, isBinary: false, virtual: true };
+                    await writeAgentFileToDisk(fp, filesMap[t.name]);
                 }
             }
+            if (filesMapChanged && typeof saveToolFilesState === 'function') {
+                saveToolFilesState(filesMap);
+            }
+        }
+        if (typeof rebuildToolRegistryFromFiles === 'function') {
+            rebuildToolRegistryFromFiles();
+        }
+        if (typeof registerToolsVirtualFiles === 'function') {
+            registerToolsVirtualFiles();
         }
 
     } else {
@@ -894,11 +979,20 @@ async function syncAgentFilesWithWorkspace() {
             await writeAgentFileToDisk(MODE_PROMPT_FILES[mode], promptFileContent(mode));
         }
 
-        const filesMap = loadToolFilesState();
-        for (const [tName, text] of Object.entries(filesMap)) {
-            if (!wasToolEverDeleted(tName)) {
-                await writeAgentFileToDisk(toolFilePath(tName), text);
-            }
+        const cleanDefaults = typeof toolsDefaults === 'function' ? toolsDefaults() : {};
+        if (typeof setWorkspaceToolsConfig === 'function') {
+            setWorkspaceToolsConfig(cleanDefaults);
+        }
+        if (typeof saveWorkspaceToolsState === 'function') {
+            saveWorkspaceToolsState(wsKey, cleanDefaults);
+        }
+        await writeAgentFileToDisk(TOOLS_FILE, JSON.stringify(cleanDefaults, null, 2) + '\n');
+
+        if (typeof rebuildToolRegistryFromFiles === 'function') {
+            rebuildToolRegistryFromFiles();
+        }
+        if (typeof registerToolsVirtualFiles === 'function') {
+            registerToolsVirtualFiles();
         }
     }
 }
