@@ -71,6 +71,10 @@ function ensureModelUuids() {
 function saveModels() {
     ensureModelUuids();
     localStorage.setItem('models_json', JSON.stringify(MODEL_PROVIDERS));
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) localStorage.setItem(`models_${wsKey}`, JSON.stringify(MODEL_PROVIDERS));
+    }
     registerModelsVirtualFile();
     writeAgentFileToDisk(MODELS_FILE, modelsFileContent());
 }
@@ -133,7 +137,14 @@ function findModelEntryById(id) {
 }
 
 function getSelectedModelKey() {
-    const stored = localStorage.getItem('selected_model');
+    let stored = null;
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) stored = localStorage.getItem(`selected_model_${wsKey}`);
+    }
+    if (!stored) {
+        stored = localStorage.getItem('selected_model');
+    }
     const entries = getAllModelEntries();
     if (stored) {
         const sepIdx = stored.indexOf('::');
@@ -148,7 +159,12 @@ function getSelectedModelKey() {
 
 function setSelectedModel(providerName, modelName) {
     if (!findModelEntry(providerName, modelName)) return;
-    localStorage.setItem('selected_model', `${providerName}::${modelName}`);
+    const val = `${providerName}::${modelName}`;
+    localStorage.setItem('selected_model', val);
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) localStorage.setItem(`selected_model_${wsKey}`, val);
+    }
     renderModelDropdown();
 }
 

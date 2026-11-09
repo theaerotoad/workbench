@@ -68,6 +68,7 @@ async function clearAllSessions() {
     };
     state.sessionIds = [newId];
     state._lastSavedIndex = null;
+    state._lastSavedWsKey = null;
     state.activeSessionId = newId;
 
     registry.originalFiles = {};
@@ -463,6 +464,7 @@ async function selectInitialSession() {
             if (!sessionIds.includes(k)) delete state.sessionMeta[k];
         }
         state._lastSavedIndex = { sessionIds: sessionIds.slice(), activeSessionId: activeId, meta: { ...state.sessionMeta } };
+        state._lastSavedWsKey = wsKey;
         if (prunedIndex) await saveSessionIndexToDB(wsKey, state._lastSavedIndex);
     } else {
         const defaultId = 'sess_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
@@ -492,6 +494,7 @@ async function selectInitialSession() {
         const idx = { sessionIds: [defaultId], activeSessionId: defaultId, meta: { ...state.sessionMeta } };
         await saveSessionIndexToDB(wsKey, idx);
         state._lastSavedIndex = idx;
+        state._lastSavedWsKey = wsKey;
     }
 }
 
