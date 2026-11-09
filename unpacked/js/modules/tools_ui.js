@@ -259,6 +259,16 @@ window.collapseToolPanel = collapseToolPanel;
 
 // --- getToolSettingValue.js ---
 function getToolSettingValue(toolName, key) {
+    if (typeof window.getWorkspaceToolsConfig === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (cfg && cfg.settings && cfg.settings[toolName] && cfg.settings[toolName][key] !== undefined) {
+            return cfg.settings[toolName][key];
+        }
+        const def = (toolRegistry[toolName]?.settings || []).find(s => s.key === key);
+        if (def && def.type === 'model' && cfg && cfg.models && cfg.models[toolName] !== undefined) {
+            return cfg.models[toolName];
+        }
+    }
     const tool = toolRegistry[toolName];
     if (!tool) return undefined;
     if (tool.settingsValues && tool.settingsValues[key] !== undefined) return tool.settingsValues[key];
@@ -312,9 +322,17 @@ window.handleNewToolFile = handleNewToolFile;
 // --- loadToolSettingsState.js ---
 // Per-tool settings from TOOL_META.settings, stored as { [toolName]: { [key]: value } }.
 function loadToolSettingsState() {
+    if (typeof window.getWorkspaceToolsConfig === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (cfg && cfg.settings && typeof cfg.settings === 'object') {
+            return { ...cfg.settings };
+        }
+    }
     try {
-        const stored = JSON.parse(localStorage.getItem('tool_settings_state') || '{}');
-        return (stored && typeof stored === 'object') ? stored : {};
+        const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+        const lsKey = wsKey ? `tool_settings_state_${wsKey}` : 'tool_settings_state';
+        const stored = JSON.parse(localStorage.getItem(lsKey) || (wsKey ? 'null' : (localStorage.getItem('tool_settings_state') || '{}')));
+        return (stored && typeof stored === 'object' && !Array.isArray(stored)) ? stored : {};
     } catch(e) { return {}; }
 }
 
@@ -529,7 +547,17 @@ window.renderToolsList = renderToolsList;
 
 // --- saveToolSettingsState.js ---
 function saveToolSettingsState(state) {
-    localStorage.setItem('tool_settings_state', JSON.stringify(state));
+    const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+    const lsKey = wsKey ? `tool_settings_state_${wsKey}` : 'tool_settings_state';
+    try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch(e) {}
+    if (!wsKey) {
+        try { localStorage.setItem('tool_settings_state', JSON.stringify(state)); } catch(e) {}
+    }
+    if (typeof window.getWorkspaceToolsConfig === 'function' && typeof window.saveWorkspaceToolsState === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        cfg.settings = { ...(cfg.settings || {}), ...(state || {}) };
+        window.saveWorkspaceToolsState(wsKey, cfg);
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -568,6 +596,13 @@ function setToolSettingValue(toolName, key, val) {
     if (!state[toolName]) state[toolName] = {};
     state[toolName][key] = coerced;
     saveToolSettingsState(state);
+
+    if (def && def.type === 'model' && typeof window.getWorkspaceToolsConfig === 'function' && typeof window.saveWorkspaceToolsState === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (!cfg.models) cfg.models = {};
+        cfg.models[toolName] = coerced;
+        window.saveWorkspaceToolsState(typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null, cfg);
+    }
 }
 
 // --- AST_EXPORTS_START ---

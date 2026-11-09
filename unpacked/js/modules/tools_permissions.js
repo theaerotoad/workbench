@@ -129,7 +129,13 @@ window.applyGroupPermission = applyGroupPermission;
 // --- checkPermission.js ---
 async function checkPermission(toolName, actionDesc, sessionId) {
     const tool = toolRegistry[toolName];
-    const level = tool ? (tool.permission || 'ask') : 'ask';
+    let level = tool ? (tool.permission || 'ask') : 'ask';
+    if (typeof window.getWorkspaceToolsConfig === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (cfg && cfg.permissions && cfg.permissions[toolName]) {
+            level = cfg.permissions[toolName];
+        }
+    }
     if (level === 'never') {
         return { allowed: false, error: `Tool '${toolName}' is disabled in permissions (never).` };
     }
@@ -182,9 +188,17 @@ window.closeToolModelPicker = closeToolModelPicker;
 
 // --- loadToolLockState.js ---
 function loadToolLockState() {
+    if (typeof window.getWorkspaceToolsConfig === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (cfg && cfg.locks && typeof cfg.locks === 'object') {
+            return { ...cfg.locks };
+        }
+    }
     try {
-        const stored = JSON.parse(localStorage.getItem('tool_lock_state') || '{}');
-        return (stored && typeof stored === 'object') ? stored : {};
+        const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+        const lsKey = wsKey ? `tool_lock_state_${wsKey}` : 'tool_lock_state';
+        const stored = JSON.parse(localStorage.getItem(lsKey) || (wsKey ? 'null' : (localStorage.getItem('tool_lock_state') || '{}')));
+        return (stored && typeof stored === 'object' && !Array.isArray(stored)) ? stored : {};
     } catch(e) { return {}; }
 }
 
@@ -194,9 +208,17 @@ window.loadToolLockState = loadToolLockState;
 
 // --- loadToolPermState.js ---
 function loadToolPermState() {
+    if (typeof window.getWorkspaceToolsConfig === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        if (cfg && cfg.permissions && typeof cfg.permissions === 'object') {
+            return { ...cfg.permissions };
+        }
+    }
     try {
-        const stored = JSON.parse(localStorage.getItem('tool_perm_state') || '{}');
-        return (stored && typeof stored === 'object') ? stored : {};
+        const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+        const lsKey = wsKey ? `tool_perm_state_${wsKey}` : 'tool_perm_state';
+        const stored = JSON.parse(localStorage.getItem(lsKey) || (wsKey ? 'null' : (localStorage.getItem('tool_perm_state') || '{}')));
+        return (stored && typeof stored === 'object' && !Array.isArray(stored)) ? stored : {};
     } catch(e) { return {}; }
 }
 
@@ -274,7 +296,17 @@ window.refreshPermBanner = refreshPermBanner;
 
 // --- saveToolLockState.js ---
 function saveToolLockState(state) {
-    localStorage.setItem('tool_lock_state', JSON.stringify(state));
+    const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+    const lsKey = wsKey ? `tool_lock_state_${wsKey}` : 'tool_lock_state';
+    try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch(e) {}
+    if (!wsKey) {
+        try { localStorage.setItem('tool_lock_state', JSON.stringify(state)); } catch(e) {}
+    }
+    if (typeof window.getWorkspaceToolsConfig === 'function' && typeof window.saveWorkspaceToolsState === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        cfg.locks = { ...(cfg.locks || {}), ...(state || {}) };
+        window.saveWorkspaceToolsState(wsKey, cfg);
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -283,7 +315,17 @@ window.saveToolLockState = saveToolLockState;
 
 // --- saveToolPermState.js ---
 function saveToolPermState(state) {
-    localStorage.setItem('tool_perm_state', JSON.stringify(state));
+    const wsKey = typeof window.getWorkspaceToolsKey === 'function' ? window.getWorkspaceToolsKey() : null;
+    const lsKey = wsKey ? `tool_perm_state_${wsKey}` : 'tool_perm_state';
+    try { localStorage.setItem(lsKey, JSON.stringify(state)); } catch(e) {}
+    if (!wsKey) {
+        try { localStorage.setItem('tool_perm_state', JSON.stringify(state)); } catch(e) {}
+    }
+    if (typeof window.getWorkspaceToolsConfig === 'function' && typeof window.saveWorkspaceToolsState === 'function') {
+        const cfg = window.getWorkspaceToolsConfig();
+        cfg.permissions = { ...(cfg.permissions || {}), ...(state || {}) };
+        window.saveWorkspaceToolsState(wsKey, cfg);
+    }
 }
 
 // --- AST_EXPORTS_START ---
