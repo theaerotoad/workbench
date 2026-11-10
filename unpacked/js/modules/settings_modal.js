@@ -89,6 +89,9 @@ function notifyTabActivated(tabId, opts = {}) {
         if (typeof window.renderToolsList === 'function') {
             window.renderToolsList();
         }
+        if (typeof window.updateAgentFilesSwitch === 'function') {
+            window.updateAgentFilesSwitch();
+        }
     } else if (tabId === 'appearance') {
         if (typeof window.renderAccentSwatches === 'function') {
             window.renderAccentSwatches();
@@ -143,6 +146,37 @@ export function initSettingsModal() {
             e.preventDefault();
             e.stopPropagation();
             openSettingsModal('workspace');
+        });
+    }
+
+    // Sidebar security/permissions button opens the unified Settings modal on security tab
+    const btnSettingsToggle = document.getElementById('btn-settings-toggle');
+    if (btnSettingsToggle) {
+        btnSettingsToggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSettingsModal('security');
+        });
+    }
+
+    // Shield agent switch inside Security tab
+    const agentSwitch = document.getElementById('shield-agent-switch');
+    if (agentSwitch) {
+        agentSwitch.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-agent-val]');
+            if (!btn) return;
+            const hide = btn.dataset.agentVal === 'hide';
+            if (typeof AppConfig !== 'undefined' && AppConfig.set) {
+                AppConfig.set('hide-agent-files', hide ? 'true' : 'false');
+            }
+            if (typeof window.updateAgentFilesSwitch === 'function') {
+                window.updateAgentFilesSwitch();
+            }
+            if (typeof window.syncWorkspace === 'function') {
+                window.syncWorkspace(false);
+            } else if (typeof window.renderExplorerTree === 'function') {
+                window.renderExplorerTree();
+            }
         });
     }
 

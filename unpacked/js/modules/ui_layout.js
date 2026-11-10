@@ -1147,8 +1147,6 @@ window.toggleMobileSidebar = toggleMobileSidebar;
 // --- toggleNavTab.js ---
 function toggleNavTab(navTab, viewEl) {
     if (!window.rootHandle) return;
-    settingsPopover.style.display = 'none';
-    btnSettingsToggle.classList.remove('active');
     const isCollapsed = sidebarEl.classList.contains('collapsed');
     const isActive = navTab.classList.contains('active');
     if (isCollapsed || !isActive) {

@@ -409,10 +409,27 @@
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-security" data-pane="security">
-                        <div class="settings-pane-placeholder">
-                            <span class="icon">shield</span>
-                            <h3>Security &amp; Tools</h3>
-                            <p>Tool execution permissions and protected file access.</p>
+                        <div class="settings-section-label">Tools &amp; Permissions</div>
+                        <div id="tools-list"></div>
+
+                        <div class="settings-section-label" style="margin-top: 16px;">Protected Files</div>
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">shield</span>
+                                <span>Agent Configuration</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row" style="justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <div class="duo-switch-label">.agent files</div>
+                                        <div class="dim" style="font-size: 11px; margin-top: 2px;">Controls whether .agent files are visible to all tools (read, write, grep, etc.)</div>
+                                    </div>
+                                    <div class="tri-switch" id="shield-agent-switch">
+                                        <button type="button" class="tri-btn never active never" data-agent-val="hide">hide</button>
+                                        <button type="button" class="tri-btn always" data-agent-val="show">show</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-about" data-pane="about">

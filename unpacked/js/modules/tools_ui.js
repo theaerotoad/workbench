@@ -513,8 +513,6 @@ function renderToolsList() {
     addBtn.title = 'New Tool';
     addBtn.innerHTML = '<span class="icon" style="font-size:15px;">add</span>';
     addBtn.addEventListener('click', () => {
-        settingsPopover.style.display = 'none';
-        btnSettingsToggle.classList.remove('active');
         openNewToolModal();
     });
     customLabelRow.appendChild(addBtn);
