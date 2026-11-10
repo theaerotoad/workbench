@@ -1007,9 +1007,37 @@ async function switchTab(tabId, opts = {}) {
         const mdContainer = document.getElementById('markdown-preview-container');
         if (mdContainer) mdContainer.style.display = 'none';
 
+        // Fast path: if Monaco model already exists, activate it immediately with 0 network calls
+        if (typeof monacoModels !== 'undefined' && monacoModels.has(tabId)) {
+            editorBinaryNotice.style.display = 'none';
+            if (monacoEditor) {
+                const model = monacoModels.get(tabId);
+                withDirtyTrackingSuppressed(() => monacoEditor.setModel(model));
+                state.isEditorDirty = isFileDirty(tabId);
+                btnTabSave.classList.toggle('dirty', state.isEditorDirty);
+                clearGutterDiffMarkers();
+                scheduleGutterDiffUpdate();
+            }
+
+            const isHtml = tabId.endsWith('.html') || tabId.endsWith('.htm');
+            editorModeToggle.style.display = isHtml ? 'flex' : 'none';
+            btnTabSave.style.display = isHtml ? 'flex' : 'none';
+
+            if (isHtml && state.editorViewMode === 'preview') {
+                setEditorSubView('preview');
+            } else {
+                setEditorSubView('edit', { focus: !opts.keepFocus });
+            }
+
+            if (focusChat && window.focusPrompt) {
+                window.focusPrompt();
+            }
+            return;
+        }
+
         const isImage = /\.(png|jpg|jpeg|gif|ico|svg|webp)$/i.test(tabId);
         const meta = registry.meta[tabId];
-        const isBinaryFile = await resolveIsBinary(tabId);
+        const isBinaryFile = (meta && meta.isBinary === false) ? false : await resolveIsBinary(tabId);
 
         if (isBinaryFile && !isImage) {
             monacoContainer.style.display = 'none';
@@ -1017,7 +1045,7 @@ async function switchTab(tabId, opts = {}) {
             editorBinaryNotice.style.display = 'flex';
             editorImagePreview.style.display = 'none';
             showImgZoomBar(false);
-            editorBinaryMsg.innerText = `Binary file (${formatFileSize(meta.size || 0)}) - cannot be displayed in text editor.`;
+            editorBinaryMsg.innerText = `Binary file (${formatFileSize(meta?.size || 0)}) - cannot be displayed in text editor.`;
             editorModeToggle.style.display = 'none';
             btnTabSave.style.display = 'none';
             return;

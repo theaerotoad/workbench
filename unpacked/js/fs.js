@@ -1,4 +1,6 @@
-async function readFileContent(filepath) {
+const _inFlightReads = new Map();
+
+async function readFileContent(filepath, opts = {}) {
     if (filepath === MODELS_FILE) {
         return modelsFileContent();
     }
@@ -18,25 +20,48 @@ async function readFileContent(filepath) {
         return monacoModels.get(filepath).getValue();
     }
     if (!rootHandle) return registry.files[filepath] !== undefined ? registry.files[filepath] : "";
-    try {
-        const handle = await getHandleByPath(filepath);
-        if (!handle) return "";
-        const file = await handle.getFile();
-        let text;
-        const sniffed = await readFileTextSniffed(file);
-        if (sniffed.binary) {
-            text = await file.text();   // unchanged legacy behaviour; callers check isBinary first
-        } else {
-            text = sniffed.text;
-            if (registry.meta[filepath]) registry.meta[filepath].encoding = sniffed.encoding;
-        }
-        if (registry.files[filepath] === undefined) {
-            registry.files[filepath] = text;
-        }
-        return text;
-    } catch(e) {
-        return "";
+
+    const force = opts && opts.force === true;
+    if (!force && registry.files[filepath] !== undefined) {
+        return registry.files[filepath];
     }
+
+    if (_inFlightReads.has(filepath)) {
+        return _inFlightReads.get(filepath);
+    }
+
+    const p = (async () => {
+        try {
+            const handle = await getHandleByPath(filepath);
+            if (!handle) return "";
+            const file = await handle.getFile();
+            let text;
+            const sniffed = await readFileTextSniffed(file);
+            if (sniffed.binary) {
+                text = await file.text();   // unchanged legacy behaviour; callers check isBinary first
+            } else {
+                text = sniffed.text;
+                if (registry.meta[filepath]) registry.meta[filepath].encoding = sniffed.encoding;
+            }
+            registry.files[filepath] = text;
+            if (registry.meta[filepath]) {
+                registry.meta[filepath].size = file.size;
+                if (file.lastModified) {
+                    registry.meta[filepath].mtime = file.lastModified / 1000;
+                    registry.meta[filepath]._syncedMtime = registry.meta[filepath].mtime;
+                    registry.meta[filepath]._syncedSize = file.size;
+                }
+            }
+            return text;
+        } catch(e) {
+            return "";
+        } finally {
+            _inFlightReads.delete(filepath);
+        }
+    })();
+
+    _inFlightReads.set(filepath, p);
+    return p;
 }
 
 async function readFileContentForTool(filepath) {

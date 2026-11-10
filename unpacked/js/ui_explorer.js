@@ -278,6 +278,10 @@ setInterval(() => {
     // Local/Virtual workspaces get 3s polling, WebDAV gets 30s.
     if (!rootHandle) return;
     if (document.hidden) return;
+    // When WebDAV SSE stream is connected, server pushes changes in real-time: skip interval polling
+    if (window._webdavEventSource && window._webdavEventSource.readyState === 1) {
+        return;
+    }
     const isRemote = rootHandle && rootHandle.isWebDAV;
     const intervalMs = isRemote ? 30000 : 3000;
     if (Date.now() - _lastAutoSync >= intervalMs) {

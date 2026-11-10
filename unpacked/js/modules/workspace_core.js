@@ -42,6 +42,7 @@ function closeWorkspace() {
         }
     }
 
+    if (typeof closeWebDAVEvents === 'function') closeWebDAVEvents();
     if (rootHandle.isVirtual) vfsFlush(rootHandle);
     if (rootHandle.isWebDAV && typeof AppConfig !== 'undefined' && AppConfig.get('webdav-sync-agent') !== 'true') {
         const wsKey = wsStorageName(rootHandle);
@@ -633,11 +634,16 @@ async function runSyncWorkspace(silent = true) {
 
             if (fastData && Array.isArray(fastData.entries)) {
                 newMeta = {};
-                // Register .gitignore files first so shouldSkipScanEntry respects them
+                // Register .gitignore files and cache inlined .agent text files
                 for (const entry of fastData.entries) {
-                    if (entry.content && (entry.path === '.gitignore' || entry.path.endsWith('/.gitignore'))) {
-                        if (typeof registerGitignoreRules === 'function') {
-                            registerGitignoreRules(entry.path, entry.content);
+                    if (entry.content !== undefined) {
+                        if (entry.path === '.gitignore' || entry.path.endsWith('/.gitignore')) {
+                            if (typeof registerGitignoreRules === 'function') {
+                                registerGitignoreRules(entry.path, entry.content);
+                            }
+                        }
+                        if (entry.path.startsWith('.agent/') || entry.path.startsWith('.agent\\')) {
+                            registry.files[entry.path] = entry.content;
                         }
                     }
                 }
@@ -793,6 +799,9 @@ async function setWorkspace(handle) {
     state.linesAdded = 0;
     state.linesRemoved = 0;
 
+    // Run syncWorkspace first to retrieve the fast tree and inline .agent configurations
+    await syncWorkspace(true);
+
     await syncAgentFilesWithWorkspace();
 
     applyConfigToUI();
@@ -826,6 +835,7 @@ async function setWorkspace(handle) {
     updateStatusInfo();
     renderExplorerTree();
     renderChangesPanel();
+    if (typeof setupWebDAVEvents === 'function') setupWebDAVEvents(handle);
     focusPrompt();
 }
 
@@ -907,11 +917,14 @@ async function syncAgentFilesWithWorkspace() {
 
     if (hasAgentDir) {
         const readDisk = async (path) => {
+            if (registry.files[path] !== undefined) return registry.files[path];
             try {
                 const h = await getHandleByPath(path);
                 if (!h) return null;
                 const f = await h.getFile();
-                return await f.text();
+                const text = await f.text();
+                registry.files[path] = text;
+                return text;
             } catch(e) { return null; }
         };
 
@@ -941,27 +954,47 @@ async function syncAgentFilesWithWorkspace() {
         }
 
         let loadedPrompts = new Set();
-        try {
-            const pDir = await getDirectoryHandleByPath(PROMPTS_DIR, false);
-            if (pDir) {
-                for await (const entry of pDir.values()) {
-                    if (entry.kind === 'file' && entry.name.endsWith('.md')) {
-                        const text = await (await entry.getFile()).text();
-                        const body = stripPromptFileHeader(text);
-                        const mode = entry.name.slice(0, -3);
-                        if (body) {
-                            MODE_PROMPTS[mode] = body;
-                            loadedPrompts.add(mode);
-                            if (!PROMPT_MODE_ORDER.includes(mode)) {
-                                PROMPT_MODE_ORDER.push(mode);
-                                MODE_PROMPT_FILES[mode] = `${PROMPTS_DIR}/${entry.name}`;
-                                PROMPT_FILE_MODES[`${PROMPTS_DIR}/${entry.name}`] = mode;
-                            }
+        const promptPaths = Object.keys(registry.meta).filter(k => k.startsWith(PROMPTS_DIR + '/') && k.endsWith('.md'));
+        if (promptPaths.length > 0) {
+            for (const pPath of promptPaths) {
+                const pText = await readDisk(pPath);
+                if (pText) {
+                    const body = stripPromptFileHeader(pText);
+                    const mode = pPath.slice((PROMPTS_DIR + '/').length, -3);
+                    if (body) {
+                        MODE_PROMPTS[mode] = body;
+                        loadedPrompts.add(mode);
+                        if (!PROMPT_MODE_ORDER.includes(mode)) {
+                            PROMPT_MODE_ORDER.push(mode);
+                            MODE_PROMPT_FILES[mode] = pPath;
+                            PROMPT_FILE_MODES[pPath] = mode;
                         }
                     }
                 }
             }
-        } catch(e) {}
+        } else {
+            try {
+                const pDir = await getDirectoryHandleByPath(PROMPTS_DIR, false);
+                if (pDir) {
+                    for await (const entry of pDir.values()) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+                            const text = await (await entry.getFile()).text();
+                            const body = stripPromptFileHeader(text);
+                            const mode = entry.name.slice(0, -3);
+                            if (body) {
+                                MODE_PROMPTS[mode] = body;
+                                loadedPrompts.add(mode);
+                                if (!PROMPT_MODE_ORDER.includes(mode)) {
+                                    PROMPT_MODE_ORDER.push(mode);
+                                    MODE_PROMPT_FILES[mode] = `${PROMPTS_DIR}/${entry.name}`;
+                                    PROMPT_FILE_MODES[`${PROMPTS_DIR}/${entry.name}`] = mode;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch(e) {}
+        }
 
         for (const mode of PROMPT_MODE_ORDER) {
             if (loadedPrompts.has(mode)) continue;
@@ -1157,6 +1190,64 @@ function updateWorkspaceTitle() {
 // --- AST_EXPORTS_START ---
 window.updateWorkspaceTitle = updateWorkspaceTitle;
 // --- AST_EXPORTS_END ---
+
+let _webdavEventSource = null;
+let _webdavSseDebounce = null;
+
+function closeWebDAVEvents() {
+    if (_webdavEventSource) {
+        try { _webdavEventSource.close(); } catch(e) {}
+        _webdavEventSource = null;
+    }
+    if (_webdavSseDebounce) {
+        clearTimeout(_webdavSseDebounce);
+        _webdavSseDebounce = null;
+    }
+    window._webdavEventSource = null;
+}
+
+function setupWebDAVEvents(handle) {
+    closeWebDAVEvents();
+    if (!handle || !handle.isWebDAV) return;
+
+    try {
+        let subpath = handle.path || '/';
+        if (subpath.startsWith('/webdav/')) {
+            subpath = subpath.slice('/webdav'.length);
+        } else if (subpath === '/webdav') {
+            subpath = '/';
+        }
+        subpath = subpath.replace(/^\/+|\/+$/g, '');
+
+        const base = handle.url.startsWith('http://') || handle.url.startsWith('https://')
+            ? handle.url
+            : (typeof window !== 'undefined' && window.location ? new URL(handle.url, window.location.href).href : handle.url);
+        const sseUrl = new URL('/api/webdav/events', base);
+        if (subpath) {
+            sseUrl.searchParams.set('path', subpath);
+        }
+
+        const es = new EventSource(sseUrl.href);
+        _webdavEventSource = es;
+        window._webdavEventSource = es;
+
+        es.addEventListener('change', () => {
+            clearTimeout(_webdavSseDebounce);
+            _webdavSseDebounce = setTimeout(() => {
+                if (rootHandle === handle && !state.isSaving) {
+                    syncWorkspace(true);
+                }
+            }, 200);
+        });
+
+        es.onerror = () => {
+            closeWebDAVEvents();
+        };
+    } catch(e) {}
+}
+
+window.setupWebDAVEvents = setupWebDAVEvents;
+window.closeWebDAVEvents = closeWebDAVEvents;
 
 // --- wsStorageName.js ---
 function wsStorageName(h) { 

@@ -4,6 +4,8 @@ import argparse
 import uvicorn
 import yaml
 import hashlib
+import time
+import json
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
@@ -233,7 +235,11 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
                                         "size": stat.st_size,
                                         "mtime": round(stat.st_mtime, 3)
                                     }
-                                    if entry.name == ".gitignore" and stat.st_size < 131072:
+                                    norm_rel = rel_path.replace("\\", "/")
+                                    is_agent_text = (norm_rel.startswith(".agent/") or norm_rel == ".agent") and (
+                                        entry.name.endswith(".json") or entry.name.endswith(".md") or entry.name.endswith(".js")
+                                    )
+                                    if (entry.name == ".gitignore" or is_agent_text) and stat.st_size < 262144:
                                         try:
                                             with open(entry.path, "r", encoding="utf-8", errors="replace") as gf:
                                                 item["content"] = gf.read()
@@ -264,6 +270,82 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
             return JSONResponse({"error": str(e)}, status_code=500)
 
     routes.append(Route("/api/webdav/tree", webdav_tree, methods=["GET"]))
+
+    # 2.2 WebDAV SSE Real-Time Change Notification Endpoint
+    async def webdav_events(request: Request):
+        try:
+            base_dir = os.path.abspath(webdav_dir)
+            if not os.path.exists(base_dir) or not os.path.isdir(base_dir):
+                return JSONResponse({"error": "WebDAV base directory does not exist"}, status_code=500)
+
+            raw_path = request.query_params.get("path", "").replace("\\", "/").strip("/")
+            parts = [p for p in raw_path.split("/") if p and p != "."]
+            if any(p == ".." for p in parts):
+                return JSONResponse({"error": "Forbidden: Path traversal not allowed"}, status_code=403)
+
+            clean_subpath = os.path.sep.join(parts) if parts else ""
+            target_dir = os.path.abspath(os.path.join(base_dir, clean_subpath)) if clean_subpath else base_dir
+
+            if os.path.commonpath([base_dir, target_dir]) != base_dir or not os.path.exists(target_dir):
+                return JSONResponse({"error": "Forbidden or invalid path"}, status_code=403)
+
+            async def event_generator():
+                yield ": connected\n\n"
+
+                try:
+                    import watchfiles
+                    has_watchfiles = True
+                except ImportError:
+                    has_watchfiles = False
+
+                if has_watchfiles:
+                    try:
+                        async for changes in watchfiles.awatch(target_dir, stop_event=None, debounce=150, step=50, rust_timeout=100):
+                            if await request.is_disconnected():
+                                break
+                            valid = []
+                            for c_type, c_path in changes:
+                                rel = os.path.relpath(c_path, target_dir).replace("\\", "/")
+                                if any(p in {".git", "node_modules", "__pycache__", "venv", ".venv"} for p in rel.split("/")):
+                                    continue
+                                valid.append({"path": rel, "type": c_type.name})
+                            if valid:
+                                payload = json.dumps({"changes": valid, "ts": round(time.time(), 3)})
+                                yield f"event: change\ndata: {payload}\n\n"
+                    except Exception:
+                        pass
+                else:
+                    # In-process mtime change scanner
+                    last_mtime = 0
+                    try:
+                        last_mtime = os.path.getmtime(target_dir)
+                    except Exception:
+                        pass
+
+                    while not await request.is_disconnected():
+                        await asyncio.sleep(2.0)
+                        try:
+                            curr_mtime = os.path.getmtime(target_dir)
+                            if curr_mtime != last_mtime:
+                                last_mtime = curr_mtime
+                                payload = json.dumps({"changes": [{"path": "", "type": "modified"}], "ts": round(curr_mtime, 3)})
+                                yield f"event: change\ndata: {payload}\n\n"
+                        except Exception:
+                            pass
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"
+                }
+            )
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    routes.append(Route("/api/webdav/events", webdav_events, methods=["GET"]))
 
     # 2.5 JS Utils File Serving & API
     jsutils_path = os.path.abspath(jsutils_dir)

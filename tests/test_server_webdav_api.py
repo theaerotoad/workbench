@@ -170,6 +170,19 @@ class TestWebDAVTreeAPI(unittest.TestCase):
         self.assertIn("content", paths[".gitignore"])
         self.assertIn("node_modules/", paths[".gitignore"]["content"])
 
+        # Check .agent files are inlined
+        agent_dir = os.path.join(self.root_path, ".agent")
+        os.makedirs(agent_dir, exist_ok=True)
+        with open(os.path.join(agent_dir, "models.json"), "w") as f:
+            f.write('{"providers": []}')
+
+        res_agent = self._get("/api/webdav/tree")
+        self.assertEqual(res_agent.status_code, 200)
+        agent_paths = {e["path"]: e for e in res_agent.json()["entries"]}
+        self.assertIn(".agent/models.json", agent_paths)
+        self.assertIn("content", agent_paths[".agent/models.json"])
+        self.assertEqual(agent_paths[".agent/models.json"]["content"], '{"providers": []}')
+
         # Check ignored directories are filtered out
         for ignored in [".git", "node_modules", "__pycache__", "venv"]:
             self.assertNotIn(ignored, paths)
@@ -220,6 +233,11 @@ class TestWebDAVTreeAPI(unittest.TestCase):
     def test_webdav_tree_target_is_file_returns_400(self):
         res = self._get("/api/webdav/tree?path=README.md")
         self.assertEqual(res.status_code, 400)
+
+    def test_webdav_events_connect(self):
+        res = self._get("/api/webdav/events")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("text/event-stream", res.headers.get("content-type", ""))
 
 
 if __name__ == "__main__":
