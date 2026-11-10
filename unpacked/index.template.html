@@ -378,10 +378,27 @@
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-models" data-pane="models">
-                        <div class="settings-pane-placeholder">
-                            <span class="icon">smart_toy</span>
-                            <h3>Model Providers</h3>
-                            <p>Manage model providers, endpoints, and credentials.</p>
+                        <div class="settings-models-header">
+                            <div>
+                                <div class="settings-section-title">Model Providers</div>
+                                <div class="dim" style="font-size: 11px; margin-top: 2px;">Configure endpoints, API keys, and model parameters. Saved to .agent/models.json</div>
+                            </div>
+                            <button type="button" id="models-modal-edit-json" class="btn-tab-action active" title="Edit .agent/models.json as raw JSON" style="display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:4px; font-size:12px; cursor:pointer;">
+                                <span class="icon" style="font-size: 14px;">data_object</span>
+                                <span>Edit JSON</span>
+                            </button>
+                        </div>
+                        <div id="models-modal">
+                            <button id="models-modal-close" style="display:none;" aria-hidden="true"></button>
+                            <div id="models-modal-body">
+                                <div id="mm-sidebar">
+                                    <div id="mm-provider-list"></div>
+                                    <button type="button" id="mm-add-provider-btn">
+                                        <span class="icon">add</span><span>Add Provider</span>
+                                    </button>
+                                </div>
+                                <div id="mm-detail"></div>
+                            </div>
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-mcp" data-pane="mcp">

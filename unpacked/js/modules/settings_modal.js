@@ -146,6 +146,41 @@ export function initSettingsModal() {
         });
     }
 
+    // Direct deep-link button bindings for Models
+    const modelConfigBtn = document.getElementById('model-select-config-btn');
+    if (modelConfigBtn) {
+        modelConfigBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof window.closeModelSelect === 'function') {
+                window.closeModelSelect();
+            }
+            openSettingsModal('models');
+        });
+    }
+
+    const toolModelConfigBtn = document.getElementById('tool-model-config-btn');
+    if (toolModelConfigBtn) {
+        toolModelConfigBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof window.closeToolModelPicker === 'function') {
+                window.closeToolModelPicker();
+            }
+            openSettingsModal('models');
+        });
+    }
+
+    // Delegated click for welcome screen models button
+    document.addEventListener('click', (e) => {
+        const modelsEditBtn = e.target.closest('.btn-models-edit');
+        if (modelsEditBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            openSettingsModal('models');
+        }
+    });
+
     // Global keyboard shortcuts (Escape and Cmd+, / Ctrl+,)
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && overlay.style.display !== 'none') {

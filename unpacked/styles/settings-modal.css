@@ -180,6 +180,51 @@
     display: block;
 }
 
+/* Model Providers Pane */
+#settings-pane-models {
+    padding: 16px 20px;
+    height: 100%;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#settings-pane-models.active {
+    display: flex;
+}
+
+.settings-models-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
+
+#settings-pane-models #models-modal {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    border: 1px solid var(--border, #2e2e32);
+    border-radius: 6px;
+    box-shadow: none;
+    background: var(--bg-card, #202024);
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    animation: none;
+}
+
+#settings-pane-models #models-modal-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
 /* Placeholder for unmigrated tabs */
 .settings-pane-placeholder {
     display: flex;

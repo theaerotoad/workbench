@@ -12,7 +12,12 @@ window.closeModelSelect = closeModelSelect;
 
 // --- closeModelsModal.js ---
 function closeModelsModal() {
-    modelsModalOverlay.style.display = 'none';
+    if (typeof window.closeSettingsModal === 'function') {
+        window.closeSettingsModal();
+    } else {
+        const overlay = document.getElementById('settings-modal-overlay') || document.getElementById('models-modal-overlay');
+        if (overlay) overlay.style.display = 'none';
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -274,11 +279,19 @@ window.openModelSelect = openModelSelect;
 // --- AST_EXPORTS_END ---
 
 // --- openModelsModal.js ---
-function openModelsModal() {
+function openModelsModal(opts = {}) {
     _mmSelectedIdx = 0;
-    modelsModalEl.classList.remove('mm-detail-open'); // mobile: start on the provider list
-    renderModelsModal();
-    modelsModalOverlay.style.display = 'flex';
+    const modalEl = typeof modelsModalEl !== 'undefined' && modelsModalEl ? modelsModalEl : document.getElementById('models-modal');
+    if (modalEl) modalEl.classList.remove('mm-detail-open');
+
+    if (typeof window.openSettingsModal === 'function') {
+        const payload = typeof opts === 'string' ? { focusField: opts } : opts;
+        window.openSettingsModal('models', payload);
+    } else {
+        renderModelsModal(typeof opts === 'string' ? opts : opts.focusField);
+        const overlay = document.getElementById('settings-modal-overlay') || document.getElementById('models-modal-overlay');
+        if (overlay) overlay.style.display = 'flex';
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -375,6 +388,34 @@ function renderModelsModal(focusField) {
     const hasProviders = Array.isArray(MODEL_PROVIDERS) && MODEL_PROVIDERS.length > 0;
     if (hasProviders) {
         _mmSelectedIdx = Math.max(0, Math.min(_mmSelectedIdx, MODEL_PROVIDERS.length - 1));
+    }
+
+    window.modelsModalEl = (typeof modelsModalEl !== 'undefined' && modelsModalEl) || document.getElementById('models-modal');
+    window.mmProviderListEl = (typeof mmProviderListEl !== 'undefined' && mmProviderListEl) || document.getElementById('mm-provider-list');
+    window.mmDetailEl = (typeof mmDetailEl !== 'undefined' && mmDetailEl) || document.getElementById('mm-detail');
+
+    if (!mmProviderListEl || !mmDetailEl) return;
+
+    const addProvBtn = document.getElementById('mm-add-provider-btn');
+    if (addProvBtn && !addProvBtn._hasClickListener) {
+        addProvBtn._hasClickListener = true;
+        addProvBtn.addEventListener('click', () => {
+            MODEL_PROVIDERS.push(mmNewProvider());
+            _mmSelectedIdx = MODEL_PROVIDERS.length - 1;
+            commitModelsChange();
+            renderModelsModal('.mm-detail-title-input');
+        });
+    }
+
+    const editJsonBtn = document.getElementById('models-modal-edit-json');
+    if (editJsonBtn && !editJsonBtn._hasClickListener) {
+        editJsonBtn._hasClickListener = true;
+        editJsonBtn.addEventListener('click', () => {
+            closeModelsModal();
+            if (typeof window.openFileTab === 'function') {
+                window.openFileTab('.agent/models.json');
+            }
+        });
     }
 
     // Left pane: the provider list, always in the same place.
