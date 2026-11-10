@@ -48,6 +48,11 @@ class WebDAVFileHandle extends WebDAVHandle {
     constructor(url, path, auth, name) { super(url, path, auth, name, 'file'); }
     async getFile() {
         const resp = await fetch(this.url + this.path, { headers: this.getHeaders(), cache: 'no-store' });
+        if (resp.status === 404) {
+            const err = new Error('WebDAV file not found: ' + this.name);
+            err.name = 'NotFoundError';
+            throw err;
+        }
         if (!resp.ok) throw new Error('WebDAV GET failed: ' + resp.status);
         const blob = await resp.blob();
         const lastModified = resp.headers.has('Last-Modified') ? new Date(resp.headers.get('Last-Modified')).getTime() : Date.now();
@@ -269,10 +274,7 @@ class WebDAVDirHandle extends WebDAVHandle {
     async *keys() { for await (const [k, v] of this.entries()) yield k; }
 
     async getFileHandle(name, opts) {
-        if (!opts?.create) {
-            const exists = await this._checkExists(name);
-            if (!exists) throw vfsErr('NotFoundError', 'Not found: ' + name);
-        } else {
+        if (opts?.create) {
             const exists = await this._checkExists(name);
             if (!exists) {
                 const resp = await fetch(this.url + this.path + name, { method: 'PUT', headers: this.getHeaders(), body: '', cache: 'no-store' });
@@ -289,9 +291,6 @@ class WebDAVDirHandle extends WebDAVHandle {
                 const resp = await fetch(this.url + this.path + name + '/', { method: 'MKCOL', headers: this.getHeaders(), cache: 'no-store' });
                 if (!resp.ok && resp.status !== 405) throw new Error('WebDAV MKCOL failed: ' + resp.status);
             }
-        } else {
-            const exists = await this._checkExists(name + '/');
-            if (!exists) throw vfsErr('NotFoundError', 'Not found: ' + name);
         }
         return new WebDAVDirHandle(this.url, this.path + name + '/', this.auth, name);
     }
