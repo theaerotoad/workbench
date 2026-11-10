@@ -18,6 +18,7 @@
     <link id="style-settings" rel="stylesheet" href="./styles/settings.css">
     <link id="style-dialogs" rel="stylesheet" href="./styles/dialogs.css">
     <link id="style-tool-models" rel="stylesheet" href="./styles/tool-models-modal.css">
+    <link id="style-settings-modal" rel="stylesheet" href="./styles/settings-modal.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
@@ -144,6 +145,93 @@
                     <button id="cleardata-cancel" class="btn-confirm">Cancel</button>
                     <button id="cleardata-confirm" class="btn-confirm primary">Clear Selected</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal-overlay" class="modal-overlay" style="display:none;">
+        <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-heading">
+            <div id="settings-modal-header">
+                <div id="settings-modal-title">
+                    <span class="icon" style="font-size: 16px;">settings</span>
+                    <span id="settings-modal-heading">Settings</span>
+                </div>
+                <button id="settings-modal-close" class="icon-btn" title="Close Settings (Esc)">
+                    <span class="icon" style="font-size: 16px;">close</span>
+                </button>
+            </div>
+            <div id="settings-modal-body">
+                <nav id="settings-modal-nav" aria-label="Settings categories">
+                    <button type="button" class="settings-nav-tab active" data-tab="workspace">
+                        <span class="icon">tune</span>
+                        <span>Workspace</span>
+                    </button>
+                    <button type="button" class="settings-nav-tab" data-tab="appearance">
+                        <span class="icon">palette</span>
+                        <span>Appearance</span>
+                    </button>
+                    <button type="button" class="settings-nav-tab" data-tab="models">
+                        <span class="icon">smart_toy</span>
+                        <span>Model Providers</span>
+                    </button>
+                    <button type="button" class="settings-nav-tab" data-tab="mcp">
+                        <span class="icon">cable</span>
+                        <span>MCP Servers</span>
+                    </button>
+                    <button type="button" class="settings-nav-tab" data-tab="security">
+                        <span class="icon">shield</span>
+                        <span>Security &amp; Tools</span>
+                    </button>
+                    <div class="settings-nav-spacer"></div>
+                    <button type="button" class="settings-nav-tab" data-tab="about">
+                        <span class="icon">info</span>
+                        <span>About</span>
+                    </button>
+                </nav>
+                <main id="settings-modal-content">
+                    <section class="settings-pane active" id="settings-pane-workspace" data-pane="workspace">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">tune</span>
+                            <h3>Workspace Settings</h3>
+                            <p>Behavior, timeouts, sync, and context compression.</p>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-appearance" data-pane="appearance">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">palette</span>
+                            <h3>Appearance Settings</h3>
+                            <p>Themes, accent swatches, layout, and status glow.</p>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-models" data-pane="models">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">smart_toy</span>
+                            <h3>Model Providers</h3>
+                            <p>Manage model providers, endpoints, and credentials.</p>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-mcp" data-pane="mcp">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">cable</span>
+                            <h3>MCP Servers</h3>
+                            <p>Model Context Protocol server endpoints and tool discovery.</p>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-security" data-pane="security">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">shield</span>
+                            <h3>Security &amp; Tools</h3>
+                            <p>Tool execution permissions and protected file access.</p>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-about" data-pane="about">
+                        <div class="settings-pane-placeholder">
+                            <span class="icon">info</span>
+                            <h3>About Workbench</h3>
+                            <p>Application version, links, and system information.</p>
+                        </div>
+                    </section>
+                </main>
             </div>
         </div>
     </div>
@@ -1062,6 +1150,7 @@
 <script type="text/plain" id="builtin-tool-src-load_skill" src="./tools/load_skill.js"></script>
 
 <script type="module" src="./js/modules/skills_core.js"></script>
+<script type="module" src="./js/modules/settings_modal.js"></script>
 <script type="module" src="./js/ui_editor.js"></script>
 <script type="module" src="./js/ui_explorer.js"></script>
 <script type="module" src="./js/ui_chat.js"></script>
