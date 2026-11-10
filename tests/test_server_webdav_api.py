@@ -16,8 +16,8 @@ except ImportError:
     TestClient = None
 
 
-def make_asgi_request(app, path, query_string="", method="GET", headers=None):
-    """Fallback ASGI caller when TestClient / httpx is not installed."""
+def make_asgi_request(app, path, query_string="", method="GET", headers=None, is_stream=False):
+    """ASGI caller supporting both buffered and streaming responses."""
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -33,17 +33,27 @@ def make_asgi_request(app, path, query_string="", method="GET", headers=None):
     }
 
     response_messages = []
+    disconnected = False
 
     async def receive():
+        if disconnected:
+            return {"type": "http.disconnect"}
+        await asyncio.sleep(0.01)
         return {"type": "http.request", "body": b"", "more_body": False}
 
     async def send(message):
+        nonlocal disconnected
         response_messages.append(message)
+        if is_stream and message.get("type") == "http.response.body":
+            disconnected = True
 
     async def _run():
         await app(scope, receive, send)
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(asyncio.wait_for(_run(), timeout=2.0))
+    except (asyncio.TimeoutError, TimeoutError):
+        pass
 
     status_code = None
     resp_headers = {}
@@ -235,9 +245,10 @@ class TestWebDAVTreeAPI(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
 
     def test_webdav_events_connect(self):
-        res = self._get("/api/webdav/events")
+        res = make_asgi_request(self.app, "/api/webdav/events", is_stream=True)
         self.assertEqual(res.status_code, 200)
         self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+        self.assertIn(b": connected", res.content)
 
 
 if __name__ == "__main__":

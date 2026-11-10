@@ -6,6 +6,7 @@ import yaml
 import hashlib
 import time
 import json
+import asyncio
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.staticfiles import StaticFiles
@@ -312,26 +313,44 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
                             if valid:
                                 payload = json.dumps({"changes": valid, "ts": round(time.time(), 3)})
                                 yield f"event: change\ndata: {payload}\n\n"
-                    except Exception:
-                        pass
+                    except asyncio.CancelledError:
+                        return
+                    except Exception as e:
+                        logger.debug(f"watchfiles disconnected or closed: {e}")
+                        return
                 else:
-                    # In-process mtime change scanner
-                    last_mtime = 0
-                    try:
-                        last_mtime = os.path.getmtime(target_dir)
-                    except Exception:
-                        pass
+                    IGNORED = {".git", "node_modules", "__pycache__", "venv", ".venv"}
 
-                    while not await request.is_disconnected():
-                        await asyncio.sleep(2.0)
+                    def _get_signature():
+                        sig = []
                         try:
-                            curr_mtime = os.path.getmtime(target_dir)
-                            if curr_mtime != last_mtime:
-                                last_mtime = curr_mtime
-                                payload = json.dumps({"changes": [{"path": "", "type": "modified"}], "ts": round(curr_mtime, 3)})
-                                yield f"event: change\ndata: {payload}\n\n"
-                        except Exception:
+                            for root, dirs, files in os.walk(target_dir):
+                                dirs[:] = [d for d in dirs if d not in IGNORED]
+                                for f in files:
+                                    try:
+                                        fp = os.path.join(root, f)
+                                        stat = os.stat(fp)
+                                        sig.append((f, stat.st_mtime, stat.st_size))
+                                    except (OSError, PermissionError):
+                                        continue
+                        except (OSError, PermissionError):
                             pass
+                        return hash(tuple(sig))
+
+                    last_sig = await run_in_threadpool(_get_signature)
+
+                    try:
+                        while not await request.is_disconnected():
+                            await asyncio.sleep(2.0)
+                            if await request.is_disconnected():
+                                break
+                            curr_sig = await run_in_threadpool(_get_signature)
+                            if curr_sig != last_sig:
+                                last_sig = curr_sig
+                                payload = json.dumps({"changes": [{"path": "", "type": "modified"}], "ts": round(time.time(), 3)})
+                                yield f"event: change\ndata: {payload}\n\n"
+                    except asyncio.CancelledError:
+                        return
 
             return StreamingResponse(
                 event_generator(),
