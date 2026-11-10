@@ -182,6 +182,7 @@ window.ensureWorkspaceFresh = ensureWorkspaceFresh;
 
 // --- fastTraverseDirectory.js ---
 async function fastTraverseDirectory(handle, path = "", targetMap) {
+    const subdirs = [];
     for await (const entry of handle.values()) {
         const fullPath = path ? `${path}/${entry.name}` : entry.name;
         if (shouldSkipScanEntry(entry.name, fullPath)) continue;
@@ -210,7 +211,14 @@ async function fastTraverseDirectory(handle, path = "", targetMap) {
                 isBinary: false,
                 handle: entry
             };
-            await fastTraverseDirectory(entry, fullPath, targetMap);
+            subdirs.push({ handle: entry, fullPath });
+        }
+    }
+    if (subdirs.length > 0) {
+        const BATCH_SIZE = 4;
+        for (let i = 0; i < subdirs.length; i += BATCH_SIZE) {
+            const batch = subdirs.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(d => fastTraverseDirectory(d.handle, d.fullPath, targetMap)));
         }
     }
 }
@@ -617,9 +625,57 @@ async function runSyncWorkspace(silent = true) {
         do {
             epoch = wsMutationEpoch;
             gitignoreCache.clear();
-            await prescanGitignoreFiles(rootHandle, "");
-            newMeta = {};
-            await fastTraverseDirectory(rootHandle, "", newMeta);
+
+            let fastData = null;
+            if (rootHandle.isWebDAV && typeof rootHandle.fetchFastTree === 'function') {
+                fastData = await rootHandle.fetchFastTree();
+            }
+
+            if (fastData && Array.isArray(fastData.entries)) {
+                newMeta = {};
+                // Register .gitignore files first so shouldSkipScanEntry respects them
+                for (const entry of fastData.entries) {
+                    if (entry.content && (entry.path === '.gitignore' || entry.path.endsWith('/.gitignore'))) {
+                        if (typeof registerGitignoreRules === 'function') {
+                            registerGitignoreRules(entry.path, entry.content);
+                        }
+                    }
+                }
+
+                const FileCtor = window.WebDAVFileHandle || (typeof WebDAVFileHandle !== 'undefined' ? WebDAVFileHandle : null);
+                const DirCtor = window.WebDAVDirHandle || (typeof WebDAVDirHandle !== 'undefined' ? WebDAVDirHandle : null);
+
+                for (const entry of fastData.entries) {
+                    const name = entry.path.split('/').pop();
+                    if (typeof shouldSkipScanEntry === 'function' && shouldSkipScanEntry(name, entry.path)) {
+                        continue;
+                    }
+                    if (entry.kind === 'file') {
+                        const fileWebdavPath = rootHandle.path + entry.path;
+                        const fileHandle = FileCtor ? new FileCtor(rootHandle.url, fileWebdavPath, rootHandle.auth, name) : null;
+                        newMeta[entry.path] = {
+                            kind: 'file',
+                            size: entry.size || 0,
+                            mtime: entry.mtime,
+                            isBinary: typeof isBinaryByExtension === 'function' ? isBinaryByExtension(name) : false,
+                            handle: fileHandle
+                        };
+                    } else if (entry.kind === 'directory') {
+                        const dirWebdavPath = rootHandle.path + entry.path + '/';
+                        const dirHandle = DirCtor ? new DirCtor(rootHandle.url, dirWebdavPath, rootHandle.auth, name) : null;
+                        newMeta[entry.path] = {
+                            kind: 'directory',
+                            size: 0,
+                            isBinary: false,
+                            handle: dirHandle
+                        };
+                    }
+                }
+            } else {
+                await prescanGitignoreFiles(rootHandle, "");
+                newMeta = {};
+                await fastTraverseDirectory(rootHandle, "", newMeta);
+            }
         } while (epoch !== wsMutationEpoch && ++tries < 3);
         // If it still raced, only add/update this round; removals wait for the next clean scan.
         const allowRemoval = epoch === wsMutationEpoch;
@@ -652,12 +708,20 @@ async function runSyncWorkspace(silent = true) {
             const fp = state.activeTab;
             const meta = registry.meta[fp];
             if (meta && meta.kind === 'file' && !meta.isBinary) {
-                const freshContent = await readFileContent(fp);
-                if (monacoEditor && !isFileDirty(fp)) {
-                    const model = monacoModels.get(fp);
-                    if (model && model.getValue() !== freshContent) {
-                        withDirtyTrackingSuppressed(() => model.setValue(freshContent));
-                        registry.files[fp] = freshContent;
+                // Avoid redundant re-reading if size and mtime have not changed
+                const contentAlreadyLoaded = registry.files[fp] !== undefined;
+                const mtimeUnchanged = meta.mtime !== undefined && meta._syncedMtime === meta.mtime;
+                const sizeUnchanged = meta.size !== undefined && meta._syncedSize === meta.size;
+                if (!contentAlreadyLoaded || !mtimeUnchanged || !sizeUnchanged) {
+                    const freshContent = await readFileContent(fp);
+                    meta._syncedMtime = meta.mtime;
+                    meta._syncedSize = meta.size;
+                    if (monacoEditor && !isFileDirty(fp)) {
+                        const model = monacoModels.get(fp);
+                        if (model && model.getValue() !== freshContent) {
+                            withDirtyTrackingSuppressed(() => model.setValue(freshContent));
+                            registry.files[fp] = freshContent;
+                        }
                     }
                 }
             }

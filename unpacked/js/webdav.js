@@ -93,6 +93,38 @@ class WebDAVDirHandle extends WebDAVHandle {
         super(url, dirPath, auth, name, 'directory');
     }
 
+    async fetchFastTree() {
+        try {
+            let subpath = this.path || '/';
+            if (subpath.startsWith('/webdav/')) {
+                subpath = subpath.slice('/webdav'.length);
+            } else if (subpath === '/webdav') {
+                subpath = '/';
+            }
+            subpath = subpath.replace(/^\/+|\/+$/g, '');
+
+            const base = this.url.startsWith('http://') || this.url.startsWith('https://')
+                ? this.url
+                : (typeof window !== 'undefined' && window.location ? new URL(this.url, window.location.href).href : this.url);
+            const apiUrl = new URL('/api/webdav/tree', base);
+            if (subpath) {
+                apiUrl.searchParams.set('path', subpath);
+            }
+
+            const resp = await fetch(apiUrl.href, {
+                headers: this.getHeaders(),
+                cache: 'no-store'
+            });
+
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            if (!data || !Array.isArray(data.entries)) return null;
+            return data;
+        } catch (e) {
+            return null;
+        }
+    }
+
     static async openOrCreate(url, basePath, rootPathStr, auth, customName, fallbackHost) {
         const normUrl = url.replace(/\/+$/, '');
         let base = (basePath && basePath.startsWith('/') ? basePath : '/' + (basePath || '')).replace(/\/+$/, '');

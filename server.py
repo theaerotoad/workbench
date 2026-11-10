@@ -43,17 +43,7 @@ def create_webdav_app(root_path: str):
     }
     return WsgiDAVApp(config)
 
-def main():
-    parser = argparse.ArgumentParser(description="Unified Coding Agent Server")
-    parser.add_argument("--port", type=int, default=5050, help="Port to run the server on")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
-    parser.add_argument("--webdav-dir", type=str, default=".", help="Directory to serve via WebDAV")
-    parser.add_argument("--static-dir", type=str, default="extracted", help="Directory to serve static HTML frontend from")
-    parser.add_argument("--jsutils-dir", type=str, default="jsutils", help="Directory containing JS tool utilities to serve")
-    parser.add_argument("--mcp-command", type=str, nargs="+", help="Command to run for MCP stdio (e.g., npx -y @modelcontextprotocol/server-everything)")
-    parser.add_argument("--stdio-mcp-cfg", type=str, help="Path to YAML config for multiple dynamic stdio MCP servers")
-    
-    args = parser.parse_args()
+def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", stdio_mcp_cfg=None, mcp_command=None):
     routes = []
 
     # 0. LLM Proxy Endpoint
@@ -128,10 +118,10 @@ def main():
     routes.append(Route("/proxy", llm_proxy, methods=["GET", "POST", "PUT", "DELETE", "PATCH"]))
 
     # 1. MCP Stdio-to-SSE Proxy
-    if args.stdio_mcp_cfg and os.path.exists(args.stdio_mcp_cfg):
-        logger.info(f"Loading dynamic MCP servers from {args.stdio_mcp_cfg}")
+    if stdio_mcp_cfg and os.path.exists(stdio_mcp_cfg):
+        logger.info(f"Loading dynamic MCP servers from {stdio_mcp_cfg}")
         try:
-            with open(args.stdio_mcp_cfg, "r") as f:
+            with open(stdio_mcp_cfg, "r") as f:
                 config = yaml.safe_load(f)
                 
             dynamic_servers = config.get("dynamic_servers", {})
@@ -154,9 +144,9 @@ def main():
                 ])
         except Exception as e:
             logger.error(f"Failed to load stdio MCP config: {e}")
-    elif args.mcp_command:
-        logger.info(f"Configuring single MCP Stdio proxy for command: {' '.join(args.mcp_command)}")
-        proxy = StdioToSSEProxy(args.mcp_command)
+    elif mcp_command:
+        logger.info(f"Configuring single MCP Stdio proxy for command: {' '.join(mcp_command)}")
+        proxy = StdioToSSEProxy(mcp_command)
         routes.extend([
             Route("/mcp/sse", proxy.handle_sse, methods=["GET"]),
             Route("/mcp/messages", proxy.handle_messages, methods=["POST"])
@@ -165,7 +155,7 @@ def main():
         logger.info("No --stdio-mcp-cfg or --mcp-command provided; skipping MCP proxy endpoints.")
 
     # 2. WebDAV File Serving
-    webdav_path = os.path.abspath(args.webdav_dir)
+    webdav_path = os.path.abspath(webdav_dir)
     if os.path.exists(webdav_path):
         logger.info(f"Configuring WebDAV for directory: {webdav_path} at /webdav")
         webdav_wsgi = create_webdav_app(webdav_path)
@@ -174,8 +164,109 @@ def main():
     else:
         logger.error(f"WebDAV directory '{webdav_path}' does not exist! Skipping.")
 
+    # 2.1 WebDAV Fast Tree Scan Endpoint
+    async def webdav_tree(request: Request):
+        try:
+            base_dir = os.path.abspath(webdav_dir)
+            if not os.path.exists(base_dir) or not os.path.isdir(base_dir):
+                return JSONResponse({"error": f"WebDAV directory does not exist: {base_dir}"}, status_code=500)
+
+            raw_path = request.query_params.get("path", "").replace("\\", "/").strip("/")
+            parts = [p for p in raw_path.split("/") if p and p != "."]
+            if any(p == ".." for p in parts):
+                return JSONResponse({"error": "Forbidden: Path traversal not allowed"}, status_code=403)
+
+            clean_subpath = os.path.sep.join(parts) if parts else ""
+            target_dir = os.path.abspath(os.path.join(base_dir, clean_subpath)) if clean_subpath else base_dir
+
+            # Path Traversal & Boundary Guard
+            if os.path.commonpath([base_dir, target_dir]) != base_dir:
+                return JSONResponse({"error": "Forbidden: Path outside WebDAV root"}, status_code=403)
+
+            if not os.path.exists(target_dir):
+                return JSONResponse({"error": f"Path not found: {raw_path}"}, status_code=404)
+
+            if not os.path.isdir(target_dir):
+                return JSONResponse({"error": f"Target is not a directory: {raw_path}"}, status_code=400)
+
+            IGNORED_DIR_NAMES = {
+                ".git", "node_modules", "venv", ".venv", "__pycache__",
+                "target", "build", "dist"
+            }
+
+            def _scan():
+                entries = []
+                def _walk(curr_dir, rel_prefix):
+                    try:
+                        with os.scandir(curr_dir) as it:
+                            dir_entries = []
+                            file_entries = []
+                            for entry in it:
+                                try:
+                                    if entry.is_dir(follow_symlinks=False):
+                                        if entry.name in IGNORED_DIR_NAMES:
+                                            continue
+                                        dir_entries.append(entry)
+                                    elif entry.is_file(follow_symlinks=False):
+                                        file_entries.append(entry)
+                                except (OSError, PermissionError):
+                                    continue
+
+                            dir_entries.sort(key=lambda e: e.name)
+                            file_entries.sort(key=lambda e: e.name)
+
+                            for entry in dir_entries:
+                                rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+                                entries.append({
+                                    "path": rel_path,
+                                    "kind": "directory"
+                                })
+                                _walk(entry.path, rel_path)
+
+                            for entry in file_entries:
+                                rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+                                try:
+                                    stat = entry.stat(follow_symlinks=False)
+                                    item = {
+                                        "path": rel_path,
+                                        "kind": "file",
+                                        "size": stat.st_size,
+                                        "mtime": round(stat.st_mtime, 3)
+                                    }
+                                    if entry.name == ".gitignore" and stat.st_size < 131072:
+                                        try:
+                                            with open(entry.path, "r", encoding="utf-8", errors="replace") as gf:
+                                                item["content"] = gf.read()
+                                        except Exception:
+                                            pass
+                                    entries.append(item)
+                                except (OSError, PermissionError):
+                                    continue
+                    except (OSError, PermissionError):
+                        pass
+
+                _walk(target_dir, "")
+                root_mtime = 0
+                try:
+                    root_mtime = round(os.path.getmtime(target_dir), 3)
+                except Exception:
+                    pass
+                return {
+                    "root": raw_path,
+                    "mtime": root_mtime,
+                    "entries": entries
+                }
+
+            result = await run_in_threadpool(_scan)
+            return JSONResponse(result)
+        except Exception as e:
+            logger.error(f"Failed to scan webdav tree: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    routes.append(Route("/api/webdav/tree", webdav_tree, methods=["GET"]))
+
     # 2.5 JS Utils File Serving & API
-    jsutils_path = os.path.abspath(args.jsutils_dir)
+    jsutils_path = os.path.abspath(jsutils_dir)
     os.makedirs(jsutils_path, exist_ok=True)
     logger.info(f"Configuring JS Utils serving for directory: {jsutils_path} at /jsutils and /api/jsutils")
 
@@ -211,12 +302,12 @@ def main():
     routes.append(Mount("/jsutils", app=StaticFiles(directory=jsutils_path), name="jsutils"))
 
     # 3. Static Files (Frontend UI)
-    static_dir = os.path.abspath(args.static_dir)
-    if os.path.exists(static_dir):
-        logger.info(f"Configuring Static HTML serving for directory: {static_dir} at /")
-        routes.append(Mount("/", app=StaticFiles(directory=static_dir, html=True), name="static"))
+    static_dir_path = os.path.abspath(static_dir)
+    if os.path.exists(static_dir_path):
+        logger.info(f"Configuring Static HTML serving for directory: {static_dir_path} at /")
+        routes.append(Mount("/", app=StaticFiles(directory=static_dir_path, html=True), name="static"))
     else:
-        logger.warning(f"Static frontend directory '{static_dir}' does not exist. (If you want to view the UI, make sure this folder is present).")
+        logger.warning(f"Static frontend directory '{static_dir_path}' does not exist. (If you want to view the UI, make sure this folder is present).")
 
     # Initialize ASGI App
     app = Starlette(debug=True, routes=routes)
@@ -227,6 +318,26 @@ def main():
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"]
+    )
+    return app
+
+def main():
+    parser = argparse.ArgumentParser(description="Unified Coding Agent Server")
+    parser.add_argument("--port", type=int, default=5050, help="Port to run the server on")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+    parser.add_argument("--webdav-dir", type=str, default=".", help="Directory to serve via WebDAV")
+    parser.add_argument("--static-dir", type=str, default="extracted", help="Directory to serve static HTML frontend from")
+    parser.add_argument("--jsutils-dir", type=str, default="jsutils", help="Directory containing JS tool utilities to serve")
+    parser.add_argument("--mcp-command", type=str, nargs="+", help="Command to run for MCP stdio (e.g., npx -y @modelcontextprotocol/server-everything)")
+    parser.add_argument("--stdio-mcp-cfg", type=str, help="Path to YAML config for multiple dynamic stdio MCP servers")
+    
+    args = parser.parse_args()
+    app = create_app(
+        webdav_dir=args.webdav_dir,
+        static_dir=args.static_dir,
+        jsutils_dir=args.jsutils_dir,
+        stdio_mcp_cfg=args.stdio_mcp_cfg,
+        mcp_command=args.mcp_command
     )
 
     logger.info(f"Starting Unified Server on http://{args.host}:{args.port}")
