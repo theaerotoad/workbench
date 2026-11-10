@@ -85,6 +85,23 @@ function notifyTabActivated(tabId, opts = {}) {
         if (typeof window.renderModelsModal === 'function') {
             window.renderModelsModal(opts.focusField);
         }
+    } else if (tabId === 'mcp') {
+        const subTab = (opts && opts.subTab) || (typeof newToolActivePane !== 'undefined' && newToolActivePane ? newToolActivePane : 'browse');
+        if (typeof window.setNewToolPane === 'function') {
+            window.setNewToolPane(subTab);
+        }
+        const locInput = document.getElementById('newtool-browse-location');
+        if (locInput && !locInput.value) {
+            const savedLoc = localStorage.getItem('tools_browse_location');
+            locInput.value = savedLoc !== null ? savedLoc : (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
+        }
+        if (subTab === 'browse') {
+            if (typeof window.loadGithubToolsList === 'function' && (typeof newToolBrowseFiles === 'undefined' || !newToolBrowseFiles)) {
+                window.loadGithubToolsList();
+            } else if (typeof window.renderGithubToolsList === 'function') {
+                window.renderGithubToolsList();
+            }
+        }
     } else if (tabId === 'security') {
         if (typeof window.renderToolsList === 'function') {
             window.renderToolsList();
@@ -135,6 +152,19 @@ export function initSettingsModal() {
             const tabBtn = e.target.closest('.settings-nav-tab');
             if (tabBtn && tabBtn.dataset.tab) {
                 switchSettingsTab(tabBtn.dataset.tab);
+            }
+        });
+    }
+
+    // Delegated subtab switching inside Tools & MCP pane
+    const mcpPane = document.getElementById('settings-pane-mcp');
+    if (mcpPane) {
+        mcpPane.addEventListener('click', (e) => {
+            const subTabBtn = e.target.closest('.newtool-source-tab');
+            if (subTabBtn && subTabBtn.dataset.pane) {
+                if (typeof window.setNewToolPane === 'function') {
+                    window.setNewToolPane(subTabBtn.dataset.pane);
+                }
             }
         });
     }

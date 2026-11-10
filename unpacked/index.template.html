@@ -175,8 +175,8 @@
                         <span>Model Providers</span>
                     </button>
                     <button type="button" class="settings-nav-tab" data-tab="mcp">
-                        <span class="icon">cable</span>
-                        <span>MCP Servers</span>
+                        <span class="icon">extension</span>
+                        <span>Tools &amp; MCP</span>
                     </button>
                     <button type="button" class="settings-nav-tab" data-tab="security">
                         <span class="icon">shield</span>
@@ -402,39 +402,120 @@
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-mcp" data-pane="mcp">
-                        <div class="settings-section-label">Server Connection</div>
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">cable</span>
-                                <span>MCP Server Endpoint</span>
+                        <div id="newtool-source-tabs" style="margin-bottom: 14px;">
+                            <div class="newtool-source-tab active" data-pane="browse">
+                                <span class="icon">code</span><span>Browse Tools</span>
                             </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <label for="mcp-server-url">Server SSE URL</label>
-                                    <div style="display:flex; gap:8px;">
-                                        <input type="text" id="mcp-server-url" placeholder="http://localhost:3001/sse" autocomplete="off" spellcheck="false" style="flex:1;">
-                                        <button type="button" id="mcp-server-connect" class="btn-confirm primary">Fetch</button>
+                            <div class="newtool-source-tab" data-pane="mcp">
+                                <span class="icon">cable</span><span>Connect MCP</span>
+                            </div>
+                            <div class="newtool-source-tab" data-pane="local">
+                                <span class="icon">upload_file</span><span>Import file</span>
+                            </div>
+                            <div class="newtool-source-tab" data-pane="blank">
+                                <span class="icon">edit_note</span><span>Blank</span>
+                            </div>
+                        </div>
+
+                        <!-- Sub-Pane: Browse Tools -->
+                        <div id="newtool-col-browse" class="newtool-pane active" data-pane="browse">
+                            <div style="margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px;">
+                                <label for="newtool-browse-location" style="font-size: 11px; color: var(--dim);">Tool Source (Server endpoint or GitHub repo)</label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="text" id="newtool-browse-location" placeholder="/api/jsutils" autocomplete="off" spellcheck="false" style="flex:1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 5px 8px; border-radius: 4px; font-family: inherit; font-size: 12px;">
+                                    <button type="button" id="newtool-browse-location-reset" class="icon-btn" title="Reset to default (/api/jsutils)" style="padding: 4px 6px;">
+                                        <span class="icon" style="font-size:15px;">restart_alt</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="newtool-browse-toolbar">
+                                <input type="text" id="newtool-browse-search" placeholder="Filter tools..." autocomplete="off" spellcheck="false">
+                                <button type="button" id="newtool-browse-refresh" title="Refresh">
+                                    <span class="icon">refresh</span>
+                                </button>
+                            </div>
+                            <div id="newtool-browse-list"></div>
+                        </div>
+
+                        <!-- Sub-Pane: Connect MCP -->
+                        <div id="newtool-col-mcp" class="newtool-pane" data-pane="mcp">
+                            <div class="settings-section-label">Server Connection</div>
+                            <div class="settings-panel-group">
+                                <div class="settings-panel-header">
+                                    <span class="icon">cable</span>
+                                    <span>MCP Server Endpoint</span>
+                                </div>
+                                <div class="settings-panel-body">
+                                    <div class="settings-field-row">
+                                        <label for="mcp-server-url">Server SSE URL</label>
+                                        <div style="display:flex; gap:8px;">
+                                            <input type="text" id="mcp-server-url" placeholder="http://localhost:3001/sse" autocomplete="off" spellcheck="false" style="flex:1;">
+                                            <button type="button" id="mcp-server-connect" class="btn-confirm primary">Fetch</button>
+                                        </div>
+                                        <div id="mcp-server-status" class="dim" style="font-size: 11px; margin-top: 4px;"></div>
                                     </div>
-                                    <div id="mcp-server-status" class="dim" style="font-size: 11px; margin-top: 4px;"></div>
+                                </div>
+                            </div>
+
+                            <div id="mcp-tools-container" class="settings-panel-group" style="display:none; margin-top: 14px;">
+                                <div class="settings-panel-header" style="justify-content: space-between;">
+                                    <div style="display:flex; align-items:center; gap:6px;">
+                                        <span class="icon">build</span>
+                                        <span>Select Tools to Bundle</span>
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <label for="mcp-bundle-name" style="font-size:10px; color:var(--dim); text-transform:none; margin:0;">Bundle Name:</label>
+                                        <input type="text" id="mcp-bundle-name" value="mcp_tools" autocomplete="off" spellcheck="false" style="width:110px; padding:3px 6px; font-size:11px;">
+                                        <button type="button" id="mcp-create-bundle" class="btn-confirm primary" style="padding:3px 10px; font-size:11px;">Create Bundle</button>
+                                    </div>
+                                </div>
+                                <div class="settings-panel-body" style="padding: 8px;">
+                                    <div id="mcp-tools-list" class="mcp-tools-list" style="overflow-y:auto; max-height: 280px; border:1px solid var(--border); border-radius:4px; padding:4px;"></div>
                                 </div>
                             </div>
                         </div>
 
-                        <div id="mcp-tools-container" class="settings-panel-group" style="display:none; margin-top: 14px;">
-                            <div class="settings-panel-header" style="justify-content: space-between;">
-                                <div style="display:flex; align-items:center; gap:6px;">
-                                    <span class="icon">build</span>
-                                    <span>Select Tools to Bundle</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <label for="mcp-bundle-name" style="font-size:10px; color:var(--dim); text-transform:none; margin:0;">Bundle Name:</label>
-                                    <input type="text" id="mcp-bundle-name" value="mcp_tools" autocomplete="off" spellcheck="false" style="width:110px; padding:3px 6px; font-size:11px;">
-                                    <button type="button" id="mcp-create-bundle" class="btn-confirm primary" style="padding:3px 10px; font-size:11px;">Create Bundle</button>
-                                </div>
+                        <!-- Sub-Pane: Import File -->
+                        <div id="newtool-col-import" class="newtool-pane" data-pane="local">
+                            <div id="newtool-dropzone" tabindex="0">
+                                <span class="icon">upload_file</span>
+                                <div id="newtool-dropzone-text"><strong>Drop a .js file</strong> here, or click to browse</div>
+                                <div id="newtool-dropzone-hint">The tool name and code will be filled in automatically</div>
+                                <input type="file" id="newtool-file-input" accept=".js,text/javascript" style="display:none">
                             </div>
-                            <div class="settings-panel-body" style="padding: 8px;">
-                                <div id="mcp-tools-list" class="mcp-tools-list" style="overflow-y:auto; max-height: 280px; border:1px solid var(--border); border-radius:4px; padding:4px;"></div>
+                            <div id="newtool-file-picked">
+                                <div class="newtool-file-picked-row">
+                                    <span class="icon">description</span>
+                                    <span id="newtool-file-picked-name"></span>
+                                    <button type="button" class="newtool-file-clear" title="Remove file">
+                                        <span class="icon" style="font-size:14px;">close</span>
+                                    </button>
+                                </div>
+                                <div id="newtool-file-picked-desc" class="newtool-file-picked-desc dim-placeholder"></div>
                             </div>
+                        </div>
+
+                        <!-- Sub-Pane: Blank -->
+                        <div id="newtool-col-local" class="newtool-pane" data-pane="blank">
+                            <input type="text" id="newtool-name-input" autocomplete="off" spellcheck="false" style="display:none">
+                            <div class="newtool-blank-source-row">
+                                <label for="newtool-source-editor">Tool source</label>
+                                <textarea
+                                    id="newtool-source-editor"
+                                    class="newtool-source-editor"
+                                    spellcheck="false"
+                                    placeholder="// Write the tool source here.
+// The tool name is inferred from the TOOL_META.name in this code."
+                                ></textarea>
+                            </div>
+                        </div>
+
+                        <div id="newtool-modal-error"></div>
+
+                        <div id="newtool-modal-footer" style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+                            <button type="button" id="newtool-update-all" class="btn-confirm" title="Update every installed tool that has a newer repo version" style="display:none;">Update all</button>
+                            <button type="button" id="newtool-create" class="btn-confirm primary newtool-create-btn" style="display:none;">Create</button>
+                            <button type="button" id="newtool-install" class="btn-confirm primary" title="Install this tool" style="display:none;">Install</button>
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-security" data-pane="security">
@@ -492,126 +573,9 @@
         </div>
     </div>
 
-    <div id="newtool-modal-overlay">
-        <div id="newtool-modal">
-            <div id="newtool-modal-header">
-                <div id="newtool-modal-title">
-                    <span class="icon" style="font-size: 14px;">engineering</span>
-                    <span>New Tool</span>
-                </div>
-                <button id="newtool-modal-close" class="icon-btn" title="Close">
-                    <span class="icon" style="font-size: 16px;">close</span>
-                </button>
-            </div>
-            <div id="newtool-modal-body">
-                <div id="newtool-source-tabs">
-                    <div class="newtool-source-tab" data-pane="blank">
-                        <span class="icon">edit_note</span><span>Blank</span>
-                    </div>
-                    <div class="newtool-source-tab" data-pane="local">
-                        <span class="icon">upload_file</span><span>Import file</span>
-                    </div>
-                    <div class="newtool-source-tab active" data-pane="browse">
-                        <span class="icon">code</span><span>Browse Tools</span>
-                    </div>
-                    <div class="newtool-source-tab" data-pane="mcp">
-                        <span class="icon">cable</span><span>Connect MCP</span>
-                    </div>
-                </div>
-
-                <div id="newtool-col-local" class="newtool-pane" data-pane="blank">
-                    <input type="text" id="newtool-name-input" autocomplete="off" spellcheck="false" style="display:none">
-                    <div class="newtool-blank-source-row">
-                        <label for="newtool-source-editor">Tool source</label>
-                        <textarea
-                            id="newtool-source-editor"
-                            class="newtool-source-editor"
-                            spellcheck="false"
-                            placeholder="// Write the tool source here.
-// The tool name is inferred from the TOOL_META.name in this code."
-                        ></textarea>
-                    </div>
-                </div>
-
-                <div id="newtool-col-import" class="newtool-pane" data-pane="local">
-                    <div id="newtool-dropzone" tabindex="0">
-                        <span class="icon">upload_file</span>
-                        <div id="newtool-dropzone-text"><strong>Drop a .js file</strong> here, or click to browse</div>
-                        <div id="newtool-dropzone-hint">The tool name and code will be filled in automatically</div>
-                        <input type="file" id="newtool-file-input" accept=".js,text/javascript" style="display:none">
-                    </div>
-                    <div id="newtool-file-picked">
-                        <div class="newtool-file-picked-row">
-                            <span class="icon">description</span>
-                            <span id="newtool-file-picked-name"></span>
-                            <button type="button" class="newtool-file-clear" title="Remove file">
-                                <span class="icon" style="font-size:14px;">close</span>
-                            </button>
-                        </div>
-                        <div id="newtool-file-picked-desc" class="newtool-file-picked-desc dim-placeholder"></div>
-                    </div>
-                </div>
-
-                <div id="newtool-col-browse" class="newtool-pane active" data-pane="browse">
-                    <div style="margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px;">
-                        <label for="newtool-browse-location" style="font-size: 11px; color: var(--dim);">Tool Source (Server endpoint or GitHub repo)</label>
-                        <div style="display:flex; gap:6px;">
-                            <input type="text" id="newtool-browse-location" placeholder="/api/jsutils" autocomplete="off" spellcheck="false" style="flex:1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 5px 8px; border-radius: 4px; font-family: inherit; font-size: 12px;">
-                            <button type="button" id="newtool-browse-location-reset" class="icon-btn" title="Reset to default (/api/jsutils)" style="padding: 4px 6px;">
-                                <span class="icon" style="font-size:15px;">restart_alt</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="newtool-browse-toolbar">
-                        <input type="text" id="newtool-browse-search" placeholder="Filter tools..." autocomplete="off" spellcheck="false">
-                        <button type="button" id="newtool-browse-refresh" title="Refresh">
-                            <span class="icon">refresh</span>
-                        </button>
-                    </div>
-                    <div id="newtool-browse-list"></div>
-                </div>
-
-                <div id="newtool-modal-error"></div>
-            </div>
-            <div id="newtool-modal-footer">
-                <button id="newtool-update-all" class="btn-confirm" title="Update every installed tool that has a newer repo version" style="display:none;">Update all</button>
-                <button id="newtool-cancel" class="btn-confirm">Done</button>
-                <button id="newtool-create" class="btn-confirm primary newtool-create-btn">Create</button>
-                <button id="newtool-install" class="btn-confirm primary" title="Install this tool" style="display:none;">Install</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="models-modal-overlay">
-        <div id="models-modal">
-            <div id="models-modal-header">
-                <div id="models-modal-title">
-                    <span class="icon" style="font-size: 14px;">tune</span>
-                    <span>Model Providers</span>
-                </div>
-                <div id="models-modal-header-actions">
-                    <button id="models-modal-edit-json" class="icon-btn" title="Edit as raw JSON">
-                        <span class="icon" style="font-size: 15px;">data_object</span>
-                    </button>
-                    <button id="models-modal-close" class="icon-btn" title="Close">
-                        <span class="icon" style="font-size: 16px;">close</span>
-                    </button>
-                </div>
-            </div>
-            <div id="models-modal-body">
-                <div id="mm-sidebar">
-                    <div id="mm-provider-list"></div>
-                    <button type="button" id="mm-add-provider-btn">
-                        <span class="icon">add</span><span>Add Provider</span>
-                    </button>
-                </div>
-                <div id="mm-detail"></div>
-            </div>
-            <div id="models-modal-footer">
-                <span id="models-modal-footer-hint">Changes save automatically to .agent/models.json</span>
-            </div>
-        </div>
-    </div>
+    <!-- Compatibility anchors for legacy listeners (display: none) -->
+    <div id="newtool-modal-overlay" style="display:none !important;" aria-hidden="true"><button id="newtool-modal-close" style="display:none;"></button><button id="newtool-cancel" style="display:none;"></button></div>
+    <div id="models-modal-overlay" style="display:none !important;" aria-hidden="true"></div>
 
     <div id="msg-delete-modal-overlay">
         <div id="msg-delete-modal">

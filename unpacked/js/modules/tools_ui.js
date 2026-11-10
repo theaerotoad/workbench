@@ -214,7 +214,10 @@ window.buildToolSettingRow = buildToolSettingRow;
 
 // --- closeNewToolModal.js ---
 function closeNewToolModal() {
-    newToolModalOverlay.style.display = 'none';
+    newToolClearFile();
+    newToolShowError('');
+    const overlay = document.getElementById('newtool-modal-overlay');
+    if (overlay) overlay.style.display = 'none';
 }
 
 // --- AST_EXPORTS_START ---
@@ -371,13 +374,15 @@ window.newToolClearFile = newToolClearFile;
 
 
 function newToolShowError(msg) {
+    const el = (typeof newToolErrorEl !== 'undefined' && newToolErrorEl) ? newToolErrorEl : document.getElementById('newtool-modal-error');
+    if (!el) return;
     if (!msg) {
-        newToolErrorEl.style.display = 'none';
-        newToolErrorEl.textContent = '';
+        el.style.display = 'none';
+        el.textContent = '';
         return;
     }
-    newToolErrorEl.textContent = msg;
-    newToolErrorEl.style.display = 'block';
+    el.textContent = msg;
+    el.style.display = 'block';
 }
 
 // --- AST_EXPORTS_START ---
@@ -446,26 +451,23 @@ window.normalizeToolSettingsList = normalizeToolSettingsList;
 // --- AST_EXPORTS_END ---
 
 // --- openNewToolModal.js ---
-function openNewToolModal() {
-    newToolNameInput.value = '';
-    newToolNameAutoFilled = false;
-    newToolSourceEditor.value = newToolDefaultSource;
+function openNewToolModal(subTab = 'browse') {
+    if (typeof newToolNameInput !== 'undefined' && newToolNameInput) {
+        newToolNameInput.value = '';
+        newToolNameAutoFilled = false;
+    }
+    if (typeof newToolSourceEditor !== 'undefined' && newToolSourceEditor) {
+        newToolSourceEditor.value = typeof newToolDefaultSource !== 'undefined' ? newToolDefaultSource : '';
+    }
     newToolClearFile();
     newToolBrowseSelected = null;
-    newToolBrowseSearch.value = '';
+    if (typeof newToolBrowseSearch !== 'undefined' && newToolBrowseSearch) {
+        newToolBrowseSearch.value = '';
+    }
     newToolShowError('');
     newToolUpdateCreateLabel();
-    setNewToolPane('browse');
-    newToolModalOverlay.style.display = 'flex';
-    const locInput = document.getElementById('newtool-browse-location');
-    if (locInput) {
-        const savedLoc = localStorage.getItem('tools_browse_location');
-        locInput.value = savedLoc !== null ? savedLoc : (typeof DEFAULT_TOOLS_SOURCE !== 'undefined' ? DEFAULT_TOOLS_SOURCE : '/api/jsutils');
-    }
-    if (!newToolBrowseFiles) {
-        loadGithubToolsList();
-    } else {
-        renderGithubToolsList();
+    if (typeof openSettingsModal === 'function') {
+        openSettingsModal('mcp', { subTab });
     }
 }
 
@@ -508,10 +510,10 @@ function renderToolsList() {
     const addBtn = document.createElement('button');
     addBtn.className = 'ct-icon-btn';
     addBtn.id = 'btn-new-tool-inline';
-    addBtn.title = 'New Tool';
+    addBtn.title = 'Add / Install Tools';
     addBtn.innerHTML = '<span class="icon" style="font-size:15px;">add</span>';
     addBtn.addEventListener('click', () => {
-        openNewToolModal();
+        openNewToolModal('browse');
     });
     customLabelRow.appendChild(addBtn);
 
@@ -562,24 +564,27 @@ window.saveToolSettingsState = saveToolSettingsState;
 
 // --- setNewToolPane.js ---
 function setNewToolPane(pane) {
-    if (pane === 'mcp') {
-        closeNewToolModal();
-        if (typeof openSettingsModal === 'function') {
-            openSettingsModal('mcp');
-        }
-        return;
-    }
     newToolActivePane = pane;
-    newToolSourceTabs.forEach(tab => tab.classList.toggle('active', tab.dataset.pane === pane));
-    newToolPanes.forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
+    const tabs = document.querySelectorAll('.newtool-source-tab');
+    const panes = document.querySelectorAll('.newtool-pane');
+    tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.pane === pane));
+    panes.forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
     newToolShowError('');
     newToolUpdateCreateLabel();
     if (pane === 'blank') {
         setTimeout(() => {
-            newToolSourceEditor.focus();
-            newToolSourceEditor.setSelectionRange(0, 0);
-            newToolSourceEditor.scrollTop = 0;
+            if (typeof newToolSourceEditor !== 'undefined' && newToolSourceEditor) {
+                newToolSourceEditor.focus();
+                newToolSourceEditor.setSelectionRange(0, 0);
+                newToolSourceEditor.scrollTop = 0;
+            }
         }, 0);
+    } else if (pane === 'browse') {
+        if (typeof newToolBrowseFiles !== 'undefined' && !newToolBrowseFiles) {
+            if (typeof loadGithubToolsList === 'function') loadGithubToolsList();
+        } else {
+            if (typeof renderGithubToolsList === 'function') renderGithubToolsList();
+        }
     }
 }
 

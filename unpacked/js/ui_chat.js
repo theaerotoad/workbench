@@ -1086,13 +1086,17 @@ newToolInstallBtn.addEventListener('click', async () => {
 newToolNameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && newToolDroppedSource) { e.preventDefault(); newToolInstallBtn.click(); }
 });
-document.getElementById('newtool-modal-close').addEventListener('click', closeNewToolModal);
-document.getElementById('newtool-cancel').addEventListener('click', closeNewToolModal);
-newToolModalOverlay.addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) closeNewToolModal();
-});
+const ntCloseBtn = document.getElementById('newtool-modal-close');
+if (ntCloseBtn) ntCloseBtn.addEventListener('click', closeNewToolModal);
+const ntCancelBtn = document.getElementById('newtool-cancel');
+if (ntCancelBtn) ntCancelBtn.addEventListener('click', closeNewToolModal);
+if (typeof newToolModalOverlay !== 'undefined' && newToolModalOverlay) {
+    newToolModalOverlay.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeNewToolModal();
+    });
+}
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && newToolModalOverlay.style.display === 'flex') {
+    if (e.key === 'Escape' && typeof newToolModalOverlay !== 'undefined' && newToolModalOverlay && newToolModalOverlay.style.display === 'flex') {
         closeNewToolModal();
     }
 });
