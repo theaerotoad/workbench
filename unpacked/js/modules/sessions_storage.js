@@ -70,7 +70,7 @@ async function generateSessionTitleViaLLM(prompt) {
     if (!prompt || typeof prompt !== 'string') return 'Untitled Session';
     const clean = prompt.replace(/\/(plan|ask|code|execute-plan|continue|new|session|clear|restore|help)/gi, '').trim();
     if (!clean) return 'Untitled Session';
-    return clean.length > 40 ? clean.slice(0, 37) + '...' : clean;
+    return clean.length > 120 ? clean.slice(0, 117) + '...' : clean;
 }
 
 // --- AST_EXPORTS_START ---
@@ -354,7 +354,7 @@ function sanitizeSessionTitle(title) {
         .replace(/[\r\n\t]+/g, ' ')
         .replace(/\s{2,}/g, ' ')
         .trim()
-        .slice(0, 80);
+        .slice(0, 140);
 }
 
 // --- AST_EXPORTS_START ---
@@ -521,7 +521,12 @@ function updateSessionPillLabel() {
     const s = state.sessions[state.activeSessionId];
     let display = (s && s.title) ? sanitizeSessionTitle(s.title) : '';
     if (!display) display = 'Untitled Session';
-    if (el) el.innerText = display;
+    if (el) {
+        el.innerText = display;
+        el.title = display;
+    }
+    const btn = document.getElementById('btn-session-toggle');
+    if (btn) btn.title = `${display} (Click to view or switch sessions)`;
     document.title = `workbench - ${display}`;
 }
 

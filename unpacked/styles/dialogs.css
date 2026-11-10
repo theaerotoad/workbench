@@ -6,7 +6,7 @@
 /* Sessions Pill & Popover */
 #btn-session-toggle, .session-pill-btn {
     width: auto;
-    max-width: 380px;
+    max-width: none;
     min-width: 0;
     height: 28px;
     background: transparent;
@@ -24,7 +24,7 @@
     transition: background 0.15s, color 0.15s;
     font-family: inherit;
     box-sizing: border-box;
-    flex-shrink: 1;
+    flex: 0 1 auto;
 }
 #btn-session-toggle:hover, #btn-session-toggle.active,
 .session-pill-btn:hover, .session-pill-btn.active {
