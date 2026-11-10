@@ -41,14 +41,14 @@ function loadWorkspaceToolsState(wsKey) {
     return typeof window.toolsDefaults === 'function' ? window.toolsDefaults() : {};
 }
 
-function saveWorkspaceToolsState(wsKey, config) {
+function saveWorkspaceToolsState(wsKey, config, writeToDisk = true) {
     const key = wsKey || getWorkspaceToolsKey();
     const cfg = config || getWorkspaceToolsConfig();
     const lsKey = key ? `tools_config_${key}` : 'tools_config_default';
     try {
         localStorage.setItem(lsKey, JSON.stringify(cfg));
     } catch (e) {}
-    if (typeof window.writeAgentFileToDisk === 'function') {
+    if (writeToDisk && typeof window.writeAgentFileToDisk === 'function') {
         const isWebDav = window.rootHandle && window.rootHandle.isWebDAV;
         const syncDisabled = isWebDav && window.AppConfig && window.AppConfig.get('webdav-sync-agent') !== 'true';
         if (!syncDisabled) {
@@ -136,7 +136,8 @@ async function reconcileWorkspaceTools(diskToolsDirHandle = null) {
             } catch (e) {}
         }
         setWorkspaceToolsConfig(manifest);
-        saveWorkspaceToolsState(wsKey, manifest);
+        // Only write to disk if custom tools on disk were newly discovered or manifest needed updates
+        saveWorkspaceToolsState(wsKey, manifest, false);
         return manifest;
     }
 
@@ -437,25 +438,35 @@ function getAllTools() {
 window.getAllTools = getAllTools;
 // --- AST_EXPORTS_END ---
 
+const _builtinSourceCache = {};
+
 // --- getBuiltinToolSource.js ---
 // Every built-in tool is a complete, self-contained tool file (logic, result text and the chat display all live
 // inside the tool); they are embedded as text/plain blocks so they stay readable and unescaped.
 function getBuiltinToolSource(name) {
+    if (_builtinSourceCache[name] !== undefined) {
+        return _builtinSourceCache[name];
+    }
     const el = document.getElementById('builtin-tool-src-' + name);
     let text = el ? el.textContent : '';
     if (!text.trim() && el && el.getAttribute('src')) {
         try {
             const xhr = new XMLHttpRequest();
-            xhr.open('GET', el.getAttribute('src') + '?t=' + Date.now(), false); // synchronous fetch for dev mode
+            xhr.open('GET', el.getAttribute('src'), false); // synchronous fetch for dev mode
             xhr.send(null);
             if (xhr.status === 200 || xhr.status === 0) {
                 text = xhr.responseText || '';
+                if (el) el.textContent = text;
             }
         } catch (e) {
             console.warn('Sync XHR failed for tool:', name, e);
         }
     }
-    return text.replace(/^\r?\n/, '').replace(/\r?\n/g, '\r\n');
+    const clean = text.replace(/^\r?\n/, '').replace(/\r?\n/g, '\r\n');
+    if (clean) {
+        _builtinSourceCache[name] = clean;
+    }
+    return clean;
 }
 
 // --- AST_EXPORTS_START ---
@@ -740,15 +751,19 @@ function registerToolsVirtualFiles() {
     if (needsAsyncFetch) {
         // Fallback to async fetch if sync XHR failed (e.g. CORS on file:// or strict browser policy)
         Promise.all(BUILTIN_TOOL_NAMES.map(async (name) => {
+            if (_builtinSourceCache[name]) return;
             const el = document.getElementById('builtin-tool-src-' + name);
             if (el && el.getAttribute('src')) {
                 try {
-                    const res = await fetch(el.getAttribute('src') + '?t=' + Date.now());
+                    const res = await fetch(el.getAttribute('src'));
                     if (res.ok) {
                         const text = await res.text();
+                        const clean = text.replace(/^\r?\n/, '').replace(/\r?\n/g, '\r\n');
+                        _builtinSourceCache[name] = clean;
+                        if (el) el.textContent = clean;
                         const fp = toolFilePath(name);
-                        registry.files[fp] = text.replace(/^\r?\n/, '').replace(/\r?\n/g, '\r\n');
-                        registry.meta[fp].size = registry.files[fp].length;
+                        registry.files[fp] = clean;
+                        if (registry.meta[fp]) registry.meta[fp].size = clean.length;
                     }
                 } catch (e) {
                     console.warn('Async fetch failed for', name, e);

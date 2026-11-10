@@ -271,9 +271,13 @@ btnCollapseAll.addEventListener('click', () => {
 
 btnReloadTree.addEventListener('click', async () => await syncWorkspace(false));
 
+let _lastAutoSync = Date.now();
+
 setInterval(() => {
     // Throttle background polling for remote (WebDAV) workspaces to avoid network spam.
     // Local/Virtual workspaces get 3s polling, WebDAV gets 30s.
+    if (!rootHandle) return;
+    if (document.hidden) return;
     const isRemote = rootHandle && rootHandle.isWebDAV;
     const intervalMs = isRemote ? 30000 : 3000;
     if (Date.now() - _lastAutoSync >= intervalMs) {
@@ -283,8 +287,20 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener('focus', () => { 
-    _lastAutoSync = Date.now();
-    syncWorkspace(true); 
+    if (!rootHandle) return;
+    if (Date.now() - _lastAutoSync >= 5000) {
+        _lastAutoSync = Date.now();
+        syncWorkspace(true); 
+    }
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && rootHandle) {
+        if (Date.now() - _lastAutoSync >= 5000) {
+            _lastAutoSync = Date.now();
+            syncWorkspace(true);
+        }
+    }
 });
 
 window.confirmDialog = confirmDialog;
