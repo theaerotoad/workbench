@@ -57,6 +57,8 @@ function closeWorkspace() {
         } catch(e) {}
     }
     rootHandle = null;
+    document.body.classList.add('no-workspace');
+    document.body.classList.remove('has-workspace');
     updateWorkspaceTitle();
     updateSessionPillLabel();   // -> "workbench - Workspaces"
 
@@ -775,6 +777,8 @@ async function setWorkspace(handle) {
         resetToolRegistry();
     }
     rootHandle = handle;
+    document.body.classList.remove('no-workspace');
+    document.body.classList.add('has-workspace');
     updateWorkspaceTitle();
 
     if (btnExitWorkspace) btnExitWorkspace.style.display = 'inline-flex';
@@ -1134,6 +1138,9 @@ function updateWorkspaceTitle() {
     const row = document.getElementById('ws-popover-row'), nm = document.getElementById('ws-popover-name'), ic = document.getElementById('ws-popover-icon');
     if (!row || !nm) return;
     const name = rootHandle ? (rootHandle.displayName || rootHandle.name) : '';
+    const hasWs = !!(rootHandle && name);
+    document.body.classList.toggle('has-workspace', hasWs);
+    document.body.classList.toggle('no-workspace', !hasWs);
     nm.textContent = name;
     if (ic) ic.textContent = rootHandle && rootHandle.isVirtual ? 'cloud_queue' : (rootHandle && rootHandle.isWebDAV ? 'dns' : 'folder');
     const sideIc = document.getElementById('sidebar-files-icon');

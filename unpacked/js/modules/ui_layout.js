@@ -1,5 +1,6 @@
 // --- activateSidebarView.js ---
 function activateSidebarView(navTab, viewEl) {
+    if (!window.rootHandle) return;
     [tabNavExplorer, tabNavChanges, tabNavSearch, tabNavSettings].forEach(t => t.classList.remove('active'));
     [viewExplorer, viewChanges, viewSearch, viewSettings].forEach(v => v.style.display = 'none');
     navTab.classList.add('active');
@@ -1135,6 +1136,7 @@ window.toggleMobileSidebar = toggleMobileSidebar;
 
 // --- toggleNavTab.js ---
 function toggleNavTab(navTab, viewEl) {
+    if (!window.rootHandle) return;
     settingsPopover.style.display = 'none';
     btnSettingsToggle.classList.remove('active');
     const isCollapsed = sidebarEl.classList.contains('collapsed');
@@ -1303,6 +1305,7 @@ window.withStorageShim = withStorageShim;
 document.addEventListener('keydown', (e) => {
     // Ctrl+[ or Cmd+[ -> Toggle Sidebar
     if ((e.ctrlKey || e.metaKey) && (e.key === '[' || e.code === 'BracketLeft')) {
+        if (!window.rootHandle) return;
         const sidebar = document.getElementById('sidebar');
         if (sidebar && window.setSidebarCollapsed) {
             window.setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
