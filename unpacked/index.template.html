@@ -190,17 +190,191 @@
                 </nav>
                 <main id="settings-modal-content">
                     <section class="settings-pane active" id="settings-pane-workspace" data-pane="workspace">
-                        <div class="settings-pane-placeholder">
-                            <span class="icon">tune</span>
-                            <h3>Workspace Settings</h3>
-                            <p>Behavior, timeouts, sync, and context compression.</p>
+                        <div class="settings-section-label">Behavior</div>
+
+                        <!-- General Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">tune</span>
+                                <span>General</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <label for="settings-thinking-timeout">Thinking Timeout (seconds, -1 = disabled):</label>
+                                    <input type="number" id="settings-thinking-timeout" value="-1" min="-1" max="3600">
+                                </div>
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Keep skipped thinking in context</span>
+                                        <div class="tri-switch duo-switch" id="settings-keep-skipped-thinking">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row">
+                                    <label for="settings-tool-timeout">Tool Timeout (seconds, 5-3600):</label>
+                                    <input type="number" id="settings-tool-timeout" value="120" min="5" max="3600">
+                                </div>
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label" title="Store and load .agent config files from the remote WebDAV server">Sync .agent to WebDAV</span>
+                                        <div class="tri-switch duo-switch" id="settings-webdav-sync-agent">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Editor Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">edit</span>
+                                <span>Editor</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Word wrap in editor</span>
+                                        <div class="tri-switch duo-switch" id="settings-editor-word-wrap">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Show code previews in chat</span>
+                                        <div class="tri-switch duo-switch" id="settings-show-code-preview">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Context Compression Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">compress</span>
+                                <span>Context Compression</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Enable auto-compression</span>
+                                        <div class="tri-switch duo-switch" id="settings-compress-enabled">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row">
+                                    <label for="settings-compress-threshold">Compress at (% of context window):</label>
+                                    <input type="number" id="settings-compress-threshold" value="75" min="10" max="99">
+                                </div>
+                                <div class="settings-field-row">
+                                    <label for="settings-compress-preserve">Preserve last N messages:</label>
+                                    <input type="number" id="settings-compress-preserve" value="6" min="1" max="50">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section-label">Danger Zone</div>
+
+                        <div class="settings-panel-group" id="danger-zone-footer" style="border-color: rgba(224, 108, 117, 0.2); margin-bottom: 0;">
+                            <div class="settings-panel-header" style="background: rgba(224, 108, 117, 0.05); color: var(--dim); border-bottom-color: rgba(224, 108, 117, 0.15);">
+                                <span class="icon" style="color: var(--dim);">warning</span>
+                                <span>Data Management</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row" style="justify-content: space-between; align-items: center;">
+                                    <span class="duo-switch-label" style="max-width: 380px;">Reset selective cached data, model configs, tool definitions, or sessions.</span>
+                                    <button type="button" id="btn-clear-data" class="danger-btn" title="Choose what stored data to clear">
+                                        <span class="icon" style="font-size: 14px;">delete</span>
+                                        <span>Clear Data…</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-appearance" data-pane="appearance">
-                        <div class="settings-pane-placeholder">
-                            <span class="icon">palette</span>
-                            <h3>Appearance Settings</h3>
-                            <p>Themes, accent swatches, layout, and status glow.</p>
+                        <div class="settings-section-label">Theme &amp; Colors</div>
+
+                        <!-- Theme Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">contrast</span>
+                                <span>UI Theme</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <label for="settings-ui-theme">Color Theme</label>
+                                    <select id="settings-ui-theme">
+                                        <option value="dark">Dark</option>
+                                        <option value="light">Light</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Accent Color Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">palette</span>
+                                <span>Accent Color</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <span class="duo-switch-label">Choose accent palette</span>
+                                </div>
+                                <div class="settings-field-row">
+                                    <div id="settings-accent-swatches" role="group" aria-label="Accent color"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Background Glow Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">tonality</span>
+                                <span>Status Glow</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Enable status glow at window bottom</span>
+                                        <div class="tri-switch duo-switch" id="settings-glow-enabled">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section-label">Display &amp; Layout</div>
+
+                        <!-- Layout Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">vertical_split</span>
+                                <span>Layout</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <div class="duo-switch-row">
+                                        <span class="duo-switch-label">Widescreen Split View (Chat + Editor side-by-side)</span>
+                                        <div class="tri-switch duo-switch" id="settings-split-view">
+                                            <button type="button" class="tri-btn off active off" data-val="off">off</button>
+                                            <button type="button" class="tri-btn on" data-val="on">on</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </section>
                     <section class="settings-pane" id="settings-pane-models" data-pane="models">
@@ -555,7 +729,7 @@
                     <span class="tab-label">Changes</span>
                     <span class="sidebar-badge" id="changes-count">0</span>
                 </div>
-                <div class="sidebar-nav-tab" id="tab-nav-settings" data-view="settings" title="Settings">
+                <div class="sidebar-nav-tab" id="tab-nav-settings" title="Settings">
                     <span class="icon" style="font-size: 18px;">settings</span>
                     <span class="tab-label">Settings</span>
                 </div>
@@ -572,195 +746,6 @@
             </div>
 
             <div id="sidebar-content">
-                <div id="sidebar-view-settings" style="display:none;">
-                    <div class="sidebar-panel-header">
-                        <span style="font-size:10px; color:var(--dim); font-weight:700; text-transform:uppercase;">Settings</span>
-                    </div>
-                    <div id="settings-content" style="overflow-y: auto; flex: 1;">
-
-                        <div class="settings-section-label">Behavior</div>
-
-                        <!-- General Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">tune</span>
-                                <span>General</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <label>Thinking Timeout (seconds, -1 = disabled):</label>
-                                    <input type="number" id="settings-thinking-timeout" value="-1" min="-1" max="3600">
-                                </div>
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Keep skipped thinking in context</span>
-                                        <div class="tri-switch duo-switch" id="settings-keep-skipped-thinking">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="settings-field-row">
-                                    <label>Tool Timeout (seconds, 5-3600):</label>
-                                    <input type="number" id="settings-tool-timeout" value="120" min="5" max="3600">
-                                </div>
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label" title="Store and load .agent config files from the remote WebDAV server">Sync .agent to WebDAV</span>
-                                        <div class="tri-switch duo-switch" id="settings-webdav-sync-agent">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Editor Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">edit</span>
-                                <span>Editor</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Word wrap in editor</span>
-                                        <div class="tri-switch duo-switch" id="settings-editor-word-wrap">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Show code previews in chat</span>
-                                        <div class="tri-switch duo-switch" id="settings-show-code-preview">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Context Compression Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">compress</span>
-                                <span>Context Compression</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Enable auto-compression</span>
-                                        <div class="tri-switch duo-switch" id="settings-compress-enabled">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="settings-field-row">
-                                    <label>Compress at (% of context window):</label>
-                                    <input type="number" id="settings-compress-threshold" value="75" min="10" max="99">
-                                </div>
-                                <div class="settings-field-row">
-                                    <label>Preserve last N messages:</label>
-                                    <input type="number" id="settings-compress-preserve" value="6" min="1" max="50">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="settings-section-label">Appearance</div>
-
-                        <!-- Layout Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">vertical_split</span>
-                                <span>Layout</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Widescreen Split View</span>
-                                        <div class="tri-switch duo-switch" id="settings-split-view">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Theme Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">contrast</span>
-                                <span>UI Theme</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <select id="settings-ui-theme">
-                                        <option value="dark">Dark</option>
-                                        <option value="light">Light</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Accent Color Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">palette</span>
-                                <span>Accent Color</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <span class="duo-switch-label">Choose accent</span>
-                                </div>
-                                <div class="settings-field-row">
-                                    <div id="settings-accent-swatches" role="group" aria-label="Accent color"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Background Glow Panel -->
-                        <div class="settings-panel-group">
-                            <div class="settings-panel-header">
-                                <span class="icon">tonality</span>
-                                <span>Status Glow</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <div class="duo-switch-row">
-                                        <span class="duo-switch-label">Enable status glow</span>
-                                        <div class="tri-switch duo-switch" id="settings-glow-enabled">
-                                            <button class="tri-btn off active off" data-val="off">off</button>
-                                            <button class="tri-btn on" data-val="on">on</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                    <div id="danger-zone-footer">
-                        <div class="settings-panel-group" style="border-color: rgba(224, 108, 117, 0.12); margin-bottom: 0;">
-                            <div class="settings-panel-header" style="background: rgba(224, 108, 117, 0.03); color: var(--dim); border-bottom-color: rgba(224, 108, 117, 0.1);">
-                                <span class="icon" style="color: var(--dim);">warning</span>
-                                <span>Danger Zone</span>
-                            </div>
-                            <div class="settings-panel-body">
-                                <div class="settings-field-row">
-                                    <button id="btn-clear-data" class="danger-btn" title="Choose what stored data to clear">
-                                        <span class="icon" style="font-size: 14px;">delete</span>
-                                        <span>Clear Data…</span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
                 <div id="sidebar-mobile-header" class="sidebar-panel-header" style="display:none;">
                     <span style="font-size:11px; color:var(--primary); font-weight:700;">Files</span>
                     <button id="btn-sidebar-close-mobile-2" class="icon-btn" title="Close sidebar"><span class="icon" style="font-size:16px;">close</span></button>

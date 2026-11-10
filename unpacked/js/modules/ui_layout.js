@@ -1,10 +1,20 @@
 // --- activateSidebarView.js ---
 function activateSidebarView(navTab, viewEl) {
     if (!window.rootHandle) return;
-    [tabNavExplorer, tabNavChanges, tabNavSearch, tabNavSettings].forEach(t => t.classList.remove('active'));
-    [viewExplorer, viewChanges, viewSearch, viewSettings].forEach(v => v.style.display = 'none');
-    navTab.classList.add('active');
-    viewEl.style.display = 'flex';
+    const navTabs = [
+        typeof tabNavExplorer !== 'undefined' ? tabNavExplorer : document.getElementById('tab-nav-explorer'),
+        typeof tabNavChanges !== 'undefined' ? tabNavChanges : document.getElementById('tab-nav-changes'),
+        typeof tabNavSearch !== 'undefined' ? tabNavSearch : document.getElementById('tab-nav-search')
+    ].filter(Boolean);
+    const views = [
+        typeof viewExplorer !== 'undefined' ? viewExplorer : document.getElementById('sidebar-view-explorer'),
+        typeof viewChanges !== 'undefined' ? viewChanges : document.getElementById('sidebar-view-changes'),
+        typeof viewSearch !== 'undefined' ? viewSearch : document.getElementById('sidebar-view-search')
+    ].filter(Boolean);
+    navTabs.forEach(t => t.classList.remove('active'));
+    views.forEach(v => v.style.display = 'none');
+    if (navTab) navTab.classList.add('active');
+    if (viewEl) viewEl.style.display = 'flex';
 }
 
 // --- AST_EXPORTS_START ---

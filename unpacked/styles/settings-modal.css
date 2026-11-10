@@ -177,8 +177,7 @@
 }
 
 .settings-pane.active {
-    display: flex;
-    flex-direction: column;
+    display: block;
 }
 
 /* Placeholder for unmigrated tabs */

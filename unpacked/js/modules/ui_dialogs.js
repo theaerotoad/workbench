@@ -1,18 +1,84 @@
 // --- applyConfigToUI.js ---
 function applyConfigToUI() {
     const themeSelect = document.getElementById('settings-ui-theme');
-    if (themeSelect) themeSelect.value = AppConfig.get('ui-theme', 'dark');
-    document.getElementById('settings-thinking-timeout').value = AppConfig.get('thinking-timeout', '-1');
-    document.getElementById('settings-tool-timeout').value = AppConfig.get('tool-timeout', '120');
+    if (themeSelect) {
+        themeSelect.value = AppConfig.get('ui-theme', 'dark');
+        if (!themeSelect._hasConfigListener) {
+            themeSelect._hasConfigListener = true;
+            themeSelect.addEventListener('change', () => {
+                AppConfig.set('ui-theme', themeSelect.value);
+                if (window.applyTheme) window.applyTheme();
+            });
+        }
+    }
+
+    const thinkingInput = document.getElementById('settings-thinking-timeout');
+    if (thinkingInput) {
+        thinkingInput.value = AppConfig.get('thinking-timeout', '-1');
+        if (!thinkingInput._hasConfigListener) {
+            thinkingInput._hasConfigListener = true;
+            thinkingInput.addEventListener('change', () => {
+                AppConfig.set('thinking-timeout', thinkingInput.value);
+            });
+        }
+    }
+
+    const toolTimeoutInput = document.getElementById('settings-tool-timeout');
+    if (toolTimeoutInput) {
+        toolTimeoutInput.value = AppConfig.get('tool-timeout', '120');
+        if (!toolTimeoutInput._hasConfigListener) {
+            toolTimeoutInput._hasConfigListener = true;
+            toolTimeoutInput.addEventListener('change', () => {
+                AppConfig.set('tool-timeout', toolTimeoutInput.value);
+            });
+        }
+    }
+
     setDuoSwitch(document.getElementById('settings-keep-skipped-thinking'), AppConfig.get('keep-skipped-thinking') === "true");
     setDuoSwitch(document.getElementById('settings-glow-enabled'), AppConfig.get('glow-enabled', 'true') !== 'false');
-    
     setDuoSwitch(document.getElementById('settings-editor-word-wrap'), AppConfig.get('editor-word-wrap') === 'true');
     setDuoSwitch(document.getElementById('settings-show-code-preview'), AppConfig.get('show-code-preview', 'true') !== 'false');
     setDuoSwitch(document.getElementById('settings-split-view'), AppConfig.get('split-view-enabled') === 'true');
 
-    if (!window._qolSettingsBound && window.initDuoSwitch) {
-        window._qolSettingsBound = true;
+    const ce = document.getElementById('settings-compress-enabled');
+    const ct = document.getElementById('settings-compress-threshold');
+    const cp = document.getElementById('settings-compress-preserve');
+    setDuoSwitch(ce, AppConfig.get('compress-enabled', 'true') !== 'false');
+    setDuoSwitch(document.getElementById('settings-webdav-sync-agent'), AppConfig.get('webdav-sync-agent') === 'true');
+    if (ct) {
+        ct.value = AppConfig.get('compress-threshold', '75');
+        if (!ct._hasConfigListener) {
+            ct._hasConfigListener = true;
+            ct.addEventListener('change', () => {
+                AppConfig.set('compress-threshold', ct.value);
+            });
+        }
+    }
+    if (cp) {
+        cp.value = AppConfig.get('compress-preserve', '6');
+        if (!cp._hasConfigListener) {
+            cp._hasConfigListener = true;
+            cp.addEventListener('change', () => {
+                AppConfig.set('compress-preserve', cp.value);
+            });
+        }
+    }
+
+    if (!window._settingsSwitchesBound && window.initDuoSwitch) {
+        window._settingsSwitchesBound = true;
+        window.initDuoSwitch('settings-keep-skipped-thinking', (isOn) => {
+            AppConfig.set('keep-skipped-thinking', isOn ? 'true' : 'false');
+        });
+        window.initDuoSwitch('settings-webdav-sync-agent', (isOn) => {
+            AppConfig.set('webdav-sync-agent', isOn ? 'true' : 'false');
+        });
+        window.initDuoSwitch('settings-glow-enabled', (isOn) => {
+            AppConfig.set('glow-enabled', isOn ? 'true' : 'false');
+            if (window.updateGenGlow) window.updateGenGlow();
+        });
+        window.initDuoSwitch('settings-compress-enabled', (isOn) => {
+            AppConfig.set('compress-enabled', isOn ? 'true' : 'false');
+        });
         window.initDuoSwitch('settings-editor-word-wrap', (isOn) => {
             AppConfig.set('editor-word-wrap', isOn ? 'true' : 'false');
             if (window.monacoEditor) {
@@ -31,12 +97,19 @@ function applyConfigToUI() {
                 document.body.classList.add('hide-code-preview');
             }
         });
-    }
-    if (!window._splitViewBound && window.initDuoSwitch) {
-        window._splitViewBound = true;
         window.initDuoSwitch('settings-split-view', (isOn) => {
             AppConfig.set('split-view-enabled', isOn ? 'true' : 'false');
             if (window.applySplitView) window.applySplitView();
+        });
+    }
+
+    const clearDataBtn = document.getElementById('btn-clear-data');
+    if (clearDataBtn && !clearDataBtn._hasConfigListener) {
+        clearDataBtn._hasConfigListener = true;
+        clearDataBtn.addEventListener('click', () => {
+            if (typeof window.openClearDataModal === 'function') {
+                window.openClearDataModal();
+            }
         });
     }
 
@@ -54,18 +127,11 @@ function applyConfigToUI() {
         window.monacoDiffEditor.getOriginalEditor().updateOptions({ wordWrap: AppConfig.get('editor-word-wrap') === 'true' ? 'on' : 'off' });
     }
 
-    const ce = document.getElementById('settings-compress-enabled');
-    const ct = document.getElementById('settings-compress-threshold');
-    const cp = document.getElementById('settings-compress-preserve');
-    setDuoSwitch(ce, AppConfig.get('compress-enabled', 'true') !== 'false');
-    setDuoSwitch(document.getElementById('settings-webdav-sync-agent'), AppConfig.get('webdav-sync-agent') === 'true');
-    if (ct) ct.value = AppConfig.get('compress-threshold', '75');
-    if (cp) cp.value = AppConfig.get('compress-preserve', '6');
-    updateAgentFilesSwitch();
+    if (typeof updateAgentFilesSwitch === 'function') updateAgentFilesSwitch();
     if (window.applySplitView) window.applySplitView();
-    renderAccentSwatches();
-    applyTheme();
-    refreshCustomModes();
+    if (typeof renderAccentSwatches === 'function') renderAccentSwatches();
+    if (window.applyTheme) window.applyTheme();
+    if (typeof refreshCustomModes === 'function') refreshCustomModes();
 }
 
 // --- AST_EXPORTS_START ---

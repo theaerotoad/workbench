@@ -136,6 +136,16 @@ export function initSettingsModal() {
         });
     }
 
+    // Sidebar settings button opens the unified Settings modal
+    const tabNavSettings = document.getElementById('tab-nav-settings');
+    if (tabNavSettings) {
+        tabNavSettings.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSettingsModal('workspace');
+        });
+    }
+
     // Global keyboard shortcuts (Escape and Cmd+, / Ctrl+,)
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && overlay.style.display !== 'none') {
