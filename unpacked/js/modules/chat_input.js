@@ -1120,6 +1120,8 @@ async function submitPrompt() {
         const attachmentsSnapshot = escapeHTML(JSON.stringify(state.attachedReferences));
         print(`<div class="chat-attachments">${chatAttachmentsHTML}</div><div class="chat-prompt-wrap" data-msg-id="${msgId}" data-raw="${rawPrompt}" data-attachments="${attachmentsSnapshot}"><div class="mode-divider">${modeBadgeHTML}</div><div class="chat-prompt-row"><div class="chat-bubble"><div class="md-content" style="display:inline-block; vertical-align:top;">${normalizeBlockHTML(formatMarkdownSnippet(val || "(Referenced items)"))}</div></div></div><div class="prompt-actions"><button class="btn-prompt-action edit" title="Edit and regenerate" onclick="window.editPrompt('${msgId}')"><span class="icon" style="font-size:13px;">edit</span></button><button class="btn-prompt-action copy" title="Copy prompt" onclick="window.copyPrompt('${msgId}')"><span class="icon" style="font-size:13px;">content_copy</span></button><button class="btn-prompt-action del" title="Delete message" onclick="window.deletePrompt('${msgId}')"><span class="icon" style="font-size:13px;">delete</span></button></div></div>`);
 
+        const promptForTitle = val || (state.attachedReferences.length ? (state.attachedReferences[0].name || 'Attachment') : '');
+
         state.attachedReferences = [];
         renderAttachmentChips();
 
@@ -1130,6 +1132,9 @@ async function submitPrompt() {
         removeContinueButtons();
 
         const runSessionId = state.activeSessionId;
+        if (typeof maybeUpdateSessionTitleFromPrompt === 'function' && promptForTitle) {
+            maybeUpdateSessionTitleFromPrompt(promptForTitle, runSessionId);
+        }
         await runTask(fullPromptForLLM, msgId, attachedImageUrls, runSessionId);
         if (runSessionId === state.activeSessionId) focusPrompt();
 }

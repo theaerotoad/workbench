@@ -30,6 +30,41 @@ window.ensureSessionLoaded = ensureSessionLoaded;
 
 // --- generateSessionTitleViaLLM.js ---
 async function generateSessionTitleViaLLM(prompt) {
+    if (!prompt || typeof prompt !== 'string') return 'Untitled Session';
+
+    // Extract actual user query if prompt contains prepended context references
+    let cleanPrompt = prompt;
+    const userPromptMatch = cleanPrompt.match(/(?:^|\n)User Prompt:\s*([\s\S]*)$/i);
+    if (userPromptMatch && userPromptMatch[1].trim()) {
+        const extracted = userPromptMatch[1].trim();
+        if (extracted !== '(Referenced files/code above)' && extracted !== '(Referenced items)') {
+            cleanPrompt = extracted;
+        }
+    }
+
+    cleanPrompt = cleanPrompt
+        .replace(/^Context References:\s*(?:\[[^\]]+\]\s*)*/i, '')
+        .replace(/^\[(?:Image attached|File|Attachment)[^\]]*\]\s*/gi, '')
+        .replace(/\/(plan|ask|code|execute-plan|continue|new|session|clear|restore|help)\b/gi, '')
+        .trim();
+
+    if (!cleanPrompt || cleanPrompt === '(Referenced files/code above)' || cleanPrompt === '(Referenced items)') {
+        const imgMatch = prompt.match(/\[Image attached:\s*([^\s\]]+)/i);
+        const fileMatch = prompt.match(/(?:File|Pasted text attached):\s*([^\s\n\(\)]+)/i);
+        if (imgMatch) {
+            const fname = imgMatch[1].split('/').pop().split('\\').pop().replace(/\.\.\.$/, '');
+            cleanPrompt = `Image: ${fname}`;
+        } else if (fileMatch) {
+            const fname = fileMatch[1].split('/').pop().split('\\').pop().replace(/\.\.\.$/, '');
+            cleanPrompt = `File: ${fname}`;
+        } else {
+            cleanPrompt = 'Untitled Session';
+        }
+    }
+
+    const effectivePrompt = cleanPrompt || 'Untitled Session';
+    if (effectivePrompt === 'Untitled Session') return effectivePrompt;
+
     const { url: apiUrl, model, key: apiKey, useProxy } = getCurrentModelInfo();
     const headers = { "Content-Type": "application/json" };
     if (apiKey) {
@@ -37,8 +72,8 @@ async function generateSessionTitleViaLLM(prompt) {
     }
     const titleTemplate = (MODE_PROMPTS && MODE_PROMPTS.title) || seedDefaultModePrompts().title;
     const injectPrompt = /\{\{\s*userPrompt\s*\}\}/.test(titleTemplate);
-    const systemContent = injectPrompt ? renderPromptTemplate(titleTemplate, { userPrompt: prompt }) : titleTemplate;
-    const userContent = injectPrompt ? prompt : `Generate a short descriptive title for this coding task:\n${prompt}`;
+    const systemContent = injectPrompt ? renderPromptTemplate(titleTemplate, { userPrompt: effectivePrompt }) : titleTemplate;
+    const userContent = injectPrompt ? effectivePrompt : `Generate a short descriptive title for this coding task:\n${effectivePrompt}`;
     try {
         const targetUrl = `${apiUrl}/chat/completions`;
         const reqUrl = useProxy ? '/proxy' : targetUrl;
@@ -67,10 +102,7 @@ async function generateSessionTitleViaLLM(prompt) {
             return generated;
         }
     } catch (e) { }
-    if (!prompt || typeof prompt !== 'string') return 'Untitled Session';
-    const clean = prompt.replace(/\/(plan|ask|code|execute-plan|continue|new|session|clear|restore|help)/gi, '').trim();
-    if (!clean) return 'Untitled Session';
-    return clean.length > 120 ? clean.slice(0, 117) + '...' : clean;
+    return effectivePrompt.length > 120 ? effectivePrompt.slice(0, 117) + '...' : effectivePrompt;
 }
 
 // --- AST_EXPORTS_START ---
@@ -106,7 +138,9 @@ window.loadAllSessions = loadAllSessions;
 async function maybeUpdateSessionTitleFromPrompt(prompt, sessionId) {
     const sid = sessionId || state.activeSessionId;
     const s = state.sessions[sid];
-    if (!s || s._titleGenerated) return;
+    if (!s) return;
+    const isStuckWithFallback = s.title && (s.title.startsWith('Context References:') || s.title === 'Generating title...' || s.title === 'Untitled Session');
+    if (s._titleGenerated && !isStuckWithFallback) return;
     s.title = "Generating title...";
     if (sid === state.activeSessionId) updateSessionPillLabel();
     const title = await generateSessionTitleViaLLM(prompt);
@@ -520,6 +554,29 @@ function updateSessionPillLabel() {
 
     const s = state.sessions[state.activeSessionId];
     let display = (s && s.title) ? sanitizeSessionTitle(s.title) : '';
+
+    // Automatically heal existing sessions saved with the raw context references prefix
+    if (display.startsWith('Context References:')) {
+        const userMatch = display.match(/(?:^|\n)User Prompt:\s*([\s\S]*)$/i);
+        if (userMatch && userMatch[1].trim() && !userMatch[1].includes('(Referenced')) {
+            display = userMatch[1].trim();
+        } else {
+            const imgMatch = display.match(/\[Image attached:\s*([^\s\]]+)/i);
+            const fileMatch = display.match(/(?:File|Pasted text attached):\s*([^\s\n\(\)]+)/i);
+            if (imgMatch) {
+                const fname = imgMatch[1].split('/').pop().split('\\').pop().replace(/\.\.\.$/, '');
+                display = `Image: ${fname}`;
+            } else if (fileMatch) {
+                const fname = fileMatch[1].split('/').pop().split('\\').pop().replace(/\.\.\.$/, '');
+                display = `File: ${fname}`;
+            } else {
+                const cleaned = display.replace(/^Context References:\s*(?:\[[^\]]+\]\s*)*/i, '').trim();
+                display = cleaned || 'Untitled Session';
+            }
+        }
+        if (s) s.title = display;
+    }
+
     if (!display) display = 'Untitled Session';
     if (el) {
         el.innerText = display;
