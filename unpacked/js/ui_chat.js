@@ -15,6 +15,7 @@ import './modules/workspace_explorer.js';
 import './modules/workspace_transfer.js';
 import './modules/prompt_modes.js';
 import './modules/prompt_compression.js';
+import { openSettingsModal, closeSettingsModal } from './modules/settings_modal.js';
 import './modules/ui_dialogs.js';
 import './modules/ui_layout.js';
 import './modules/task_runner.js';
@@ -421,47 +422,13 @@ modelPickerSearch.addEventListener('keydown', (e) => {
     }
 });
 
-btnSettingsToggle.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isShown = settingsPopover.style.display === 'block';
-    settingsPopover.style.display = isShown ? 'none' : 'block';
-    btnSettingsToggle.classList.toggle('active', !isShown);
-    hideSessionPopover();
-    if (!isShown) {
-        toolsListEl.querySelectorAll('.ct-item-wrap').forEach(w => collapseToolPanel(w));
-    }
-});
-document.getElementById('settings-popover-close').addEventListener('click', (e) => {
-    e.stopPropagation();
-    settingsPopover.style.display = 'none';
-    btnSettingsToggle.classList.remove('active');
-});
-
-document.addEventListener('mousedown', (e) => {
-    const path = e.composedPath();
-    if (e.target === settingsPopover) _spPressOrigin = 'backdrop';
-    else if (path.includes(settingsPopover) || _isInsideToolModelPicker(path)) _spPressOrigin = 'panel';
-    else _spPressOrigin = 'other';
-}, true);
-
-settingsPopover.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (e.target === settingsPopover && _spPressOrigin !== 'panel') {
-        settingsPopover.style.display = 'none';
-        btnSettingsToggle.classList.remove('active');
-    }
-    _spPressOrigin = null;
-});
-
-document.addEventListener('click', (e) => {
-    const path = e.composedPath();
-    const inside = path.includes(settingsPopover) || _isInsideToolModelPicker(path);
-    if (!inside && _spPressOrigin !== 'panel' && e.target !== btnSettingsToggle && !btnSettingsToggle.contains(e.target)) {
-        settingsPopover.style.display = 'none';
-        btnSettingsToggle.classList.remove('active');
-    }
-    _spPressOrigin = null;
-});
+if (btnSettingsToggle) {
+    btnSettingsToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideSessionPopover();
+        openSettingsModal('security');
+    });
+}
 
 if (btnSidebarToggleMobile) {
     btnSidebarToggleMobile.addEventListener('click', (e) => {
@@ -799,9 +766,9 @@ document.addEventListener('keydown', (e) => {
             closeToolModelPicker();
             return;
         }
-        if (settingsPopover.style.display === 'block') {
-            settingsPopover.style.display = 'none';
-            btnSettingsToggle.classList.remove('active');
+        const settingsOverlay = document.getElementById('settings-modal-overlay');
+        if (settingsOverlay && settingsOverlay.style.display === 'flex') {
+            closeSettingsModal();
             return;
         }
         if (contextMenu.style.display === 'block') {
@@ -1001,19 +968,14 @@ input.addEventListener('keydown', async (e) => {
     }
 });
 
-document.getElementById('btn-about-toggle').addEventListener('click', () => {
-    document.getElementById('about-modal-overlay').style.display = 'flex';
-    settingsPopover.style.display = 'none';
-    btnSettingsToggle.classList.remove('active');
-});
-document.getElementById('about-modal-close').addEventListener('click', () => {
-    document.getElementById('about-modal-overlay').style.display = 'none';
-});
-document.getElementById('about-modal-overlay').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
-        e.currentTarget.style.display = 'none';
-    }
-});
+const btnAboutToggle = document.getElementById('btn-about-toggle');
+if (btnAboutToggle) {
+    btnAboutToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideSessionPopover();
+        openSettingsModal('about');
+    });
+}
 
 newToolBrowseSearch.addEventListener('input', () => renderGithubToolsList());
 newToolBrowseRefresh.addEventListener('click', () => loadGithubToolsList(true));
