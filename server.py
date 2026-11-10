@@ -291,7 +291,8 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
                 return JSONResponse({"error": "Forbidden or invalid path"}, status_code=403)
 
             async def event_generator():
-                yield ": connected\n\n"
+                # Configure automatic browser reconnection interval (3 seconds)
+                yield "retry: 3000\n: connected\n\n"
 
                 try:
                     import watchfiles
@@ -299,11 +300,17 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
                 except ImportError:
                     has_watchfiles = False
 
+                last_ping = time.time()
+
                 if has_watchfiles:
                     try:
                         async for changes in watchfiles.awatch(target_dir, stop_event=None, debounce=150, step=50, rust_timeout=100):
                             if await request.is_disconnected():
                                 break
+                            now = time.time()
+                            if now - last_ping >= 25.0:
+                                last_ping = now
+                                yield ": ping\n\n"
                             valid = []
                             for c_type, c_path in changes:
                                 rel = os.path.relpath(c_path, target_dir).replace("\\", "/")
@@ -344,6 +351,10 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
                             await asyncio.sleep(2.0)
                             if await request.is_disconnected():
                                 break
+                            now = time.time()
+                            if now - last_ping >= 25.0:
+                                last_ping = now
+                                yield ": ping\n\n"
                             curr_sig = await run_in_threadpool(_get_signature)
                             if curr_sig != last_sig:
                                 last_sig = curr_sig
