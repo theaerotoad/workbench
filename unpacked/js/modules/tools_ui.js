@@ -388,9 +388,7 @@ window.newToolShowError = newToolShowError;
 function newToolUpdateCreateLabel() {
     // Create is for the Blank pane; Browse installs per row and imports use the Install button.
     const createBtn = document.getElementById('newtool-create');
-    const createMcpBtn = document.getElementById('newtool-create-mcp');
     if (createBtn) createBtn.style.display = newToolActivePane === 'blank' ? '' : 'none';
-    if (createMcpBtn) createMcpBtn.style.display = newToolActivePane === 'mcp' ? '' : 'none';
     const installBtn = document.getElementById('newtool-install');
     if (installBtn) installBtn.style.display = newToolDroppedSource ? '' : 'none';
 }
@@ -564,6 +562,13 @@ window.saveToolSettingsState = saveToolSettingsState;
 
 // --- setNewToolPane.js ---
 function setNewToolPane(pane) {
+    if (pane === 'mcp') {
+        closeNewToolModal();
+        if (typeof openSettingsModal === 'function') {
+            openSettingsModal('mcp');
+        }
+        return;
+    }
     newToolActivePane = pane;
     newToolSourceTabs.forEach(tab => tab.classList.toggle('active', tab.dataset.pane === pane));
     newToolPanes.forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
@@ -847,51 +852,61 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const connectBtn = document.getElementById('newtool-mcp-connect');
-    const urlInput = document.getElementById('newtool-mcp-url');
-    const statusEl = document.getElementById('newtool-mcp-status');
-    const toolsContainer = document.getElementById('newtool-mcp-tools-container');
-    const toolsList = document.getElementById('newtool-mcp-tools-list');
-    const createBtn = document.getElementById('newtool-create-mcp');
-    const bundleNameInput = document.getElementById('newtool-mcp-bundle-name');
+    const connectBtn = document.getElementById('mcp-server-connect') || document.getElementById('newtool-mcp-connect');
+    const urlInput = document.getElementById('mcp-server-url') || document.getElementById('newtool-mcp-url');
+    const statusEl = document.getElementById('mcp-server-status') || document.getElementById('newtool-mcp-status');
+    const toolsContainer = document.getElementById('mcp-tools-container') || document.getElementById('newtool-mcp-tools-container');
+    const toolsList = document.getElementById('mcp-tools-list') || document.getElementById('newtool-mcp-tools-list');
+    const createBtn = document.getElementById('mcp-create-bundle') || document.getElementById('newtool-create-mcp');
+    const bundleNameInput = document.getElementById('mcp-bundle-name') || document.getElementById('newtool-mcp-bundle-name');
 
     if (connectBtn) {
         connectBtn.addEventListener('click', () => {
-            const url = urlInput.value.trim();
+            const url = (urlInput ? urlInput.value.trim() : '');
             if (!url) {
-                statusEl.textContent = 'Please enter a URL.';
-                statusEl.style.color = 'var(--red)';
+                if (statusEl) {
+                    statusEl.textContent = 'Please enter a URL.';
+                    statusEl.style.color = 'var(--red)';
+                }
                 return;
             }
 
-            statusEl.textContent = 'Connecting to MCP SSE endpoint...';
-            statusEl.style.color = 'var(--dim)';
-            toolsContainer.style.display = 'none';
+            if (statusEl) {
+                statusEl.textContent = 'Connecting to MCP SSE endpoint...';
+                statusEl.style.color = 'var(--dim)';
+            }
+            if (toolsContainer) toolsContainer.style.display = 'none';
             mcpFetchedTools = [];
 
             let es;
             try {
                 es = new EventSource(url);
             } catch (err) {
-                statusEl.textContent = 'Failed to connect: ' + err.message;
-                statusEl.style.color = 'var(--red)';
+                if (statusEl) {
+                    statusEl.textContent = 'Failed to connect: ' + err.message;
+                    statusEl.style.color = 'var(--red)';
+                }
                 return;
             }
 
             let timeout = setTimeout(() => {
                 es.close();
-                statusEl.textContent = 'Timeout waiting for endpoint event. Is the server running?';
-                statusEl.style.color = 'var(--red)';
+                if (statusEl) {
+                    statusEl.textContent = 'Timeout waiting for endpoint event. Is the server running?';
+                    statusEl.style.color = 'var(--red)';
+                }
             }, 10000);
 
             let messageId = 1;
             let targetUrl = "";
 
-            es.onerror = (e) => {
+            es.onerror = () => {
                 clearTimeout(timeout);
                 es.close();
-                statusEl.textContent = 'EventSource error. Could not connect (check CORS or server status).';
-                statusEl.style.color = 'var(--red)';
+                if (statusEl) {
+                    statusEl.textContent = 'EventSource error. Could not connect (check CORS or server status).';
+                    statusEl.style.color = 'var(--red)';
+                }
             };
 
             es.addEventListener("endpoint", async (event) => {
@@ -903,7 +918,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     targetUrl = new URL(url).origin + '/' + targetUrl;
                 }
                 
-                statusEl.textContent = 'Discovered POST endpoint. Initializing...';
+                if (statusEl) statusEl.textContent = 'Discovered POST endpoint. Initializing...';
 
                 try {
                     const initPayload = {
@@ -924,8 +939,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!res.ok) throw new Error('Init HTTP POST failed: ' + res.status);
                 } catch (e) {
                     es.close();
-                    statusEl.textContent = 'Init POST exception: ' + e.message;
-                    statusEl.style.color = 'var(--red)';
+                    if (statusEl) {
+                        statusEl.textContent = 'Init POST exception: ' + e.message;
+                        statusEl.style.color = 'var(--red)';
+                    }
                 }
             });
 
@@ -936,12 +953,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (data.id === messageId) {
                         if (data.error) {
                             es.close();
-                            statusEl.textContent = "MCP Init Error: " + (data.error.message || "Unknown error");
-                            statusEl.style.color = 'var(--red)';
+                            if (statusEl) {
+                                statusEl.textContent = "MCP Init Error: " + (data.error.message || "Unknown error");
+                                statusEl.style.color = 'var(--red)';
+                            }
                             return;
                         }
                         
-                        statusEl.textContent = 'Initialized. Fetching tools list...';
+                        if (statusEl) statusEl.textContent = 'Initialized. Fetching tools list...';
                         
                         await fetch(targetUrl, {
                             method: 'POST',
@@ -965,61 +984,70 @@ document.addEventListener('DOMContentLoaded', () => {
                     else if (data.id === messageId + 1) {
                         es.close();
                         if (data.error) {
-                            statusEl.textContent = "MCP Server Error: " + (data.error.message || "Unknown error");
-                            statusEl.style.color = 'var(--red)';
+                            if (statusEl) {
+                                statusEl.textContent = "MCP Server Error: " + (data.error.message || "Unknown error");
+                                statusEl.style.color = 'var(--red)';
+                            }
                             return;
                         }
                         
                         mcpFetchedTools = data.result?.tools || [];
                         if (mcpFetchedTools.length === 0) {
-                            statusEl.textContent = "Connected, but no tools found on this server.";
-                            statusEl.style.color = 'var(--yellow)';
+                            if (statusEl) {
+                                statusEl.textContent = "Connected, but no tools found on this server.";
+                                statusEl.style.color = 'var(--yellow)';
+                            }
                             return;
                         }
                         
-                        statusEl.textContent = `Found ${mcpFetchedTools.length} tools.`;
-                        statusEl.style.color = 'var(--green)';
+                        if (statusEl) {
+                            statusEl.textContent = `Found ${mcpFetchedTools.length} tools.`;
+                            statusEl.style.color = 'var(--green)';
+                        }
                         
-                        toolsList.innerHTML = '';
-                        mcpFetchedTools.forEach((t, i) => {
-                            const row = document.createElement('label');
-                            row.style.display = 'flex';
-                            row.style.alignItems = 'flex-start';
-                            row.style.gap = '8px';
-                            row.style.padding = '6px';
-                            row.style.borderBottom = '1px solid var(--border)';
-                            row.style.cursor = 'pointer';
-                            
-                            const cb = document.createElement('input');
-                            cb.type = 'checkbox';
-                            cb.value = i;
-                            cb.checked = true;
-                            cb.style.marginTop = '3px';
-                            
-                            const desc = document.createElement('div');
-                            desc.style.display = 'flex';
-                            desc.style.flexDirection = 'column';
-                            
-                            const name = document.createElement('div');
-                            name.textContent = t.name;
-                            name.style.fontWeight = '600';
-                            name.style.fontSize = '12px';
-                            name.style.color = 'var(--fg)';
-                            
-                            const text = document.createElement('div');
-                            text.textContent = t.description || 'No description';
-                            text.style.fontSize = '11px';
-                            text.style.color = 'var(--dim)';
-                            
-                            desc.appendChild(name);
-                            desc.appendChild(text);
-                            row.appendChild(cb);
-                            row.appendChild(desc);
-                            
-                            toolsList.appendChild(row);
-                        });
+                        if (toolsList) {
+                            toolsList.innerHTML = '';
+                            mcpFetchedTools.forEach((t, i) => {
+                                const row = document.createElement('label');
+                                row.className = 'mcp-tool-item';
+                                row.style.display = 'flex';
+                                row.style.alignItems = 'flex-start';
+                                row.style.gap = '8px';
+                                row.style.padding = '6px';
+                                row.style.borderBottom = '1px solid var(--border)';
+                                row.style.cursor = 'pointer';
+                                
+                                const cb = document.createElement('input');
+                                cb.type = 'checkbox';
+                                cb.value = i;
+                                cb.checked = true;
+                                cb.style.marginTop = '3px';
+                                
+                                const desc = document.createElement('div');
+                                desc.style.display = 'flex';
+                                desc.style.flexDirection = 'column';
+                                
+                                const name = document.createElement('div');
+                                name.textContent = t.name;
+                                name.style.fontWeight = '600';
+                                name.style.fontSize = '12px';
+                                name.style.color = 'var(--fg)';
+                                
+                                const text = document.createElement('div');
+                                text.textContent = t.description || 'No description';
+                                text.style.fontSize = '11px';
+                                text.style.color = 'var(--dim)';
+                                
+                                desc.appendChild(name);
+                                desc.appendChild(text);
+                                row.appendChild(cb);
+                                row.appendChild(desc);
+                                
+                                toolsList.appendChild(row);
+                            });
+                        }
                         
-                        toolsContainer.style.display = 'flex';
+                        if (toolsContainer) toolsContainer.style.display = 'block';
                     }
                 } catch(e) {}
             };
@@ -1028,24 +1056,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (createBtn) {
         createBtn.addEventListener('click', async () => {
+            if (!toolsList) return;
             const checkboxes = Array.from(toolsList.querySelectorAll('input[type="checkbox"]:checked'));
             if (checkboxes.length === 0) {
-                newToolShowError("Please select at least one tool to bundle.");
+                if (statusEl) {
+                    statusEl.textContent = "Please select at least one tool to bundle.";
+                    statusEl.style.color = 'var(--red)';
+                } else if (typeof newToolShowError === 'function') {
+                    newToolShowError("Please select at least one tool to bundle.");
+                }
                 return;
             }
             
             const selectedTools = checkboxes.map(cb => mcpFetchedTools[parseInt(cb.value)]);
-            const bundleName = bundleNameInput.value.trim() || 'mcp_tools';
-            const url = urlInput.value.trim();
+            const bundleName = (bundleNameInput ? bundleNameInput.value.trim() : '') || 'mcp_tools';
+            const url = (urlInput ? urlInput.value.trim() : '');
             
             const jsSource = generateMcpBundleJs(selectedTools, url, bundleName);
             
             const res = createToolFile(bundleName, jsSource);
             if (!res.ok) {
-                newToolShowError(res.error);
+                if (statusEl) {
+                    statusEl.textContent = res.error;
+                    statusEl.style.color = 'var(--red)';
+                } else if (typeof newToolShowError === 'function') {
+                    newToolShowError(res.error);
+                }
             } else {
-                newToolShowError('');
-                closeNewToolModal();
+                if (statusEl) {
+                    statusEl.textContent = `Created tool bundle "${bundleName}" successfully.`;
+                    statusEl.style.color = 'var(--green)';
+                }
+                if (typeof showToast === 'function') {
+                    showToast(`Created tool bundle "${bundleName}"`, 'success');
+                }
                 if (typeof renderToolsList === 'function') renderToolsList();
                 if (typeof renderExplorerTree === 'function') renderExplorerTree();
             }

@@ -240,37 +240,88 @@
     margin-bottom: 10px;
 }
 
-/* Placeholder for unmigrated tabs */
-.settings-pane-placeholder {
+/* MCP Servers Pane */
+#settings-pane-mcp .settings-panel-group {
+    background: rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--border, #2e2e32);
+    border-radius: 6px;
+}
+
+#mcp-tools-list .mcp-tool-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border, #2e2e32);
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+#mcp-tools-list .mcp-tool-item:last-child {
+    border-bottom: none;
+}
+
+#mcp-tools-list .mcp-tool-item:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* About Pane */
+.settings-about-card {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    padding: 36px 20px;
     text-align: center;
-    color: var(--dim, #a1a1aa);
-    padding: 40px;
 }
 
-.settings-pane-placeholder .icon {
-    font-size: 48px;
+.settings-about-card .about-logo {
+    width: 64px;
+    height: 64px;
     margin-bottom: 12px;
-    color: var(--dim, #71717a);
-    opacity: 0.7;
 }
 
-.settings-pane-placeholder h3 {
-    margin: 0 0 6px 0;
-    font-size: 16px;
-    font-weight: 600;
+.settings-about-card .about-name {
+    font-size: 20px;
+    font-weight: 700;
     color: var(--fg, #e4e4e7);
+    letter-spacing: 0.5px;
 }
 
-.settings-pane-placeholder p {
-    margin: 0;
+.settings-about-card .about-version {
+    font-size: 12px;
+    color: var(--dim, #a1a1aa);
+    margin-top: 4px;
+    font-family: var(--font-mono, monospace);
+}
+
+.settings-about-card .about-divider {
+    width: 160px;
+    border: none;
+    border-top: 1px solid var(--border, #2e2e32);
+    margin: 18px 0;
+}
+
+.settings-about-card .about-links {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+
+.settings-about-card .about-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--primary, #38bdf8);
     font-size: 13px;
-    max-width: 320px;
-    line-height: 1.5;
+    text-decoration: none;
+    transition: opacity 0.15s ease;
+}
+
+.settings-about-card .about-link:hover {
+    opacity: 0.8;
+    text-decoration: underline;
 }
 
 /* Light Theme Support */
@@ -315,6 +366,23 @@ html.theme-light .settings-nav-tab.active {
 html.theme-light #settings-pane-security .tool-section-panel {
     background: #f8fafc;
     border-color: #e4e4e7;
+}
+
+html.theme-light #settings-pane-mcp .settings-panel-group {
+    background: #f8fafc;
+    border-color: #e4e4e7;
+}
+
+html.theme-light #mcp-tools-list .mcp-tool-item {
+    border-bottom-color: #e4e4e7;
+}
+
+html.theme-light .settings-about-card .about-name {
+    color: #0f172a;
+}
+
+html.theme-light .settings-about-card .about-divider {
+    border-top-color: #e4e4e7;
 }
 
 /* Mobile & Narrow Screen Overrides */

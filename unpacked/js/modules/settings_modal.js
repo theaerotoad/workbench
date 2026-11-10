@@ -159,6 +159,16 @@ export function initSettingsModal() {
         });
     }
 
+    // Sidebar about button opens the unified Settings modal on about tab
+    const btnAboutToggle = document.getElementById('btn-about-toggle');
+    if (btnAboutToggle) {
+        btnAboutToggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSettingsModal('about');
+        });
+    }
+
     // Shield agent switch inside Security tab
     const agentSwitch = document.getElementById('shield-agent-switch');
     if (agentSwitch) {
@@ -254,5 +264,6 @@ if (document.readyState === 'loading') {
 // Expose on window for global routing and backward compatibility
 window.openSettingsModal = openSettingsModal;
 window.closeSettingsModal = closeSettingsModal;
+window.openAboutModal = () => openSettingsModal('about');
 window.switchSettingsTab = switchSettingsTab;
 window.getActiveSettingsTab = getActiveSettingsTab;
