@@ -3,3 +3,4 @@ uvicorn
 wsgidav
 aiofiles
 PyYAML
+watchfiles
