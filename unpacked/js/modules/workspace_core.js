@@ -1230,6 +1230,17 @@ function setupWebDAVEvents(handle) {
         const es = new EventSource(sseUrl.href);
         _webdavEventSource = es;
         window._webdavEventSource = es;
+        let hadDisconnect = false;
+
+        es.onopen = () => {
+            // If reconnecting after a drop or server restart, catch up on changes immediately
+            if (hadDisconnect) {
+                hadDisconnect = false;
+                if (rootHandle === handle && !state.isSaving) {
+                    syncWorkspace(true);
+                }
+            }
+        };
 
         es.addEventListener('change', () => {
             clearTimeout(_webdavSseDebounce);
@@ -1241,7 +1252,9 @@ function setupWebDAVEvents(handle) {
         });
 
         es.onerror = () => {
-            closeWebDAVEvents();
+            // Do NOT call es.close() here: standard EventSource automatically reconnects.
+            // Mark disconnected so onopen triggers a catch-up sync once reconnected.
+            hadDisconnect = true;
         };
     } catch(e) {}
 }

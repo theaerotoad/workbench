@@ -118,7 +118,31 @@ async function reconcileWorkspaceTools(diskToolsDirHandle = null) {
         };
 
         const knownFiles = new Set(manifest.customTools.map(t => t.file || toolFilePath(t.name)));
-        if (diskToolsDirHandle && typeof diskToolsDirHandle.entries === 'function') {
+
+        // Fast path: check in-memory registry.meta first (avoids WebDAV PROPFIND Depth: 1 on .agent/tools/)
+        const memoryToolFiles = [];
+        if (window.registry && window.registry.meta) {
+            const prefix = `${TOOLS_DIR}/`;
+            for (const p of Object.keys(window.registry.meta)) {
+                if (p.startsWith(prefix) && p.endsWith('.js') && window.registry.meta[p].kind === 'file') {
+                    memoryToolFiles.push(p.slice(prefix.length));
+                }
+            }
+        }
+
+        if (memoryToolFiles.length > 0) {
+            for (const name of memoryToolFiles) {
+                const toolName = name.slice(0, -3);
+                if (BUILTIN_TOOL_NAMES.includes(toolName)) continue;
+                const fp = `${TOOLS_DIR}/${name}`;
+                if (!knownFiles.has(fp)) {
+                    manifest.customTools.push({ name: toolName, file: fp, enabled: true });
+                    if (!manifest.permissions[toolName]) manifest.permissions[toolName] = 'ask';
+                    if (manifest.locks[toolName] === undefined) manifest.locks[toolName] = false;
+                    knownFiles.add(fp);
+                }
+            }
+        } else if (diskToolsDirHandle && typeof diskToolsDirHandle.entries === 'function') {
             try {
                 for await (const [name, handle] of diskToolsDirHandle.entries()) {
                     if (handle.kind === 'file' && name.endsWith('.js')) {
@@ -142,7 +166,22 @@ async function reconcileWorkspaceTools(diskToolsDirHandle = null) {
     }
 
     const foundCustom = [];
-    if (diskToolsDirHandle && typeof diskToolsDirHandle.entries === 'function') {
+    const memoryToolFiles = [];
+    if (window.registry && window.registry.meta) {
+        const prefix = `${TOOLS_DIR}/`;
+        for (const p of Object.keys(window.registry.meta)) {
+            if (p.startsWith(prefix) && p.endsWith('.js') && window.registry.meta[p].kind === 'file') {
+                memoryToolFiles.push(p.slice(prefix.length));
+            }
+        }
+    }
+    if (memoryToolFiles.length > 0) {
+        for (const name of memoryToolFiles) {
+            const toolName = name.slice(0, -3);
+            if (BUILTIN_TOOL_NAMES.includes(toolName)) continue;
+            foundCustom.push({ name: toolName, file: `${TOOLS_DIR}/${name}`, enabled: true });
+        }
+    } else if (diskToolsDirHandle && typeof diskToolsDirHandle.entries === 'function') {
         try {
             for await (const [name, handle] of diskToolsDirHandle.entries()) {
                 if (handle.kind === 'file' && name.endsWith('.js')) {
