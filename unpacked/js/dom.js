@@ -1,5 +1,6 @@
 export const acPopup = document.getElementById('autocomplete-popup');
 export const attachmentTextPreview = document.getElementById('attachment-text-preview');
+export const btnAboutToggle = document.getElementById('btn-about-toggle');
 export const btnClearAllSessions = document.getElementById('btn-clear-all-sessions');
 export const btnCollapseAll = document.getElementById('btn-collapse-all');
 export const btnCreateSession = document.getElementById('btn-create-session');
@@ -115,6 +116,9 @@ export const searchResultsEl = document.getElementById('search-results');
 export const sessionsList = document.getElementById('sessions-list');
 export const sessionsPopover = document.getElementById('sessions-popover');
 export const sessionsPopoverOverlay = document.getElementById('sessions-popover-overlay');
+export const settingsModal = document.getElementById('settings-modal');
+export const settingsModalClose = document.getElementById('settings-modal-close');
+export const settingsModalOverlay = document.getElementById('settings-modal-overlay');
 export const settingsPopover = document.getElementById('settings-popover');
 export const sidebarEl = document.getElementById('sidebar');
 export const sidebarOverlay = document.getElementById('sidebar-overlay');
@@ -134,7 +138,7 @@ export const viewSettings = document.getElementById('sidebar-view-settings');
 
 // We will globally attach DOM for now to avoid breaking references in the remaining micro-functions
 Object.entries({
-    acPopup, attachmentTextPreview, btnClearAllSessions, btnCollapseAll, btnCreateSession,
+    acPopup, attachmentTextPreview, btnAboutToggle, btnClearAllSessions, btnCollapseAll, btnCreateSession,
     btnDiffDiscard, btnDiffNextHunk, btnDiffPrevHunk, btnDiffSave, btnDiffToggleInline,
     btnExitWorkspace, btnNewFile, btnNewFolder, btnReloadTree, btnSessionToggle,
     btnSettingsToggle, btnSidebarCloseMobile, btnSidebarCloseMobile2, btnSidebarCollapse,
@@ -160,7 +164,8 @@ Object.entries({
     permRejectReason, promptAttachments, promptRail, promptSymbol, queuedPromptBanner,
     recentFoldersList, recentFoldersSection, resizerEl, searchClearBtn, searchCountEl,
     searchInput, searchResultsEl, sessionsList, sessionsPopover, sessionsPopoverOverlay,
-    settingsPopover, sidebarEl, sidebarOverlay, statusModeBadge, tabNavChanges,
-    tabNavExplorer, tabNavSearch, tabNavSettings, tabsListContainer, term,
-    toastContainer, toolsListEl, viewChanges, viewExplorer, viewSearch, viewSettings
+    settingsModal, settingsModalClose, settingsModalOverlay, settingsPopover, sidebarEl,
+    sidebarOverlay, statusModeBadge, tabNavChanges, tabNavExplorer, tabNavSearch,
+    tabNavSettings, tabsListContainer, term, toastContainer, toolsListEl, viewChanges,
+    viewExplorer, viewSearch, viewSettings
 }).forEach(([k, v]) => window[k] = v);
