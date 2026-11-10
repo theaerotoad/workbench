@@ -1,30 +1,5 @@
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 
-/* Settings Popover & Panels */
-#settings-popover {
-    display: none; position: absolute; top: 0; left: 0;
-    right: 0; bottom: 0; background: rgba(0, 0, 0, 0.55); z-index: 100;
-}
-#settings-popover .settings-panel-head { gap: 8px; }
-#settings-popover-close { display: none; }
-#settings-popover .settings-panel {
-    position: absolute; bottom: 12px; left: 68px;
-    background: var(--bg-panel); border: 1px solid var(--border-highlight);
-    border-radius: 8px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8);
-    padding: 14px 16px; width: 475px; max-height: calc(100% - 24px);
-    overflow-y: auto; animation: fadeIn 0.12s ease-out;
-}
-.settings-panel-head {
-    display: flex; align-items: center; gap: 8px;
-    padding-bottom: 10px; margin-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-}
-.settings-panel-head .icon { color: var(--magenta); font-size: 14px; }
-.settings-panel-head .head-label {
-    color: #fff; font-size: 12px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.4px;
-}
-#settings-content { padding: 10px !important; }
 #danger-zone-footer { padding: 0 10px 10px; flex-shrink: 0; }
 
 .settings-panel-group {

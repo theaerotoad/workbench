@@ -225,6 +225,21 @@
     overflow: hidden;
 }
 
+/* Security & Tools Pane */
+#settings-pane-security .settings-field-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#settings-pane-security .tool-section-panel {
+    background: rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--border, #2e2e32);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
 /* Placeholder for unmigrated tabs */
 .settings-pane-placeholder {
     display: flex;
@@ -295,6 +310,11 @@ html.theme-light .settings-nav-tab:hover {
 html.theme-light .settings-nav-tab.active {
     background: rgba(2, 132, 199, 0.1);
     color: #0284c7;
+}
+
+html.theme-light #settings-pane-security .tool-section-panel {
+    background: #f8fafc;
+    border-color: #e4e4e7;
 }
 
 /* Mobile & Narrow Screen Overrides */
