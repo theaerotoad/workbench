@@ -341,6 +341,9 @@ async function restoreActiveSessionContent() {
         stripTransientLiveUI(term);
         removeAllSkipThinkingButtons();
         rehydrateToolErrorTooltips();
+        if (typeof rehydrateMarkdownImages === 'function') {
+            rehydrateMarkdownImages(term);
+        }
     } else {
         term.innerHTML = '';
     }
@@ -350,6 +353,14 @@ async function restoreActiveSessionContent() {
     renderExplorerTree();
     updateStatusInfo();
     updateWelcomeVisibility();
+    if (typeof scheduleChatImageResolution === 'function') {
+        scheduleChatImageResolution();
+        setTimeout(() => {
+            if (typeof rehydrateMarkdownImages === 'function') {
+                rehydrateMarkdownImages(term);
+            }
+        }, 350);
+    }
 
     // New session = new op log, so any file drilled into in the Graph belongs
     // to the previous session. Reset to the repo-wide view and refresh it,
