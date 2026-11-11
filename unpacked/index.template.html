@@ -572,6 +572,7 @@
     <!-- Compatibility anchors for legacy listeners (display: none) -->
     <div id="newtool-modal-overlay" style="display:none !important;" aria-hidden="true"><button id="newtool-modal-close" style="display:none;"></button><button id="newtool-cancel" style="display:none;"></button></div>
     <div id="models-modal-overlay" style="display:none !important;" aria-hidden="true"></div>
+    <div id="tab-nav-settings" style="display:none !important;" aria-hidden="true"></div>
 
     <div id="msg-delete-modal-overlay">
         <div id="msg-delete-modal">
@@ -693,19 +694,24 @@
                     <span class="tab-label">Changes</span>
                     <span class="sidebar-badge" id="changes-count">0</span>
                 </div>
-                <div class="sidebar-nav-tab" id="tab-nav-settings" title="Settings">
-                    <span class="icon" style="font-size: 18px;">settings</span>
-                    <span class="tab-label">Settings</span>
+
+                <div class="sidebar-nav-tab" id="btn-theme-toggle" style="margin-top: auto;" title="Toggle Light/Dark Theme">
+                    <span class="icon" id="theme-toggle-icon" style="font-size: 18px;">light_mode</span>
                 </div>
 
-                <div class="sidebar-nav-tab" id="btn-about-toggle" style="margin-top: auto;" title="About workbench">
+                <div class="sidebar-nav-tab" id="btn-about-toggle" title="About workbench">
                     <span class="icon" style="font-size: 18px;">info</span>
                     <span class="tab-label">About</span>
                 </div>
 
-                <div class="sidebar-nav-tab" id="btn-settings-toggle" title="Security & Permissions">
+                <div class="sidebar-nav-tab" id="btn-settings-toggle" title="Security & Tools">
                     <span class="icon" style="font-size: 18px;">shield</span>
                     <span class="tab-label">Security</span>
+                </div>
+
+                <div class="sidebar-nav-tab" id="btn-sidebar-settings" title="Settings">
+                    <span class="icon" style="font-size: 18px;">settings</span>
+                    <span class="tab-label">Settings</span>
                 </div>
             </div>
 

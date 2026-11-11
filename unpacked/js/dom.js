@@ -125,7 +125,9 @@ export const statusModeBadge = document.getElementById('status-mode');
 export const tabNavChanges = document.getElementById('tab-nav-changes');
 export const tabNavExplorer = document.getElementById('tab-nav-explorer');
 export const tabNavSearch = document.getElementById('tab-nav-search');
-export const tabNavSettings = document.getElementById('tab-nav-settings');
+export const tabNavSettings = document.getElementById('tab-nav-settings') || document.getElementById('btn-sidebar-settings');
+export const btnSidebarSettings = document.getElementById('btn-sidebar-settings');
+export const btnThemeToggle = document.getElementById('btn-theme-toggle');
 export const tabsListContainer = document.getElementById('tabs-list-container');
 export const term = document.getElementById('chat');
 export const toastContainer = document.getElementById('toast-container');
@@ -165,6 +167,6 @@ Object.entries({
     searchInput, searchResultsEl, sessionsList, sessionsPopover, sessionsPopoverOverlay,
     settingsModal, settingsModalClose, settingsModalOverlay, settingsPopover, sidebarEl,
     sidebarOverlay, statusModeBadge, tabNavChanges, tabNavExplorer, tabNavSearch,
-    tabNavSettings, tabsListContainer, term, toastContainer, toolsListEl, viewChanges,
+    tabNavSettings, btnSidebarSettings, btnThemeToggle, tabsListContainer, term, toastContainer, toolsListEl, viewChanges,
     viewExplorer, viewSearch, viewSettings
 }).forEach(([k, v]) => window[k] = v);

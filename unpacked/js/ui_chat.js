@@ -973,6 +973,28 @@ if (btnAboutToggle) {
     });
 }
 
+const btnThemeToggle = document.getElementById('btn-theme-toggle');
+if (btnThemeToggle) {
+    btnThemeToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const curTheme = AppConfig.get('ui-theme', 'dark');
+        const nextTheme = curTheme === 'light' ? 'dark' : 'light';
+        AppConfig.set('ui-theme', nextTheme);
+        applyTheme();
+        const themeSelect = document.getElementById('settings-ui-theme');
+        if (themeSelect) themeSelect.value = nextTheme;
+    });
+}
+
+const btnSidebarSettings = document.getElementById('btn-sidebar-settings');
+if (btnSidebarSettings) {
+    btnSidebarSettings.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideSessionPopover();
+        openSettingsModal('workspace');
+    });
+}
+
 newToolBrowseSearch.addEventListener('input', () => renderGithubToolsList());
 newToolBrowseRefresh.addEventListener('click', () => loadGithubToolsList(true));
 newToolUpdateAllBtn.addEventListener('click', updateAllGithubTools);

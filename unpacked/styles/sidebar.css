@@ -46,13 +46,11 @@ body.no-workspace #btn-sidebar-collapse,
 body.no-workspace #tab-nav-explorer,
 body.no-workspace #tab-nav-search,
 body.no-workspace #tab-nav-changes,
-body.no-workspace #tab-nav-settings,
 body.no-workspace #btn-settings-toggle,
 body:has(#no-folder-overlay:not(.hidden)) #btn-sidebar-collapse,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-explorer,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-search,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-changes,
-body:has(#no-folder-overlay:not(.hidden)) #tab-nav-settings,
 body:has(#no-folder-overlay:not(.hidden)) #btn-settings-toggle {
     display: none !important;
 }
@@ -81,6 +79,14 @@ body:has(#no-folder-overlay:not(.hidden)) #btn-settings-toggle {
 .sidebar-nav-tab .sidebar-badge.has-changes { background: rgba(209, 154, 102, 0.35); color: var(--orange); }
 .sidebar-nav-tab.active .sidebar-badge.has-changes { background: rgba(209, 154, 102, 0.35); color: var(--orange); }
 .sidebar-nav-tab .sidebar-badge:empty { display: none; }
+
+#btn-theme-toggle.active,
+#btn-about-toggle.active,
+#btn-settings-toggle.active,
+#btn-sidebar-settings.active {
+    border-left-color: transparent !important;
+    background: transparent !important;
+}
 
 /* Sidebar Panel Headers */
 .sidebar-panel-header {

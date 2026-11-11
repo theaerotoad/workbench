@@ -47,6 +47,14 @@ function applyTheme() {
     root.style.setProperty('--primary-rgb', hexToRgbTriplet(hex));
     root.style.setProperty('--primary-2', shadeHex(hex, 0.82));
     defineMonacoThemes();
+    const themeIcon = document.getElementById('theme-toggle-icon');
+    if (themeIcon) {
+        themeIcon.textContent = theme === 'light' ? 'dark_mode' : 'light_mode';
+    }
+    const themeBtn = document.getElementById('btn-theme-toggle');
+    if (themeBtn) {
+        themeBtn.title = theme === 'light' ? 'Switch to Dark Theme' : 'Switch to Light Theme';
+    }
 }
 
 // --- AST_EXPORTS_START ---
