@@ -1,7 +1,8 @@
 // --- runTask.js ---
 async function runTask(task, msgId, imageUrls, sessionId) {
     const runSessionId = sessionId || state.activeSessionId;
-    let { url: apiUrl, model, key: apiKey, vision: runModelVision, useProxy } = getCurrentModelInfo();
+    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(runSessionId);
+    let { url: apiUrl, model, key: apiKey, vision: runModelVision, useProxy, providerName } = getCurrentModelInfo(runSessionId);
     const runCtx = sessionCtx(runSessionId);
     const runGen = getGenState(runSessionId);
     const isRunLive = () => runSessionId === state.activeSessionId;
@@ -109,6 +110,9 @@ async function runTask(task, msgId, imageUrls, sessionId) {
 
             let resp;
             try {
+                if (!apiUrl) {
+                    throw new Error(`No endpoint URL configured for model "${model || 'unknown'}" (${providerName || 'unknown provider'}). Check Settings -> Models.`);
+                }
                 const targetUrl = `${apiUrl}/chat/completions`;
                 const reqUrl = useProxy ? '/proxy' : targetUrl;
                 if (useProxy) headers["x-proxy-target"] = targetUrl;
@@ -774,7 +778,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                 // Reconnect with whatever model is selected now, in case the user
                 // switched models while we were waiting.
                 {
-                    const cur = getCurrentModelInfo();
+                    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(runSessionId);
+                    const cur = getCurrentModelInfo(runSessionId);
                     if (cur.url && cur.model) {
                         apiUrl = cur.url; model = cur.model; apiKey = cur.key; runModelVision = cur.vision; useProxy = !!cur.useProxy;
                         activeTools = getToolsForMode(runMode, !!runModelVision);

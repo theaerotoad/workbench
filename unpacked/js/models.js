@@ -121,8 +121,72 @@ function getAllModelEntries() {
     return out;
 }
 
+const _modelsEndpointCache = (typeof window._modelsEndpointCache !== 'undefined') ? window._modelsEndpointCache : (window._modelsEndpointCache = {});
+
 function findModelEntry(providerName, modelName) {
     return getAllModelEntries().find(e => e.providerName === providerName && e.name === modelName) || null;
+}
+
+// Flexible matcher that handles exact match, case-insensitivity, displayName, shortened model
+// filename, or partial provider name (e.g. host:port matching).
+function findModelEntryFlexible(providerName, modelName) {
+    if (!providerName && !modelName) return null;
+    const all = getAllModelEntries();
+    if (!all.length) return null;
+
+    const pNorm = (providerName || '').trim().toLowerCase();
+    const mNorm = (modelName || '').trim().toLowerCase();
+
+    // 1. Exact match
+    let match = all.find(e => e.providerName === providerName && e.name === modelName);
+    if (match) return match;
+
+    // 2. Case-insensitive match on both
+    if (pNorm && mNorm) {
+        match = all.find(e => e.providerName.toLowerCase() === pNorm && e.name.toLowerCase() === mNorm);
+        if (match) return match;
+    }
+
+    // 3. Match provider and displayName or shortened model name
+    if (pNorm && mNorm) {
+        match = all.find(e => {
+            const pMatch = e.providerName.toLowerCase() === pNorm;
+            const dNorm = (e.displayName || '').toLowerCase();
+            const sNorm = shortenModelName(e.name).toLowerCase();
+            return pMatch && (dNorm === mNorm || sNorm === mNorm);
+        });
+        if (match) return match;
+    }
+
+    // 4. Loose provider match (substring / URL) with model match
+    if (pNorm && mNorm) {
+        match = all.find(e => {
+            const pMatch = e.providerName.toLowerCase().includes(pNorm) || pNorm.includes(e.providerName.toLowerCase()) || (e.url && pNorm.includes(e.url.toLowerCase()));
+            const mMatch = e.name.toLowerCase() === mNorm || (e.displayName || '').toLowerCase() === mNorm || shortenModelName(e.name).toLowerCase() === mNorm;
+            return pMatch && mMatch;
+        });
+        if (match) return match;
+    }
+
+    // 5. UUID or id match
+    if (mNorm) {
+        match = findModelEntryById(modelName);
+        if (match) return match;
+    }
+
+    // 6. Model name match across any provider
+    if (mNorm) {
+        match = all.find(e => e.name.toLowerCase() === mNorm || (e.displayName || '').toLowerCase() === mNorm || shortenModelName(e.name).toLowerCase() === mNorm);
+        if (match) return match;
+    }
+
+    // 7. Provider match fallback (first model of matching provider)
+    if (pNorm) {
+        match = all.find(e => e.providerName.toLowerCase() === pNorm || e.providerName.toLowerCase().includes(pNorm) || pNorm.includes(e.providerName.toLowerCase()));
+        if (match) return match;
+    }
+
+    return null;
 }
 
 // Resolves a model UUID to its entry. Also accepts the legacy 'Provider::model' id or raw model name so tool settings
@@ -157,19 +221,24 @@ function getSelectedModelKey() {
         if (sepIdx !== -1) {
             const providerName = stored.slice(0, sepIdx);
             const modelName = stored.slice(sepIdx + 2);
-            if (findModelEntry(providerName, modelName)) return { providerName, modelName };
+            const found = findModelEntryFlexible(providerName, modelName);
+            if (found) return { providerName: found.providerName, modelName: found.name };
         }
     }
     return entries.length ? { providerName: entries[0].providerName, modelName: entries[0].name } : null;
 }
 
 function setSelectedModel(providerName, modelName) {
-    if (!findModelEntry(providerName, modelName)) return;
-    const val = `${providerName}::${modelName}`;
+    const entry = findModelEntryFlexible(providerName, modelName);
+    if (!entry) return;
+    const val = `${entry.providerName}::${entry.name}`;
     localStorage.setItem('selected_model', val);
     if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
         const wsKey = wsStorageName(rootHandle);
         if (wsKey) localStorage.setItem(`selected_model_${wsKey}`, val);
+    }
+    if (typeof state !== 'undefined' && state && state.activeSessionId && state.sessions && state.sessions[state.activeSessionId]) {
+        state.sessions[state.activeSessionId].selectedModel = { providerName: entry.providerName, modelName: entry.name };
     }
     renderModelDropdown();
 }
@@ -179,19 +248,157 @@ function renderModelDropdown() {
     const providerEl = document.getElementById('msb-provider');
     if (!nameEl || !providerEl) return;
     const sel = getSelectedModelKey();
-    const entry = sel && findModelEntry(sel.providerName, sel.modelName);
+    const entry = sel && findModelEntryFlexible(sel.providerName, sel.modelName);
     nameEl.textContent = entry ? (entry.displayName || shortenModelName(entry.name)) : 'No model';
     providerEl.textContent = entry ? entry.providerName : '';
-    if (_modelSelectState.visible) renderModelSelectList();
+
+    const btn = document.getElementById('model-select-btn');
+    if (btn && entry) {
+        btn.setAttribute('data-provider-name', entry.providerName);
+        btn.setAttribute('data-model-name', entry.name);
+        btn.title = `${entry.name} (${entry.providerName}) — ${entry.url || 'No URL'}`;
+    }
+
+    if (typeof _modelSelectState !== 'undefined' && _modelSelectState.visible) renderModelSelectList();
     applyVisionCapabilityToUI();
 }
 
-function getCurrentModelInfo() {
-    const sel = getSelectedModelKey();
-    const entry = sel && findModelEntry(sel.providerName, sel.modelName);
+function getCurrentModelInfo(sessionId) {
+    const sid = sessionId || (typeof state !== 'undefined' && state ? state.activeSessionId : null);
+    let sel = null;
+
+    // 1. If the target session has an explicitly saved selectedModel, check it
+    if (sid && typeof state !== 'undefined' && state.sessions && state.sessions[sid] && state.sessions[sid].selectedModel) {
+        const sm = state.sessions[sid].selectedModel;
+        sel = findModelEntryFlexible(sm.providerName, sm.modelName);
+    }
+
+    // 2. Cross-check against the active UI button labels to guarantee that prompt
+    // execution matches what the user sees highlighted in the prompt bar
+    if (!sel) {
+        const btn = document.getElementById('model-select-btn');
+        const nameEl = document.getElementById('msb-name');
+        const providerEl = document.getElementById('msb-provider');
+        const btnProv = btn ? btn.getAttribute('data-provider-name') : null;
+        const btnMod = btn ? btn.getAttribute('data-model-name') : null;
+
+        if (btnProv && btnMod) {
+            sel = findModelEntryFlexible(btnProv, btnMod);
+        }
+        if (!sel && nameEl && providerEl) {
+            const uiName = nameEl.textContent.trim();
+            const uiProv = providerEl.textContent.trim();
+            if (uiName && uiName !== 'No model') {
+                sel = findModelEntryFlexible(uiProv, uiName);
+            }
+        }
+    }
+
+    // 3. Fallback to persisted selected_model key
+    if (!sel) {
+        const storedKey = getSelectedModelKey();
+        sel = storedKey && findModelEntryFlexible(storedKey.providerName, storedKey.modelName);
+    }
+
+    const entry = sel || (getAllModelEntries().length ? getAllModelEntries()[0] : null);
     return entry
-        ? { url: entry.url, model: entry.name, key: entry.key, contextWindow: entry.contextWindow, vision: entry.vision, useProxy: !!entry.useProxy }
-        : { url: '', model: '', key: '', contextWindow: DEFAULT_CONTEXT_WINDOW, vision: false, useProxy: false };
+        ? {
+            url: entry.url,
+            model: entry.name,
+            key: entry.key,
+            contextWindow: entry.contextWindow,
+            vision: entry.vision,
+            useProxy: !!entry.useProxy,
+            providerName: entry.providerName,
+            displayName: entry.displayName || shortenModelName(entry.name)
+        }
+        : {
+            url: '',
+            model: '',
+            key: '',
+            contextWindow: DEFAULT_CONTEXT_WINDOW,
+            vision: false,
+            useProxy: false,
+            providerName: '',
+            displayName: 'No model'
+        };
+}
+
+// Bi-directional synchronizer that ensures session state, memory, localStorage, and
+// the main UI button/dropdown display strictly refer to the exact same LLM model and endpoint.
+function ensureModelAndUISynced(sessionId) {
+    const sid = sessionId || (typeof state !== 'undefined' && state ? state.activeSessionId : null);
+    const all = getAllModelEntries();
+    if (!all.length) return null;
+
+    let targetEntry = null;
+
+    // A. Inspect UI button content first to give precedence to what is visibly highlighted
+    const btn = document.getElementById('model-select-btn');
+    const nameEl = document.getElementById('msb-name');
+    const providerEl = document.getElementById('msb-provider');
+    const btnProv = btn ? btn.getAttribute('data-provider-name') : null;
+    const btnMod = btn ? btn.getAttribute('data-model-name') : null;
+
+    if (btnProv && btnMod) {
+        targetEntry = findModelEntryFlexible(btnProv, btnMod);
+    }
+    if (!targetEntry && nameEl && providerEl) {
+        const uiName = nameEl.textContent.trim();
+        const uiProv = providerEl.textContent.trim();
+        if (uiName && uiName !== 'No model') {
+            targetEntry = findModelEntryFlexible(uiProv, uiName);
+        }
+    }
+
+    // B. Check session's explicitly saved selectedModel
+    if (!targetEntry && sid && typeof state !== 'undefined' && state.sessions && state.sessions[sid] && state.sessions[sid].selectedModel) {
+        const sm = state.sessions[sid].selectedModel;
+        targetEntry = findModelEntryFlexible(sm.providerName, sm.modelName);
+    }
+
+    // C. Fallback to stored selection key or first entry
+    if (!targetEntry) {
+        const sel = getSelectedModelKey();
+        targetEntry = (sel && findModelEntryFlexible(sel.providerName, sel.modelName)) || all[0];
+    }
+
+    // Re-align storage and session with canonical model metadata
+    const val = `${targetEntry.providerName}::${targetEntry.name}`;
+    localStorage.setItem('selected_model', val);
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) localStorage.setItem(`selected_model_${wsKey}`, val);
+    }
+
+    if (sid && typeof state !== 'undefined' && state.sessions && state.sessions[sid]) {
+        state.sessions[sid].selectedModel = {
+            providerName: targetEntry.providerName,
+            modelName: targetEntry.name
+        };
+    }
+
+    renderModelDropdown();
+    verifyActiveModelEndpoint(targetEntry);
+    return targetEntry;
+}
+
+// Non-blocking query to local endpoints (llama.cpp, LM Studio, etc.) verifying that
+// the served endpoint is active and alive.
+async function verifyActiveModelEndpoint(entry) {
+    if (!entry || !entry.url) return;
+    const isLocal = entry.url.includes('127.0.0.1') || entry.url.includes('localhost');
+    if (!isLocal) return;
+    try {
+        fetchActiveModelName(entry.url, entry.key, entry.name, entry.useProxy).then(activeName => {
+            if (activeName) {
+                const btn = document.getElementById('model-select-btn');
+                if (btn) {
+                    btn.title = `${entry.name} (${entry.providerName}) — Active: ${activeName} (${entry.url})`;
+                }
+            }
+        }).catch(() => {});
+    } catch (_) {}
 }
 
 // True when the currently selected model is configured with vision (image input) support.
@@ -285,4 +492,7 @@ window.currentModelHasVision = currentModelHasVision;
 window.applyVisionCapabilityToUI = applyVisionCapabilityToUI;
 window.shortenModelName = shortenModelName;
 window.fetchActiveModelName = fetchActiveModelName;
+window.findModelEntryFlexible = findModelEntryFlexible;
+window.ensureModelAndUISynced = ensureModelAndUISynced;
+window.verifyActiveModelEndpoint = verifyActiveModelEndpoint;
 // --- AST_EXPORTS_END ---

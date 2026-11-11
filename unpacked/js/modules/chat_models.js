@@ -262,6 +262,7 @@ window.mmNewProvider = mmNewProvider;
 function openModelSelect() {
     _modelSelectState.visible = true;
     _modelSelectState.filter = '';
+    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced();
     const entries = getAllModelEntries();
     const sel = getSelectedModelKey();
     const currentIdx = sel ? entries.findIndex(e => e.providerName === sel.providerName && e.name === sel.modelName) : -1;
@@ -373,6 +374,10 @@ function renderModelSelectList() {
             const providerName = el.getAttribute('data-provider-name');
             const modelName = el.getAttribute('data-model-name');
             setSelectedModel(providerName, modelName);
+            if (state.activeSessionId && state.sessions && state.sessions[state.activeSessionId]) {
+                state.sessions[state.activeSessionId].selectedModel = { providerName, modelName };
+                if (typeof saveSession === 'function') saveSession(state.activeSessionId);
+            }
             closeModelSelect();
         });
     });

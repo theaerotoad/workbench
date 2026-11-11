@@ -81,6 +81,7 @@ async function clearAllSessions() {
     term.innerHTML = '';
     resetScrollState();
     clearSessionAttachments(newId, { purgeDB: true });
+    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(newId);
 
     await restoreActiveSessionContent();
     await persistCheckpoint();
@@ -133,6 +134,7 @@ async function createNewSession(title) {
     if (!state.sessionIds) state.sessionIds = [];
     state.sessionIds.push(id);
     state.activeSessionId = id;
+    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(id);
     await restoreActiveSessionContent();
     await saveActiveSession(true);
     renderSessionPopoverList();
@@ -466,6 +468,7 @@ async function selectInitialSession() {
         state._lastSavedIndex = { sessionIds: sessionIds.slice(), activeSessionId: activeId, meta: { ...state.sessionMeta } };
         state._lastSavedWsKey = wsKey;
         if (prunedIndex) await saveSessionIndexToDB(wsKey, state._lastSavedIndex);
+        if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(activeId);
     } else {
         const defaultId = 'sess_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
         state.sessions = {
@@ -495,6 +498,7 @@ async function selectInitialSession() {
         await saveSessionIndexToDB(wsKey, idx);
         state._lastSavedIndex = idx;
         state._lastSavedWsKey = wsKey;
+        if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(defaultId);
     }
 }
 
@@ -559,6 +563,7 @@ async function switchSession(sessionId) {
         renderSessionPopoverList();
         return;
     }
+    if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(sessionId);
     await restoreActiveSessionContent();
     renderSessionPopoverList();
     hideSessionPopover();
