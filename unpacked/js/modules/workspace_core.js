@@ -688,6 +688,18 @@ async function runSyncWorkspace(silent = true) {
         // If it still raced, only add/update this round; removals wait for the next clean scan.
         const allowRemoval = epoch === wsMutationEpoch;
 
+        // Reload configuration early to prevent UI fallback flashes if it was written recently
+        if (newMeta && newMeta[CONFIG_FILE]) {
+         try {
+          const cText = await readDisk(CONFIG_FILE);
+          if (cText) {
+           const c = JSON.parse(cText);
+           AppConfig._data = { ...CONFIG_DEFAULTS, ...c };
+           localStorage.setItem('app_config_json', JSON.stringify(AppConfig._data));
+          }
+         } catch(e) {}
+        }
+
         if (registry.files[PLAN_FILE] && !newMeta[PLAN_FILE]) {
             newMeta[PLAN_FILE] = { kind: 'file', size: registry.files[PLAN_FILE].length, isBinary: false };
         }

@@ -135,14 +135,22 @@ export async function rawRename(oldPath, newPath) {
 }
 
 export async function writeAgentFileToDisk(filePath, content) {
-    if (!window.rootHandle) return;
-    if (window.rootHandle.isWebDAV && window.AppConfig.get('webdav-sync-agent') !== 'true') return;
-    try {
-        await fs.ensureParentDirs(filePath, { track: false });
-        await window.rawWrite(filePath, content);
-    } catch(e) {
-        console.warn('Failed to sync agent file to disk:', filePath, e);
-    }
+ if (!window.rootHandle) return;
+ if (window.rootHandle.isWebDAV && window.AppConfig.get('webdav-sync-agent') !== 'true') return;
+ try {
+  await fs.ensureParentDirs(filePath, { track: false });
+  await window.rawWrite(filePath, content);
+
+  // Immediately update registry cache to satisfy concurrent workspace scans
+  if (window.registry) {
+   window.registry.files[filePath] = content;
+   if (!window.registry.meta[filePath]) {
+    window.registry.meta[filePath] = { kind: 'file', size: content.length, isBinary: false, virtual: true };
+   }
+  }
+ } catch(e) {
+  console.warn('Failed to sync agent file to disk:', filePath, e);
+ }
 }
 
 export async function writeDisk(filePath, content, opts) {
@@ -331,12 +339,17 @@ export async function readFileTextSniffed(file) {
 }
 
 export async function readImageBlobUrl(filepath) {
-    if (!filepath) return null;
-    if (typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
-        return registry.files[filepath];
-    }
-    try {
-        let blob = null;
+ if (!filepath) return null;
+
+ if (window._bgBlobCache && window._bgBlobCache.path === filepath && window._bgBlobCache.url) {
+  return window._bgBlobCache.url;
+ }
+
+ if (typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
+  return registry.files[filepath];
+ }
+ try {
+  let blob = null;
         if (window.rootHandle) {
             try {
                 const handle = await getHandleByPath(filepath);
@@ -359,13 +372,15 @@ export async function readImageBlobUrl(filepath) {
             }
         }
         if (blob) {
-            return URL.createObjectURL(blob);
+         const url = URL.createObjectURL(blob);
+         window._bgBlobCache = { path: filepath, url };
+         return url;
         }
-    } catch (e) {
+       } catch (e) {
         console.warn('readImageBlobUrl error for', filepath, e);
-    }
-    return null;
-}
+       }
+       return null;
+      }
 
 export async function readImageDataUrl(filepath) {
     if (!window.isImageFilePath(filepath)) return null;
