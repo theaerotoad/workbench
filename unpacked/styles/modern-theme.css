@@ -428,15 +428,16 @@ html.theme-light body.has-custom-bg .chat-prompt-wrap {
     background: rgba(247, 247, 249, 0.72) !important;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
+    color: var(--fg) !important;
 }
 html.theme-light body.has-custom-bg #chat > .log-entry.md-content {
     background: rgba(247, 247, 249, 0.40) !important;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    color: var(--fg);
+    color: var(--fg) !important;
 }
 html.theme-light body.has-custom-bg .chat-bubble {
-    color: var(--fg);
+    color: var(--fg) !important;
 }
 html.theme-light body.has-custom-bg .code-box,
 html.theme-light body.has-custom-bg .thought-body,
