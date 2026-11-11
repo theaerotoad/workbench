@@ -1,6 +1,189 @@
-/* Light Theme Tab Overrides */
+/* Light Theme Overrides */
 html.theme-light #newtool-source-tabs {
     background: rgba(0, 0, 0, 0.04);
+    border-color: #e4e4e7;
+}
+html.theme-light .newtool-source-tab {
+    color: #64748b;
+}
+html.theme-light .newtool-source-tab:hover {
+    color: #0f172a;
+}
+html.theme-light .newtool-source-tab.active {
+    background: rgba(var(--primary-rgb), 0.12);
+    color: var(--primary);
+}
+html.theme-light #newtool-browse-list {
+    background: #ffffff;
+    border-color: #e4e4e7;
+}
+html.theme-light .newtool-browse-item {
+    border-bottom-color: #f1f5f9;
+}
+html.theme-light .newtool-browse-item-row {
+    color: #0f172a;
+}
+html.theme-light .newtool-browse-item:hover .newtool-browse-item-row {
+    background: rgba(0, 0, 0, 0.03);
+}
+html.theme-light .newtool-browse-row-install {
+    background: #ffffff;
+    border-color: #e4e4e7;
+    color: #0f172a;
+}
+html.theme-light .newtool-browse-row-install:hover:not(:disabled) {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+}
+html.theme-light .newtool-source-editor {
+    background: #ffffff;
+    border-color: #e4e4e7;
+    color: #0f172a;
+}
+html.theme-light #newtool-dropzone {
+    background: rgba(0, 0, 0, 0.015);
+    border-color: #cbd5e1;
+}
+html.theme-light #newtool-dropzone:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+/* Light Theme Model Providers Overrides */
+html.theme-light #models-modal {
+    background: #ffffff;
+    border-color: #e4e4e7;
+}
+html.theme-light #mm-sidebar {
+    background: #f8fafc;
+    border-right-color: #e4e4e7;
+}
+html.theme-light #mm-detail {
+    background: #ffffff;
+}
+html.theme-light .mm-provider-item {
+    border-color: transparent;
+}
+html.theme-light .mm-provider-item:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+html.theme-light .mm-provider-item.active {
+    background: rgba(var(--primary-rgb), 0.1);
+    border-color: rgba(var(--primary-rgb), 0.3);
+}
+html.theme-light .mm-provider-item-name {
+    color: #1e293b;
+}
+html.theme-light .mm-provider-item.active .mm-provider-item-name {
+    color: var(--primary);
+}
+html.theme-light .mm-provider-item-count {
+    background: rgba(0, 0, 0, 0.06);
+    color: #64748b;
+}
+html.theme-light #mm-add-provider-btn {
+    border-color: #cbd5e1;
+    color: #64748b;
+}
+html.theme-light #mm-add-provider-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.06);
+}
+html.theme-light .mm-detail-title-input {
+    color: #0f172a;
+}
+html.theme-light .mm-detail-title-input:hover {
+    border-bottom-color: #cbd5e1;
+}
+html.theme-light .mm-detail-title-input:focus {
+    border-bottom-color: var(--primary);
+}
+html.theme-light .mm-remove-provider-btn {
+    border-color: #e4e4e7;
+    color: #64748b;
+    background: #ffffff;
+}
+html.theme-light .mm-remove-provider-btn:hover {
+    border-color: var(--red, #ef4444);
+    color: var(--red, #ef4444);
+    background: rgba(239, 68, 68, 0.08);
+}
+html.theme-light .mm-row label {
+    color: #64748b;
+}
+html.theme-light .mm-row input[type="text"],
+html.theme-light .mm-row input[type="password"],
+html.theme-light .mm-row input[type="number"] {
+    background: #ffffff;
+    border-color: #e4e4e7;
+    color: #0f172a;
+}
+html.theme-light .mm-row input:focus {
+    border-color: var(--primary);
+}
+html.theme-light .mm-key-toggle {
+    color: #64748b;
+}
+html.theme-light .mm-key-toggle:hover {
+    color: #0f172a;
+}
+html.theme-light .mm-models-label {
+    border-top-color: #e4e4e7;
+    color: #64748b;
+}
+html.theme-light .mm-models-cols {
+    color: #64748b;
+}
+html.theme-light .mm-model-row input[type="text"] {
+    background: #ffffff;
+    border-color: #e4e4e7;
+    color: #0f172a;
+}
+html.theme-light .mm-model-row input[type="text"]:focus {
+    border-color: var(--primary);
+}
+html.theme-light .mm-model-search-btn {
+    color: #64748b;
+}
+html.theme-light .mm-model-search-btn:hover {
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.1);
+}
+html.theme-light .mm-model-vision-btn {
+    border-color: #e4e4e7;
+    color: #64748b;
+    background: #ffffff;
+}
+html.theme-light .mm-model-vision-btn:hover {
+    border-color: #cbd5e1;
+    color: #0f172a;
+}
+html.theme-light .mm-model-vision-btn.on {
+    color: var(--green, #16a34a);
+    border-color: rgba(22, 163, 74, 0.4);
+    background: rgba(22, 163, 74, 0.08);
+}
+html.theme-light .mm-model-vision-btn.on:hover {
+    border-color: var(--green, #16a34a);
+}
+html.theme-light .mm-model-remove-btn {
+    color: #94a3b8;
+}
+html.theme-light .mm-model-remove-btn:hover {
+    color: var(--red, #ef4444);
+    background: rgba(239, 68, 68, 0.08);
+}
+html.theme-light .mm-add-model-btn {
+    border-color: #cbd5e1;
+    color: #64748b;
+}
+html.theme-light .mm-add-model-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.06);
+}
+html.theme-light .mm-empty {
+    color: #64748b;
 }
 
 /* New Tool Modal */
