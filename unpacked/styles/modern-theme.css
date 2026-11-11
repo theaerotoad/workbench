@@ -187,6 +187,7 @@ body.has-custom-bg #msg-edit-modal,
 body.has-custom-bg #settings-modal,
 body.has-custom-bg #model-select-dropdown,
 body.has-custom-bg #model-picker-dropdown,
+body.has-custom-bg #tool-model-dropdown,
 body.has-custom-bg #explorer-context-menu,
 body.has-custom-bg #autocomplete-popup,
 body.has-custom-bg .attach-menu {
@@ -522,6 +523,7 @@ html.theme-light body.has-custom-bg #msg-edit-modal,
 html.theme-light body.has-custom-bg #settings-modal,
 html.theme-light body.has-custom-bg #model-select-dropdown,
 html.theme-light body.has-custom-bg #model-picker-dropdown,
+html.theme-light body.has-custom-bg #tool-model-dropdown,
 html.theme-light body.has-custom-bg #explorer-context-menu,
 html.theme-light body.has-custom-bg #autocomplete-popup,
 html.theme-light body.has-custom-bg .attach-menu {
@@ -545,7 +547,7 @@ html.theme-light .code-header { background: rgba(0,0,0,0.03); border-bottom: 1px
 html.theme-light .code-header .tool-badge { background: rgba(0,0,0,0.06); }
 html.theme-light .code-box .btn-copy-code:hover { background: rgba(0,0,0,0.08); color: var(--fg); }
 html.theme-light .thought-body, html.theme-light .tool-output-text, html.theme-light .compression-summary { background: #fdfdfd; border-color: rgba(0,0,0,0.1); color: var(--fg); }
-html.theme-light .settings-field-row input[type="text"], html.theme-light .settings-field-row input[type="number"], html.theme-light .settings-field-row input[type="password"], html.theme-light .settings-field-row select, html.theme-light .mm-row input, html.theme-light #search-input, html.theme-light #newtool-browse-search, html.theme-light #model-select-search, html.theme-light #model-picker-filter input, html.theme-light #cmd { background: #fff; color: var(--fg); }
+html.theme-light .settings-field-row input[type="text"], html.theme-light .settings-field-row input[type="number"], html.theme-light .settings-field-row input[type="password"], html.theme-light .settings-field-row select, html.theme-light .mm-row input, html.theme-light #search-input, html.theme-light #newtool-browse-search, html.theme-light #model-select-search, html.theme-light #model-picker-filter input, html.theme-light #tool-model-search, html.theme-light #cmd { background: #fff; color: var(--fg); }
 html.theme-light #prompt-input-row { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
 html.theme-light #bottom-dock-area { background: transparent; box-shadow: none; }
 html.theme-light #prompt-input-row { background: #ffffff; border-color: rgba(0,0,0,0.12); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
@@ -564,7 +566,7 @@ html.theme-light .status-token-metric:hover { background: rgba(0,0,0,0.04); colo
 html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 html.theme-light .session-item-row.active { box-shadow: 0 0 20px rgba(var(--accent-rgb),0.15); }
 html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }
-html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }
+html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #tool-model-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }
 html.theme-light #tabs-bar { border-bottom: 1px solid var(--border); }
 html.theme-light .editor-tab { background: transparent; border: 1px solid transparent; color: var(--dim); }
 html.theme-light .editor-tab:hover { background: rgba(0,0,0,0.04); color: var(--fg); }

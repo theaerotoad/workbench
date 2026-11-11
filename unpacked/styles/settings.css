@@ -271,3 +271,63 @@ html.theme-light .ct-tool-settings-panel {
     background: rgba(0, 0, 0, 0.02);
     border-top-color: var(--border);
 }
+
+/* Tool Model Picker Light Theme */
+html.theme-light #tool-model-dropdown {
+    background: #ffffff;
+    border-color: var(--border-highlight);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+}
+html.theme-light #tool-model-search-wrap {
+    border-bottom-color: var(--border);
+}
+html.theme-light #tool-model-search {
+    background: #ffffff;
+    border-color: var(--border);
+    color: var(--fg);
+}
+html.theme-light #tool-model-search:focus {
+    border-color: rgba(var(--accent-rgb), 0.7);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
+}
+html.theme-light #tool-model-config-btn {
+    background: var(--bg-input);
+    border-color: var(--border);
+    color: var(--dim);
+}
+html.theme-light #tool-model-config-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--bg-hover);
+}
+html.theme-light #tool-model-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+}
+html.theme-light #tool-model-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.25);
+}
+html.theme-light #tool-model-list .msd-item {
+    color: var(--fg);
+}
+html.theme-light #tool-model-list .msd-item:hover,
+html.theme-light #tool-model-list .msd-item.highlighted {
+    background: rgba(var(--accent-rgb), 0.12);
+}
+html.theme-light #tool-model-list .msd-item.current {
+    background: rgba(62, 207, 142, 0.15);
+}
+html.theme-light #tool-model-list .msd-item.current .msd-item-name {
+    color: #16a34a;
+}
+html.theme-light #tool-model-list .msd-item-name {
+    color: var(--fg);
+}
+html.theme-light #tool-model-list .msd-item-provider {
+    color: var(--dim);
+}
+html.theme-light #tool-model-list .msd-vision-icon {
+    color: #16a34a;
+}
+html.theme-light #tool-model-list .msd-empty {
+    color: var(--dim);
+}
