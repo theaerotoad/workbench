@@ -27,8 +27,9 @@ const CONFIG_DEFAULTS = {
     'split-view-enabled': 'false',
     'bg-image-enabled': 'false',
     'bg-image-path': '',
-    'bg-image-blur': '10'
-};
+    'bg-image-blur': '10',
+    'bg-image-brightness': '100'
+   };
 
 const CONFIG_FILE = '.agent/config.json';
 const TOOLS_FILE = '.agent/tools.json';

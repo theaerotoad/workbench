@@ -207,6 +207,7 @@ export function initSettingsModal() {
     const bgFileInput = document.getElementById('settings-bg-file-input');
     const bgClearBtn = document.getElementById('settings-bg-clear-btn');
     const bgBlurInput = document.getElementById('settings-bg-blur');
+    const bgBrightnessInput = document.getElementById('settings-bg-brightness');
 
     if (bgUploadBtn && bgFileInput) {
         bgUploadBtn.addEventListener('click', () => bgFileInput.click());
@@ -296,14 +297,25 @@ export function initSettingsModal() {
     }
 
     if (bgBlurInput) {
-        bgBlurInput.addEventListener('input', (e) => {
-            const val = e.target.value;
-            const label = document.getElementById('settings-bg-blur-label');
-            if (label) label.textContent = `${val}px`;
-            AppConfig.set('bg-image-blur', String(val));
-            const layer = document.getElementById('bg-image-layer');
-            if (layer) layer.style.setProperty('--bg-blur', `${val}px`);
-        });
+     bgBlurInput.addEventListener('input', (e) => {
+      const val = e.target.value;
+      const label = document.getElementById('settings-bg-blur-label');
+      if (label) label.textContent = `${val}px`;
+      AppConfig.set('bg-image-blur', String(val));
+      const layer = document.getElementById('bg-image-layer');
+      if (layer) layer.style.setProperty('--bg-blur', `${val}px`);
+     });
+    }
+
+    if (bgBrightnessInput) {
+     bgBrightnessInput.addEventListener('input', (e) => {
+      const val = e.target.value;
+      const label = document.getElementById('settings-bg-brightness-label');
+      if (label) label.textContent = `${val}%`;
+      AppConfig.set('bg-image-brightness', String(val));
+      const layer = document.getElementById('bg-image-layer');
+      if (layer) layer.style.setProperty('--bg-brightness', `${val}%`);
+     });
     }
 
     // Shield agent switch inside Security tab
@@ -386,17 +398,22 @@ export function initSettingsModal() {
 }
 
 function updateBackgroundSettingsUI() {
-    const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
-    const bgPath = AppConfig.get('bg-image-path', '');
-    const blurVal = AppConfig.get('bg-image-blur', '10');
+ const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
+ const bgPath = AppConfig.get('bg-image-path', '');
+ const blurVal = AppConfig.get('bg-image-blur', '10');
+ const brightnessVal = AppConfig.get('bg-image-brightness', '100');
 
-    const thumb = document.getElementById('settings-bg-thumb');
-    const clearBtn = document.getElementById('settings-bg-clear-btn');
-    const blurInput = document.getElementById('settings-bg-blur');
-    const blurLabel = document.getElementById('settings-bg-blur-label');
+ const thumb = document.getElementById('settings-bg-thumb');
+ const clearBtn = document.getElementById('settings-bg-clear-btn');
+ const blurInput = document.getElementById('settings-bg-blur');
+ const blurLabel = document.getElementById('settings-bg-blur-label');
+ const brightnessInput = document.getElementById('settings-bg-brightness');
+ const brightnessLabel = document.getElementById('settings-bg-brightness-label');
 
-    if (blurInput) blurInput.value = blurVal;
-    if (blurLabel) blurLabel.textContent = `${blurVal}px`;
+ if (blurInput) blurInput.value = blurVal;
+ if (blurLabel) blurLabel.textContent = `${blurVal}px`;
+ if (brightnessInput) brightnessInput.value = brightnessVal;
+ if (brightnessLabel) brightnessLabel.textContent = `${brightnessVal}%`;
 
     if (enabled && bgPath) {
         if (clearBtn) clearBtn.style.display = 'inline-flex';

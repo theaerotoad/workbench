@@ -61,16 +61,18 @@ function applyTheme() {
 let _currentBgBlobUrl = null;
 
 async function applyBackgroundImage() {
-    const layer = document.getElementById('bg-image-layer');
-    if (!layer) return;
+ const layer = document.getElementById('bg-image-layer');
+ if (!layer) return;
 
-    const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
-    const bgPath = AppConfig.get('bg-image-path', '');
-    const blurPx = AppConfig.get('bg-image-blur', '10');
+ const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
+ const bgPath = AppConfig.get('bg-image-path', '');
+ const blurPx = AppConfig.get('bg-image-blur', '10');
+ const brightnessVal = AppConfig.get('bg-image-brightness', '100');
 
-    layer.style.setProperty('--bg-blur', `${blurPx}px`);
+ layer.style.setProperty('--bg-blur', `${blurPx}px`);
+ layer.style.setProperty('--bg-brightness', `${brightnessVal}%`);
 
-    if (!enabled || !bgPath) {
+ if (!enabled || !bgPath) {
         document.body.classList.remove('has-custom-bg');
         layer.style.backgroundImage = 'none';
         if (_currentBgBlobUrl) {
