@@ -66,7 +66,6 @@ export const modelSelectList = document.getElementById('model-select-list');
 export const modelSelectOverlay = document.getElementById('model-select-overlay');
 export const modelSelectSearch = document.getElementById('model-select-search');
 export const modelsModalClose = document.getElementById('models-modal-close');
-export const modelsModalEditJson = document.getElementById('models-modal-edit-json');
 export const modelsModalEl = document.getElementById('models-modal');
 export const modelsModalOverlay = document.getElementById('models-modal-overlay');
 export const modeTabBtns = document.querySelectorAll('.mode-tab-btn');
@@ -152,7 +151,7 @@ Object.entries({
     mmDetailEl, mmProviderListEl, modelPickerClose, modelPickerDropdown,
     modelPickerList, modelPickerOverlay, modelPickerSearch, modelSelectBtn,
     modelSelectConfigBtn, modelSelectDropdown, modelSelectList, modelSelectOverlay,
-    modelSelectSearch, modelsModalClose, modelsModalEditJson, modelsModalEl,
+    modelSelectSearch, modelsModalClose, modelsModalEl,
     modelsModalOverlay, modeTabBtns, monacoContainer, msgDeleteCancelBtn,
     msgDeleteModalCloseBtn, msgDeleteModalOverlay, msgDeleteOnlyBtn, msgDeleteRevertBtn,
     msgEditCancelBtn, msgEditModalCloseBtn, msgEditModalOverlay, msgEditOnlyBtn,

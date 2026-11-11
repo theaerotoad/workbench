@@ -355,10 +355,6 @@ modelsModalClose.addEventListener('click', closeModelsModal);
 modelsModalOverlay.addEventListener('click', (e) => {
     if (e.target === modelsModalOverlay) closeModelsModal();
 });
-modelsModalEditJson.addEventListener('click', () => {
-    closeModelsModal();
-    openFileTab(MODELS_FILE);
-});
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modelsModalOverlay.style.display === 'flex' && !(_modelPickerState && _modelPickerState.visible)) closeModelsModal();
 });
