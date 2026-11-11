@@ -76,52 +76,63 @@
     padding: 3px 9px; border-radius: 4px; font-family: inherit;
     font-size: 11px; font-weight: 600; cursor: pointer;
     display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s ease;
+    box-shadow: none;
 }
-.mode-tab-btn:hover { color: var(--fg); }
+.mode-tab-btn:hover { color: var(--fg); box-shadow: none; }
+.mode-tab-btn.active { box-shadow: none; }
 .mode-tab-btn[data-mode="plan"] {
     border-color: rgba(255, 157, 108, 0.4);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn[data-mode="plan"]:hover {
     border-color: rgba(255, 157, 108, 0.8);
     color: var(--orange, #ff9d6c);
-    background: rgba(255, 157, 108, 0.08);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn.active[data-mode="plan"] {
-    background: rgba(255, 157, 108, 0.16);
+    background: transparent;
     border-color: var(--orange, #ff9d6c);
     color: var(--orange, #ff9d6c);
     font-weight: 700;
-    box-shadow: 0 0 8px rgba(255, 157, 108, 0.25);
+    box-shadow: none;
 }
 .mode-tab-btn[data-mode="ask"] {
     border-color: rgba(122, 168, 255, 0.4);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn[data-mode="ask"]:hover {
     border-color: rgba(122, 168, 255, 0.8);
     color: var(--blue, #7aa8ff);
-    background: rgba(122, 168, 255, 0.08);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn.active[data-mode="ask"] {
-    background: rgba(122, 168, 255, 0.16);
+    background: transparent;
     border-color: var(--blue, #7aa8ff);
     color: var(--blue, #7aa8ff);
     font-weight: 700;
-    box-shadow: 0 0 8px rgba(122, 168, 255, 0.25);
+    box-shadow: none;
 }
 .mode-tab-btn[data-mode="code"] {
     border-color: rgba(62, 207, 142, 0.4);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn[data-mode="code"]:hover {
     border-color: rgba(62, 207, 142, 0.8);
     color: var(--green, #3ecf8e);
-    background: rgba(62, 207, 142, 0.08);
+    background: transparent;
+    box-shadow: none;
 }
 .mode-tab-btn.active[data-mode="code"] {
-    background: rgba(62, 207, 142, 0.16);
+    background: transparent;
     border-color: var(--green, #3ecf8e);
     color: var(--green, #3ecf8e);
     font-weight: 700;
-    box-shadow: 0 0 8px rgba(62, 207, 142, 0.25);
+    box-shadow: none;
 }
 
 /* Model Select Dropdown (Top Row) */

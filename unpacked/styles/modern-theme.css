@@ -152,16 +152,16 @@ transition:transform .1s,filter .15s}
  background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 #prompt-symbol.running,#prompt-symbol.running:hover{background:rgba(255,107,122,.18);color:var(--red);box-shadow:none;transform:none}
 .mode-segmented-group{border-radius:6px;padding:2px;gap:4px;background:var(--bg-card,#181a22);border:1px solid var(--border)}
-.mode-tab-btn{border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600;border:1px solid transparent}
-.mode-tab-btn[data-mode="plan"]{border-color:rgba(255,157,108,.4)}
-.mode-tab-btn[data-mode="plan"]:hover{border-color:rgba(255,157,108,.8);color:var(--orange,#ff9d6c);background:rgba(255,157,108,.08)}
-.mode-tab-btn.active[data-mode="plan"]{background:rgba(255,157,108,.16);border-color:var(--orange,#ff9d6c);color:var(--orange,#ff9d6c);font-weight:700;box-shadow:0 0 8px rgba(255,157,108,.25)}
-.mode-tab-btn[data-mode="ask"]{border-color:rgba(122,168,255,.4)}
-.mode-tab-btn[data-mode="ask"]:hover{border-color:rgba(122,168,255,.8);color:var(--blue,#7aa8ff);background:rgba(122,168,255,.08)}
-.mode-tab-btn.active[data-mode="ask"]{background:rgba(122,168,255,.16);border-color:var(--blue,#7aa8ff);color:var(--blue,#7aa8ff);font-weight:700;box-shadow:0 0 8px rgba(122,168,255,.25)}
-.mode-tab-btn[data-mode="code"]{border-color:rgba(62,207,142,.4)}
-.mode-tab-btn[data-mode="code"]:hover{border-color:rgba(62,207,142,.8);color:var(--green,#3ecf8e);background:rgba(62,207,142,.08)}
-.mode-tab-btn.active[data-mode="code"]{background:rgba(62,207,142,.16);border-color:var(--green,#3ecf8e);color:var(--green,#3ecf8e);font-weight:700;box-shadow:0 0 8px rgba(62,207,142,.25)}
+.mode-tab-btn{border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600;border:1px solid transparent;background:transparent;box-shadow:none}
+.mode-tab-btn[data-mode="plan"]{border-color:rgba(255,157,108,.4);background:transparent;box-shadow:none}
+.mode-tab-btn[data-mode="plan"]:hover{border-color:rgba(255,157,108,.8);color:var(--orange,#ff9d6c);background:transparent;box-shadow:none}
+.mode-tab-btn.active[data-mode="plan"]{background:transparent;border-color:var(--orange,#ff9d6c);color:var(--orange,#ff9d6c);font-weight:700;box-shadow:none}
+.mode-tab-btn[data-mode="ask"]{border-color:rgba(122,168,255,.4);background:transparent;box-shadow:none}
+.mode-tab-btn[data-mode="ask"]:hover{border-color:rgba(122,168,255,.8);color:var(--blue,#7aa8ff);background:transparent;box-shadow:none}
+.mode-tab-btn.active[data-mode="ask"]{background:transparent;border-color:var(--blue,#7aa8ff);color:var(--blue,#7aa8ff);font-weight:700;box-shadow:none}
+.mode-tab-btn[data-mode="code"]{border-color:rgba(62,207,142,.4);background:transparent;box-shadow:none}
+.mode-tab-btn[data-mode="code"]:hover{border-color:rgba(62,207,142,.8);color:var(--green,#3ecf8e);background:transparent;box-shadow:none}
+.mode-tab-btn.active[data-mode="code"]{background:transparent;border-color:var(--green,#3ecf8e);color:var(--green,#3ecf8e);font-weight:700;box-shadow:none}
 #model-select-btn{border-radius:6px;padding:4px 10px;background:var(--bg-card,#181a22);border:1px solid var(--border)}
 #model-select-btn:hover,#model-select-btn.open{border-color:var(--border-highlight);background:var(--bg-hover,#1f222d)}
 #perm-banner{background:rgba(var(--primary-rgb),.08);border:1px solid rgba(var(--primary-rgb),.4);border-radius:3px;margin:0 14px 8px}
@@ -290,15 +290,15 @@ html.theme-light #prompt-input-row { background: #fff; box-shadow: 0 2px 10px rg
 html.theme-light #bottom-dock-area { background: transparent; box-shadow: none; }
 html.theme-light #prompt-input-row { background: #ffffff; border-color: rgba(0,0,0,0.12); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
 html.theme-light .mode-segmented-group { background: #ffffff; border-color: rgba(0,0,0,0.1); }
-html.theme-light .mode-tab-btn[data-mode="plan"]{border-color:rgba(235,115,60,.35)}
-html.theme-light .mode-tab-btn[data-mode="plan"]:hover{border-color:rgba(235,115,60,.7);color:#ea580c;background:rgba(235,115,60,.08)}
-html.theme-light .mode-tab-btn.active[data-mode="plan"]{border-color:#ea580c;color:#ea580c;background:rgba(235,115,60,.12)}
-html.theme-light .mode-tab-btn[data-mode="ask"]{border-color:rgba(37,99,235,.35)}
-html.theme-light .mode-tab-btn[data-mode="ask"]:hover{border-color:rgba(37,99,235,.7);color:#2563eb;background:rgba(37,99,235,.08)}
-html.theme-light .mode-tab-btn.active[data-mode="ask"]{border-color:#2563eb;color:#2563eb;background:rgba(37,99,235,.12)}
-html.theme-light .mode-tab-btn[data-mode="code"]{border-color:rgba(22,163,74,.35)}
-html.theme-light .mode-tab-btn[data-mode="code"]:hover{border-color:rgba(22,163,74,.7);color:#16a34a;background:rgba(22,163,74,.08)}
-html.theme-light .mode-tab-btn.active[data-mode="code"]{border-color:#16a34a;color:#16a34a;background:rgba(22,163,74,.12)}
+html.theme-light .mode-tab-btn[data-mode="plan"]{border-color:rgba(235,115,60,.35);background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn[data-mode="plan"]:hover{border-color:rgba(235,115,60,.7);color:#ea580c;background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn.active[data-mode="plan"]{border-color:#ea580c;color:#ea580c;background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn[data-mode="ask"]{border-color:rgba(37,99,235,.35);background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn[data-mode="ask"]:hover{border-color:rgba(37,99,235,.7);color:#2563eb;background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn.active[data-mode="ask"]{border-color:#2563eb;color:#2563eb;background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn[data-mode="code"]{border-color:rgba(22,163,74,.35);background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn[data-mode="code"]:hover{border-color:rgba(22,163,74,.7);color:#16a34a;background:transparent;box-shadow:none}
+html.theme-light .mode-tab-btn.active[data-mode="code"]{border-color:#16a34a;color:#16a34a;background:transparent;box-shadow:none}
 html.theme-light .status-token-metric { background: #ffffff; border-color: rgba(0,0,0,0.12); color: var(--dim); }
 html.theme-light .status-token-metric:hover { background: rgba(0,0,0,0.04); color: var(--fg); }
 html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
