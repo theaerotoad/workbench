@@ -271,32 +271,3 @@ html.theme-light .ct-tool-settings-panel {
     background: rgba(0, 0, 0, 0.02);
     border-top-color: var(--border);
 }
-html.theme-light .settings-panel-head .head-label {
-    color: var(--fg);
-}
-
-/* Mobile Settings Overrides */
-@media (max-width: 768px) {
-    #settings-popover {
-        position: fixed; inset: 0; z-index: 500;
-        background: var(--bg-main) !important;
-        border: none !important; border-radius: 0 !important; box-shadow: none !important;
-        align-items: stretch; justify-content: stretch;
-    }
-    #settings-popover .settings-panel {
-        position: absolute; inset: 0; top: 0; right: 0;
-        width: 100vw; max-width: none; height: 100dvh; max-height: none;
-        border: none !important; border-radius: 0 !important; box-shadow: none !important;
-        background: var(--bg-main) !important;
-        padding: 0 14px 16px;
-    }
-    #settings-popover .settings-panel-head {
-        min-height: 54px;
-        padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px 14px;
-        box-sizing: content-box;
-    }
-    #settings-popover-close {
-        width: 42px; height: 42px; margin-left: auto;
-        display: flex; align-items: center; justify-content: center;
-    }
-}
