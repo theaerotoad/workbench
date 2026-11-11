@@ -46,12 +46,16 @@ body.no-workspace #btn-sidebar-collapse,
 body.no-workspace #tab-nav-explorer,
 body.no-workspace #tab-nav-search,
 body.no-workspace #tab-nav-changes,
+body.no-workspace #btn-about-toggle,
 body.no-workspace #btn-settings-toggle,
+body.no-workspace #btn-sidebar-settings,
 body:has(#no-folder-overlay:not(.hidden)) #btn-sidebar-collapse,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-explorer,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-search,
 body:has(#no-folder-overlay:not(.hidden)) #tab-nav-changes,
-body:has(#no-folder-overlay:not(.hidden)) #btn-settings-toggle {
+body:has(#no-folder-overlay:not(.hidden)) #btn-about-toggle,
+body:has(#no-folder-overlay:not(.hidden)) #btn-settings-toggle,
+body:has(#no-folder-overlay:not(.hidden)) #btn-sidebar-settings {
     display: none !important;
 }
 .sidebar-nav-tab {
