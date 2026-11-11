@@ -1118,3 +1118,195 @@ document.addEventListener('keydown', (e) => {
         closeNewToolModal();
     }
 });
+
+// --- Android / Browser Back Button Modal Navigation ---
+(function initModalHistoryManager() {
+    let activeModalDepth = 0;
+    let pendingProgrammaticPops = 0;
+    let isHandlingPopstate = false;
+
+    try {
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, '');
+        }
+    } catch (_) {}
+
+    const TRACKED_MODALS = [
+        { id: 'settings-modal-overlay', isOpen: el => el.style.display === 'flex' },
+        { id: 'cleardata-modal-overlay', isOpen: el => el.style.display === 'flex' },
+        { id: 'yesno-modal-overlay', isOpen: el => el.style.display === 'flex' },
+        { id: 'msg-delete-modal-overlay', isOpen: el => el.classList.contains('visible') },
+        { id: 'msg-edit-modal-overlay', isOpen: el => el.classList.contains('visible') },
+        { id: 'webdav-modal-overlay', isOpen: el => el.style.display === 'flex' },
+        { id: 'sessions-popover-overlay', isOpen: el => el.style.display === 'block' },
+        { id: 'model-picker-overlay', isOpen: el => el.style.display === 'block' },
+        { id: 'model-select-overlay', isOpen: el => el.style.display === 'block' },
+        { id: 'sidebar', isOpen: el => el.classList.contains('mobile-open') }
+    ];
+
+    function getOpenModalCount() {
+        let count = 0;
+        for (const item of TRACKED_MODALS) {
+            const el = document.getElementById(item.id);
+            if (el && item.isOpen(el)) count++;
+        }
+        return count;
+    }
+
+    function closeTopmostModal() {
+        // Priority 1: Model picker dropdown
+        const modelPicker = document.getElementById('model-picker-overlay');
+        if (modelPicker && modelPicker.style.display === 'block') {
+            if (typeof hideModelPicker === 'function') hideModelPicker();
+            else if (window.hideModelPicker) window.hideModelPicker();
+            else modelPicker.style.display = 'none';
+            return true;
+        }
+        // Priority 2: Confirm / Prompt dialog
+        const yesNo = document.getElementById('yesno-modal-overlay');
+        if (yesNo && yesNo.style.display === 'flex') {
+            const cancelBtn = document.getElementById('yesno-modal-cancel');
+            if (cancelBtn) cancelBtn.click();
+            else yesNo.style.display = 'none';
+            return true;
+        }
+        // Priority 3: Clear data modal
+        const clearData = document.getElementById('cleardata-modal-overlay');
+        if (clearData && clearData.style.display === 'flex') {
+            const cancelBtn = document.getElementById('cleardata-cancel');
+            if (cancelBtn) cancelBtn.click();
+            else if (typeof closeClearDataModal === 'function') closeClearDataModal();
+            else clearData.style.display = 'none';
+            return true;
+        }
+        // Priority 4: Message delete confirmation
+        const msgDel = document.getElementById('msg-delete-modal-overlay');
+        if (msgDel && msgDel.classList.contains('visible')) {
+            const cancelBtn = document.getElementById('msg-delete-cancel-btn');
+            if (cancelBtn) cancelBtn.click();
+            else if (typeof hideMsgDeleteModal === 'function') hideMsgDeleteModal();
+            else msgDel.classList.remove('visible');
+            return true;
+        }
+        // Priority 5: Message edit confirmation
+        const msgEdit = document.getElementById('msg-edit-modal-overlay');
+        if (msgEdit && msgEdit.classList.contains('visible')) {
+            const cancelBtn = document.getElementById('msg-edit-cancel-btn');
+            if (cancelBtn) cancelBtn.click();
+            else if (typeof hideMsgEditModal === 'function') hideMsgEditModal();
+            else msgEdit.classList.remove('visible');
+            return true;
+        }
+        // Priority 6: WebDAV connection modal
+        const webdavModal = document.getElementById('webdav-modal-overlay');
+        if (webdavModal && webdavModal.style.display === 'flex') {
+            const cancelBtn = document.getElementById('webdav-cancel');
+            if (cancelBtn) cancelBtn.click();
+            else webdavModal.style.display = 'none';
+            return true;
+        }
+        // Priority 7: Model selector dropdown above prompt bar
+        const modelSelect = document.getElementById('model-select-overlay');
+        if (modelSelect && modelSelect.style.display === 'block') {
+            if (typeof closeModelSelect === 'function') closeModelSelect();
+            else if (window.closeModelSelect) window.closeModelSelect();
+            else modelSelect.style.display = 'none';
+            return true;
+        }
+        // Priority 8: Unified Settings modal
+        const settingsModal = document.getElementById('settings-modal-overlay');
+        if (settingsModal && settingsModal.style.display === 'flex') {
+            if (typeof closeSettingsModal === 'function') closeSettingsModal();
+            else if (window.closeSettingsModal) window.closeSettingsModal();
+            else settingsModal.style.display = 'none';
+            return true;
+        }
+        // Priority 9: Sessions popover
+        const sessPop = document.getElementById('sessions-popover-overlay');
+        if (sessPop && sessPop.style.display === 'block') {
+            if (typeof hideSessionPopover === 'function') hideSessionPopover();
+            else if (window.hideSessionPopover) window.hideSessionPopover();
+            else sessPop.style.display = 'none';
+            return true;
+        }
+        // Priority 10: Explorer context menu
+        const ctxMenu = document.getElementById('explorer-context-menu');
+        if (ctxMenu && ctxMenu.style.display === 'block') {
+            ctxMenu.style.display = 'none';
+            return true;
+        }
+        // Priority 11: Mobile sidebar drawer
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && sidebar.classList.contains('mobile-open')) {
+            if (typeof toggleMobileSidebar === 'function') toggleMobileSidebar(false);
+            else if (window.toggleMobileSidebar) window.toggleMobileSidebar(false);
+            else sidebar.classList.remove('mobile-open');
+            return true;
+        }
+        return false;
+    }
+
+    function syncModalHistory() {
+        if (isHandlingPopstate) return;
+        const targetDepth = getOpenModalCount();
+        if (targetDepth > activeModalDepth) {
+            while (activeModalDepth < targetDepth) {
+                activeModalDepth++;
+                try {
+                    history.pushState({ workbenchModal: activeModalDepth }, '');
+                } catch (_) {}
+            }
+        } else if (targetDepth < activeModalDepth) {
+            while (activeModalDepth > targetDepth) {
+                activeModalDepth--;
+                pendingProgrammaticPops++;
+                setTimeout(() => {
+                    if (pendingProgrammaticPops > 0) pendingProgrammaticPops = 0;
+                }, 500);
+                try {
+                    history.back();
+                } catch (_) {
+                    pendingProgrammaticPops--;
+                }
+            }
+        }
+    }
+
+    window.addEventListener('popstate', () => {
+        if (pendingProgrammaticPops > 0) {
+            pendingProgrammaticPops--;
+            return;
+        }
+        if (activeModalDepth > 0) {
+            activeModalDepth--;
+            isHandlingPopstate = true;
+            try {
+                closeTopmostModal();
+            } finally {
+                setTimeout(() => {
+                    isHandlingPopstate = false;
+                    syncModalHistory();
+                }, 60);
+            }
+        }
+    });
+
+    const observer = new MutationObserver(() => {
+        syncModalHistory();
+    });
+
+    const initObserver = () => {
+        TRACKED_MODALS.forEach(item => {
+            const el = document.getElementById(item.id);
+            if (el) {
+                observer.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+            }
+        });
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initObserver);
+    } else {
+        initObserver();
+    }
+})();
