@@ -143,35 +143,35 @@
     color: var(--fg);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     text-align: left;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 #chat > .log-entry.md-content:empty { display: none; }
+#chat > .log-entry.md-content.mode-plan,
+#chat > .log-entry.md-content[data-mode="plan"] {
+    border-color: rgba(255, 157, 108, 0.45);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 157, 108, 0.15);
+}
+#chat > .log-entry.md-content.mode-ask,
+#chat > .log-entry.md-content[data-mode="ask"] {
+    border-color: rgba(122, 168, 255, 0.45);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(122, 168, 255, 0.15);
+}
+#chat > .log-entry.md-content.mode-code,
+#chat > .log-entry.md-content[data-mode="code"] {
+    border-color: rgba(62, 207, 142, 0.45);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(62, 207, 142, 0.15);
+}
 .log-entry { 
     margin-top: 0; margin-bottom: 0; white-space: pre-wrap;
     word-break: break-word; overflow-wrap: anywhere; line-height: 1.55;
 }
 
-/* Mode Chips & Dividers */
-.mode-chat-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    border-radius: 3px; padding: 1px 7px; font-size: 11px;
-    font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.5px; user-select: none;
-    flex-shrink: 0; vertical-align: middle;
-}
-.mode-chat-chip.code { background: rgba(198, 120, 221, 0.12); border: 1px solid rgba(198, 120, 221, 0.35); color: var(--magenta); }
-.mode-chat-chip.plan { background: rgba(229, 192, 123, 0.12); border: 1px solid rgba(229, 192, 123, 0.35); color: var(--yellow); }
-.mode-chat-chip.ask { background: rgba(var(--primary-rgb), 0.12); border: 1px solid rgba(var(--primary-rgb), 0.35); color: var(--primary); }
+/* Mode Chips & Dividers (Hidden in favor of message card outline) */
 .mode-divider {
-    position: relative; display: flex; align-items: center;
-    justify-content: center; margin: 8px 0 6px 0; width: 100%;
+    display: none !important;
 }
-.mode-divider::before {
-    content: ""; position: absolute; left: 0; right: 0;
-    top: 50%; height: 1px; background: var(--border); transform: translateY(-50%);
-}
-.mode-divider .mode-chat-chip {
-    position: relative; z-index: 1; flex-shrink: 0;
-    background: var(--bg-main); padding: 2px 10px; text-align: center;
+.mode-chat-chip {
+    display: none !important;
 }
 
 /* Thought Blocks */

@@ -1081,12 +1081,30 @@ function updateWelcomeVisibility() {
 // --- detachModeDividers.js ---
 function detachModeDividers(root) {
     const scope = root && root.querySelectorAll ? root : document;
-    const dividers = scope.querySelectorAll('.chat-prompt-wrap > .mode-divider');
+    const dividers = scope.querySelectorAll('.mode-divider, .chat-prompt-wrap > .mode-divider');
     dividers.forEach(div => {
-        const wrap = div.parentElement;
-        if (wrap && wrap.parentElement) {
-            wrap.parentElement.insertBefore(div, wrap);
+        const wrap = div.closest('.chat-prompt-wrap') || div.nextElementSibling;
+        const chip = div.querySelector('.mode-chat-chip');
+        let mode = 'code';
+        if (chip) {
+            if (chip.classList.contains('plan')) mode = 'plan';
+            else if (chip.classList.contains('ask')) mode = 'ask';
+            else if (chip.classList.contains('code')) mode = 'code';
         }
+        if (wrap) {
+            let next = wrap.nextElementSibling;
+            while (next && !next.classList.contains('chat-prompt-wrap')) {
+                if (next.classList.contains('md-content') && next.classList.contains('log-entry')) {
+                    if (!next.classList.contains('mode-plan') && !next.classList.contains('mode-ask') && !next.classList.contains('mode-code')) {
+                        next.classList.add(`mode-${mode}`);
+                        next.setAttribute('data-mode', mode);
+                    }
+                    break;
+                }
+                next = next.nextElementSibling;
+            }
+        }
+        div.remove();
     });
 }
 
@@ -1095,11 +1113,8 @@ if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' &
         for (const m of mutations) {
             for (const node of m.addedNodes) {
                 if (node.nodeType === 1) {
-                    if (node.classList && node.classList.contains('chat-prompt-wrap')) {
-                        const div = node.querySelector(':scope > .mode-divider');
-                        if (div && node.parentElement) {
-                            node.parentElement.insertBefore(div, node);
-                        }
+                    if (node.classList && (node.classList.contains('chat-prompt-wrap') || node.classList.contains('mode-divider'))) {
+                        detachModeDividers(node.parentElement || node);
                     } else if (node.querySelectorAll) {
                         detachModeDividers(node);
                     }

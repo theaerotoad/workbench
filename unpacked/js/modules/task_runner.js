@@ -389,7 +389,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
 
                         if (assistantText.trim() || streamDiv) {
                             if (!streamDiv && assistantText.trim()) {
-                                streamDiv = print("", "log-entry md-content", runSessionId);
+                                streamDiv = print("", `log-entry md-content mode-${runMode}`, runSessionId);
+                                if (streamDiv) streamDiv.setAttribute('data-mode', runMode);
                                 runGen.currentAssistantDiv = streamDiv;
                             }
                             if (streamDiv) {
@@ -411,7 +412,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
 
                     if (assistantText.trim() || streamDiv) {
                         if (!streamDiv && assistantText.trim()) {
-                            streamDiv = print("", "log-entry md-content", runSessionId);
+                            streamDiv = print("", `log-entry md-content mode-${runMode}`, runSessionId);
+                            if (streamDiv) streamDiv.setAttribute('data-mode', runMode);
                             runGen.currentAssistantDiv = streamDiv;
                         }
                         if (streamDiv) {
@@ -441,7 +443,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                     );
                 }
                 if (assistantText.trim()) {
-                    print(normalizeBlockHTML(formatMarkdownSnippet(assistantText)), "log-entry md-content", runSessionId);
+                    const el = print(normalizeBlockHTML(formatMarkdownSnippet(assistantText)), `log-entry md-content mode-${runMode}`, runSessionId);
+                    if (el) el.setAttribute('data-mode', runMode);
                 }
             }
 
