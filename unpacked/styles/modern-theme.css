@@ -415,25 +415,25 @@ html.theme-light #sidebar, html.theme-light #main-pane {
  box-shadow: none;
 }
 html.theme-light body.has-custom-bg #window-body {
-    background: rgba(255, 255, 255, 0.68) !important;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.75) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 html.theme-light body.has-custom-bg #top-header-bar {
-    background: rgba(247, 247, 249, 0.75) !important;
+    background: rgba(247, 247, 249, 0.85) !important;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 }
 
 /* Translucent chat elements (Light Theme) */
 html.theme-light body.has-custom-bg .chat-prompt-wrap {
-    background: rgba(247, 247, 249, 0.72) !important;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: rgba(247, 247, 249, 0.85) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     color: var(--fg) !important;
 }
 html.theme-light body.has-custom-bg #chat > .log-entry.md-content {
-    background: rgba(247, 247, 249, 0.40) !important;
+    background: rgba(247, 247, 249, 0.85) !important;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     color: var(--fg) !important;
@@ -445,9 +445,9 @@ html.theme-light body.has-custom-bg .code-box,
 html.theme-light body.has-custom-bg .thought-body,
 html.theme-light body.has-custom-bg .tool-output-text,
 html.theme-light body.has-custom-bg .compression-summary {
-    background: rgba(255, 255, 255, 0.65) !important;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(255, 255, 255, 0.75) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 /* Translucent buttons & inputs (Light Theme) */
@@ -487,9 +487,9 @@ html.theme-light body.has-custom-bg .editor-tab.plan-tab.active {
 html.theme-light body.has-custom-bg #monaco-diff-container,
 html.theme-light body.has-custom-bg #monaco-editor-container,
 html.theme-light body.has-custom-bg #markdown-preview-container {
-    background-color: rgba(255, 255, 255, 0.82) !important;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background-color: rgba(255, 255, 255, 0.90) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 html.theme-light body.has-custom-bg .monaco-editor,
 html.theme-light body.has-custom-bg .monaco-editor .monaco-editor-background,
