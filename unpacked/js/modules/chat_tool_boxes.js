@@ -234,7 +234,8 @@ function liveRenderToolBody(entry, html) {
         top: el.scrollTop,
         pinned: el.scrollHeight - el.scrollTop - el.clientHeight < 24
     }));
-    body.innerHTML = normalizeBlockHTML(String(html));
+    const liveTarget = body.querySelector('.tool-live-frame') || body;
+    liveTarget.innerHTML = normalizeBlockHTML(String(html));
     body.querySelectorAll('[data-live-scroll]').forEach((el, i) => {
         const st = prev[i];
         el.scrollTop = (!st || st.pinned) ? el.scrollHeight : st.top;
@@ -338,6 +339,99 @@ function renderPendingToolPreview(toolBuffer, sessionId) {
 window.renderPendingToolPreview = renderPendingToolPreview;
 // --- AST_EXPORTS_END ---
 
+// --- formatToolArgsHTML.js ---
+function formatToolArgsHTML(args) {
+    let formattedJson = '';
+    let countLabel = '';
+    let isEmpty = false;
+
+    if (args && typeof args === 'object') {
+        const keys = Object.keys(args);
+        if (keys.length === 0) {
+            isEmpty = true;
+            countLabel = '0 args';
+            formattedJson = '{}';
+        } else {
+            countLabel = `${keys.length} ${keys.length === 1 ? 'arg' : 'args'}`;
+            try {
+                formattedJson = JSON.stringify(args, null, 2);
+            } catch (_) {
+                formattedJson = String(args);
+            }
+        }
+    } else if (typeof args === 'string' && args.trim()) {
+        try {
+            const parsed = JSON.parse(args);
+            if (parsed && typeof parsed === 'object') {
+                const keys = Object.keys(parsed);
+                if (keys.length === 0) {
+                    isEmpty = true;
+                    countLabel = '0 args';
+                    formattedJson = '{}';
+                } else {
+                    countLabel = `${keys.length} ${keys.length === 1 ? 'arg' : 'args'}`;
+                    formattedJson = JSON.stringify(parsed, null, 2);
+                }
+            } else {
+                countLabel = '1 arg';
+                formattedJson = JSON.stringify(parsed, null, 2);
+            }
+        } catch (_) {
+            countLabel = 'raw';
+            formattedJson = args;
+        }
+    } else {
+        isEmpty = true;
+        countLabel = '0 args';
+        formattedJson = '{}';
+        args = {};
+    }
+
+    return `
+        <details class="tool-args-details${isEmpty ? ' is-empty' : ''}">
+            <summary class="tool-args-summary">
+                <span class="icon icon-chevron">expand_more</span>
+                <span class="tool-args-label">Arguments</span>
+                <span class="tool-args-count">${countLabel}</span>
+                <button type="button" class="btn-copy-args" title="Copy arguments JSON" onclick="copyToolArgs(this, event)">
+                    <span class="icon">content_copy</span>
+                </button>
+            </summary>
+            <div class="tool-args-content">
+                <pre class="tool-args-code">${escapeHTML(formattedJson)}</pre>
+            </div>
+        </details>
+    `;
+}
+
+// --- AST_EXPORTS_START ---
+window.formatToolArgsHTML = formatToolArgsHTML;
+// --- AST_EXPORTS_END ---
+
+// --- copyToolArgs.js ---
+function copyToolArgs(btn, ev) {
+    if (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+    }
+    const details = btn ? btn.closest('.tool-args-details') : null;
+    if (!details) return;
+    const code = details.querySelector('.tool-args-code');
+    if (!code) return;
+    const text = code.textContent || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            if (typeof showToast === 'function') {
+                showToast('Tool arguments copied', 'info', 1500);
+            }
+        }).catch(() => {});
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.copyToolArgs = copyToolArgs;
+// --- AST_EXPORTS_END ---
+
 // --- renderRunningToolBox.js ---
 function renderRunningToolBox(toolName, args, container = null, sessionId) {
     const sid = sessionId || state.activeSessionId;
@@ -360,7 +454,10 @@ function renderRunningToolBox(toolName, args, container = null, sessionId) {
             <span class="spinner-icon running-tool-spinner" style="font-size:12px; margin-left:auto;">${frames[0]}</span>
             <span class="dim running-tool-label" style="font-size:11px;">running...</span>
         </div>
-        <div class="tool-box-body"></div>
+        <div class="tool-box-body">
+            ${formatToolArgsHTML(args)}
+            <div class="tool-live-frame"></div>
+        </div>
     `);
 
     const gen = getGenState(sid);
@@ -438,6 +535,7 @@ function renderToolCallBox(toolName, args, resultOutput, isDone = false, isError
             <span class="icon ${isError ? 'tool-error-icon' : ''}" style="font-size:14px; color:${statusColor}; margin-left:auto;">${statusIcon}</span>
         </div>
         <div class="tool-box-body">
+            ${formatToolArgsHTML(args)}
             ${innerContentHTML}
         </div>
     `);
@@ -486,6 +584,7 @@ function safeRenderToolCallBox(toolName, args, resultOutput, isDone = false, isE
                 ${errorIcon}
             </div>
             <div class="tool-box-body">
+                ${formatToolArgsHTML(args)}
                 <div class="tool-output-text ${isError ? 'error-output-text' : ''}">${escapeHTML(String(resultOutput ?? '(no output)'))}</div>
             </div>
         </div>`;
@@ -509,6 +608,7 @@ function safeRenderToolCallBox(toolName, args, resultOutput, isDone = false, isE
                     <span class="icon tool-error-icon" style="font-size:14px; color:var(--red); margin-left:auto;">error</span>
                 </div>
                 <div class="tool-box-body">
+                    ${formatToolArgsHTML(args)}
                     <div class="tool-output-text error-output-text">${escapeHTML(String(resultOutput ?? '(no output)'))}</div>
                 </div>
             `);

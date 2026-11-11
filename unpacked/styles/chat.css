@@ -713,6 +713,139 @@ body.hide-code-preview .tool-ui-wrap { display: none !important; }
     border: 1px solid #2a2a2a;
 }
 
+/* Tool Call Arguments Disclosure */
+.tool-args-details {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    overflow: hidden;
+    font-size: 11.5px;
+    font-family: var(--font-mono, monospace);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.tool-args-details:hover {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+.tool-args-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--dim);
+    font-size: 11px;
+    line-height: 1.4;
+    list-style: none;
+    outline: none;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+    transition: all 0.12s ease;
+}
+.tool-args-summary::-webkit-details-marker { display: none; }
+.tool-args-summary::marker { display: none; content: ""; }
+.tool-args-summary:hover {
+    color: var(--fg);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+.tool-args-summary .icon-chevron {
+    font-size: 13px;
+    color: var(--dim);
+    transition: transform 0.15s ease;
+    transform: rotate(-90deg);
+}
+.tool-args-details[open] > .tool-args-summary .icon-chevron {
+    transform: rotate(0deg);
+}
+.tool-args-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--dim);
+}
+.tool-args-count {
+    font-size: 10px;
+    color: var(--dim);
+    opacity: 0.8;
+}
+.tool-args-details.is-empty .tool-args-count {
+    opacity: 0.5;
+}
+.btn-copy-args {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+.btn-copy-args:hover {
+    color: var(--fg);
+    background: rgba(255, 255, 255, 0.1);
+}
+.btn-copy-args .icon {
+    font-size: 12px;
+}
+.tool-args-details[open] > .tool-args-summary {
+    border-bottom: 1px solid var(--border);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.tool-args-content {
+    padding: 6px 10px;
+    background: #121316;
+    max-height: 220px;
+    overflow-y: auto;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+}
+.tool-args-code {
+    margin: 0;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--fg);
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+}
+.tool-live-frame {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+html.theme-light .tool-args-details {
+    background: rgba(0, 0, 0, 0.015);
+    border-color: var(--border);
+}
+html.theme-light .tool-args-summary {
+    background: rgba(0, 0, 0, 0.035);
+}
+html.theme-light .tool-args-summary:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+html.theme-light .tool-args-content {
+    background: var(--bg-input, #f8f9fa);
+}
+html.theme-light .btn-copy-args:hover {
+    color: var(--fg);
+    background: rgba(0, 0, 0, 0.08);
+}
+body.has-custom-bg .tool-args-content {
+    background: rgba(18, 19, 22, 0.75);
+    backdrop-filter: blur(8px);
+}
+html.theme-light body.has-custom-bg .tool-args-content {
+    background: rgba(245, 247, 250, 0.85);
+}
+
 /* Plan Action Card */
 .plan-action-card {
     margin: 8px 0; background: rgba(229, 192, 123, 0.08);
