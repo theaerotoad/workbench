@@ -167,11 +167,11 @@ let mermaidProcessTimer = null;
 
 function unescapeHTML(str) {
     return String(str || '')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, '&');
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/"/g, '"')
+        .replace(/'/g, "'")
+        .replace(/&/g, '&');
 }
 
 function hashString(str) {
@@ -225,7 +225,7 @@ async function processMermaidQueue() {
                 });
             }
             return;
-            }
+        }
         scheduleMermaidProcessing();
         return;
     }
@@ -412,7 +412,7 @@ function renderSvgBlock(escapedCode) {
                     <button class="btn-copy-code" type="button" title="Copy code"><span class="icon" style="font-size:13px;">content_copy</span></button>
                 </div>
             </div>
-            <div class="svg-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>Invalid SVG: Must start with &lt;svg</span></div>
+            <div class="svg-error"><span class="icon" style="font-size:14px;color:var(--red);">error</span><span>Invalid SVG: Must start with <svg</span></div>
             <div class="code-box-content svg-code-view"><pre><code>${escapedCode}</code></pre></div>
         </div>`;
     }
@@ -526,7 +526,7 @@ function formatMarkdownSnippet(text, basePath = "") {
         const idx = mathBlocks.length;
         if (window.katex) {
             try {
-                let tex = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+                let tex = math.replace(/</g, '<').replace(/>/g, '>').replace(/&/g, '&').replace(/"/g, '"').replace(/'/g, "'");
                 mathBlocks.push(window.katex.renderToString(tex, { displayMode: true, throwOnError: false }));
             } catch (e) {
                 mathBlocks.push(`<span style="color:var(--red);" title="KaTeX error: ${e.message}">${match}</span>`);
@@ -541,7 +541,7 @@ function formatMarkdownSnippet(text, basePath = "") {
         const idx = mathBlocks.length;
         if (window.katex) {
             try {
-                let tex = math.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+                let tex = math.replace(/</g, '<').replace(/>/g, '>').replace(/&/g, '&').replace(/"/g, '"').replace(/'/g, "'");
                 mathBlocks.push(window.katex.renderToString(tex, { displayMode: false, throwOnError: false }));
             } catch (e) {
                 mathBlocks.push(`<span style="color:var(--red);" title="KaTeX error: ${e.message}">${match}</span>`);
@@ -554,7 +554,7 @@ function formatMarkdownSnippet(text, basePath = "") {
 
     // Restore safe inline HTML tags that are commonly used in Markdown (e.g., inside tables or text).
     // Only tags without attributes are unescaped to prevent XSS.
-    html = html.replace(/&lt;(\/?(?:br|ul|li|ol|b|i|u|strong|em|hr|table|thead|tbody|tr|th|td|kbd|details|summary|sup|sub|p|span|div)\s*\/?)&gt;/gi, '<$1>');
+    html = html.replace(/<(\/?(?:br|ul|li|ol|b|i|u|strong|em|hr|table|thead|tbody|tr|th|td|kbd|details|summary|sup|sub|p|span|div)\s*\/?)>/gi, '<$1>');
 
     const lines = html.split('\n');
     const out = [];
@@ -632,7 +632,7 @@ function formatMarkdownSnippet(text, basePath = "") {
             continue;
         }
 
-        const bqMatch = line.match(/^\s*&gt;\s?(.*)$/);
+        const bqMatch = line.match(/^\s*>\s?(.*)$/);
         if (bqMatch) {
             flushParagraph(); closeLists();
             if (!inBlockquote) { out.push('<blockquote>'); inBlockquote = true; }
@@ -712,7 +712,7 @@ function inlineMarkdown(text, basePath = "") {
 
         let url = target;
         let title = '';
-        const titleMatch = target.match(/^([^\s]+)(?:\s+(?:&quot;|&#39;|["'])(.*?)(?:&quot;|&#39;|["']))?$/);
+        const titleMatch = target.match(/^([^\s]+)(?:\s+(?:"|'|["'])(.*?)(?:"|'|["']))?$/);
         if (titleMatch) {
             url = titleMatch[1];
             title = titleMatch[2] || '';
@@ -721,18 +721,18 @@ function inlineMarkdown(text, basePath = "") {
         if (/^javascript:/i.test(url.trim())) return escapeHTML(m);
 
         const isWebOrData = /^(?:https?:|data:image\/|blob:|\/\/)/i.test(url);
-        const titleAttr = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
-        const altAttr = alt ? alt.replace(/"/g, '&quot;') : '';
+        const titleAttr = title ? ` title="${title.replace(/"/g, '"')}"` : '';
+        const altAttr = alt ? alt.replace(/"/g, '"') : '';
 
         if (isWebOrData) {
             return `<img class="md-image" src="${url}" alt="${altAttr}"${titleAttr} loading="lazy" referrerpolicy="no-referrer" onerror="this.classList.add('md-image-error');" />`;
         } else {
             const fileBase = basePath || '';
             const resolvedPath = resolveRelativePath(fileBase, url);
-            const baseAttr = fileBase ? ` data-base-path="${fileBase.replace(/"/g, '&quot;')}"` : '';
-            const resolvedAttr = resolvedPath ? ` data-resolved-path="${resolvedPath.replace(/"/g, '&quot;')}"` : '';
+            const baseAttr = fileBase ? ` data-base-path="${fileBase.replace(/"/g, '"')}"` : '';
+            const resolvedAttr = resolvedPath ? ` data-resolved-path="${resolvedPath.replace(/"/g, '"')}"` : '';
             const placeholder = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
-            return `<img class="md-image md-image-loading" src="${placeholder}" data-src="${url.replace(/"/g, '&quot;')}"${resolvedAttr}${baseAttr} alt="${altAttr}"${titleAttr} loading="lazy" />`;
+            return `<img class="md-image md-image-loading" src="${placeholder}" data-src="${url.replace(/"/g, '"')}"${resolvedAttr}${baseAttr} alt="${altAttr}"${titleAttr} loading="lazy" onerror="window.onMarkdownImageError && window.onMarkdownImageError(this)" />`;
         }
     });
 
@@ -753,24 +753,88 @@ function inlineMarkdown(text, basePath = "") {
 window.inlineMarkdown = inlineMarkdown;
 // --- AST_EXPORTS_END ---
 
-// --- resolveMarkdownImages.js ---
-async function resolveMarkdownImages(container, basePath = '') {
+// --- onMarkdownImageError.js ---
+function onMarkdownImageError(img) {
+    if (!img) return;
+    const rawSrc = img.getAttribute('data-src') || img.getAttribute('data-resolved-path');
+    if (rawSrc && !/^(?:https?:|data:image\/|\/\/)/i.test(rawSrc)) {
+        img.removeAttribute('data-resolved');
+        img.classList.remove('md-image-error');
+        img.classList.add('md-image-loading');
+        const placeholder = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
+        if (img.src !== placeholder) {
+            img.src = placeholder;
+            scheduleChatImageResolution();
+            return;
+        }
+    }
+    img.classList.remove('md-image-loading');
+    img.classList.add('md-image-error');
+}
+
+// --- AST_EXPORTS_START ---
+window.onMarkdownImageError = onMarkdownImageError;
+// --- AST_EXPORTS_END ---
+
+// --- rehydrateMarkdownImages.js ---
+function rehydrateMarkdownImages(container) {
     if (!container) return;
-    const images = container.querySelectorAll('img[data-src]:not([data-resolved])');
+    const placeholder = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
+    const imgs = container.querySelectorAll('img');
+    let needsResolve = false;
+
+    imgs.forEach(img => {
+        const dataSrc = img.getAttribute('data-src');
+        const src = img.getAttribute('src') || '';
+        const isDeadBlob = src.startsWith('blob:');
+        const resolved = img.getAttribute('data-resolved');
+
+        if (dataSrc || isDeadBlob) {
+            const target = dataSrc || img.getAttribute('data-resolved-path') || img.getAttribute('alt');
+            if (target && !/^(?:https?:|data:image\/|\/\/)/i.test(target)) {
+                if (!img.getAttribute('data-src')) img.setAttribute('data-src', target);
+                if (isDeadBlob || resolved === 'failed' || resolved === 'true' || resolved === 'pending') {
+                    img.removeAttribute('data-resolved');
+                    img.classList.remove('md-image-error');
+                    img.classList.add('md-image-loading');
+                    img.src = placeholder;
+                    needsResolve = true;
+                }
+            }
+        }
+    });
+
+    if (needsResolve) {
+        scheduleChatImageResolution();
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.rehydrateMarkdownImages = rehydrateMarkdownImages;
+// --- AST_EXPORTS_END ---
+
+// --- resolveMarkdownImages.js ---
+async function resolveMarkdownImages(container, basePath = '', force = false) {
+    if (!container) return;
+    const selector = force
+        ? 'img[data-src]'
+        : 'img[data-src]:not([data-resolved="true"]):not([data-resolved="pending"])';
+    const images = container.querySelectorAll(selector);
     if (!images.length) return;
 
     for (const img of images) {
-        img.setAttribute('data-resolved', 'pending');
         const rawSrc = img.getAttribute('data-src');
         if (!rawSrc) continue;
 
         if (/^(?:https?:|data:|blob:|\/\/)/i.test(rawSrc)) {
             img.src = rawSrc;
             img.classList.remove('md-image-loading');
+            img.classList.remove('md-image-error');
             img.setAttribute('data-resolved', 'true');
             continue;
         }
 
+        img.setAttribute('data-resolved', 'pending');
         const fileBase = img.getAttribute('data-base-path') || basePath || '';
         const targetPath = img.getAttribute('data-resolved-path') || resolveRelativePath(fileBase, rawSrc);
 
@@ -792,19 +856,32 @@ async function resolveMarkdownImages(container, basePath = '') {
             if (url) {
                 img.src = url;
                 img.classList.remove('md-image-loading');
+                img.classList.remove('md-image-error');
                 img.setAttribute('data-resolved', 'true');
             } else {
-                img.classList.remove('md-image-loading');
-                img.classList.add('md-image-error');
-                img.alt = `[Image not found: ${rawSrc}]`;
-                img.setAttribute('data-resolved', 'failed');
+                const wsReady = (typeof rootHandle !== 'undefined' && rootHandle) || (typeof vfs !== 'undefined' && vfs);
+                if (!wsReady) {
+                    img.removeAttribute('data-resolved');
+                    setTimeout(() => scheduleChatImageResolution(), 400);
+                } else {
+                    img.classList.remove('md-image-loading');
+                    img.classList.add('md-image-error');
+                    img.alt = `[Image not found: ${rawSrc}]`;
+                    img.setAttribute('data-resolved', 'failed');
+                }
             }
         } catch (e) {
             console.warn('Failed to resolve markdown image:', targetPath, e);
-            img.classList.remove('md-image-loading');
-            img.classList.add('md-image-error');
-            img.alt = `[Failed to load image: ${rawSrc}]`;
-            img.setAttribute('data-resolved', 'failed');
+            const wsReady = (typeof rootHandle !== 'undefined' && rootHandle) || (typeof vfs !== 'undefined' && vfs);
+            if (!wsReady) {
+                img.removeAttribute('data-resolved');
+                setTimeout(() => scheduleChatImageResolution(), 400);
+            } else {
+                img.classList.remove('md-image-loading');
+                img.classList.add('md-image-error');
+                img.alt = `[Failed to load image: ${rawSrc}]`;
+                img.setAttribute('data-resolved', 'failed');
+            }
         }
     }
 }
@@ -1004,6 +1081,13 @@ window.renderGenStats = renderGenStats;
 function serializeTermHTML() {
     const clone = term.cloneNode(true);
     stripTransientLiveUI(clone);
+    const placeholder = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 1 1\'%3E%3C/svg%3E';
+    clone.querySelectorAll('img[data-src]').forEach(img => {
+        img.src = placeholder;
+        img.removeAttribute('data-resolved');
+        img.classList.add('md-image-loading');
+        img.classList.remove('md-image-error');
+    });
     return clone.innerHTML;
 }
 
@@ -1053,7 +1137,7 @@ function updateWelcomeVisibility() {
                     ${modeDescriptions}
                     <div>- Type <span class="cyan">/</span> for command menu (<span class="cyan">/plan</span>, <span class="cyan">/ask</span>, <span class="cyan">/code</span>, <span class="cyan">/execute-plan</span>, <span class="cyan">/restore</span>, <span class="cyan">/compact</span>).</div>
                     <div>- Press <span class="yellow">ESC</span> at any time to cancel generation.</div>
-                    <div>- <span class="cyan">↑/↓</span> for history &nbsp;|&nbsp; <span class="cyan">/</span> for commands &nbsp;|&nbsp; <span class="cyan">@</span> for files &nbsp;|&nbsp; <span class="cyan">Tab</span> to accept autocomplete</div>
+                    <div>- <span class="cyan">↑/↓</span> for history  |  <span class="cyan">/</span> for commands  |  <span class="cyan">@</span> for files  |  <span class="cyan">Tab</span> to accept autocomplete</div>
                 </div>
                 <div class="welcome-models-card">
                     <div class="welcome-models-header">
@@ -1142,4 +1226,7 @@ if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' &
 
 // --- AST_EXPORTS_START ---
     window.detachModeDividers = detachModeDividers;
+    window.onMarkdownImageError = onMarkdownImageError;
+    window.rehydrateMarkdownImages = rehydrateMarkdownImages;
+    window.scheduleChatImageResolution = scheduleChatImageResolution;
 // --- AST_EXPORTS_END ---
