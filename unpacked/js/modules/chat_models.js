@@ -407,17 +407,6 @@ function renderModelsModal(focusField) {
         });
     }
 
-    const editJsonBtn = document.getElementById('models-modal-edit-json');
-    if (editJsonBtn && !editJsonBtn._hasClickListener) {
-        editJsonBtn._hasClickListener = true;
-        editJsonBtn.addEventListener('click', () => {
-            closeModelsModal();
-            if (typeof window.openFileTab === 'function') {
-                window.openFileTab('.agent/models.json');
-            }
-        });
-    }
-
     // Left pane: the provider list, always in the same place.
     mmProviderListEl.innerHTML = !hasProviders
         ? `<div class="mm-empty" style="padding:18px 8px;">No providers yet</div>`
