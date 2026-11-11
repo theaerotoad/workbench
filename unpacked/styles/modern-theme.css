@@ -20,13 +20,13 @@
  --primary:      #ff7a50;         /* coral accent                         */
  --primary-2:    #e0653f;         /* coral hover partner                  */
  --primary-rgb:  255,122,80;      /* rgba() tint base                     */
- --secondary:    #a78bfa;         /* was: --magenta                      */
- --tertiary:     #8b7bff;         /* was: --purple                       */
- --success:      #3ecf8e;         /* was: --green                        */
- --info:         #7aa8ff;         /* was: --blue                         */
- --warning:      #ffc26b;         /* was: --yellow                       */
- --danger:       #ff6b7a;         /* was: --red / --pink                 */
- --highlight:    #ff9d6c;         /* was: --orange                       */
+ --secondary:    #a78bfa;         /* was: --magenta                       */
+ --tertiary:     #8b7bff;         /* was: --purple                        */
+ --success:      #3ecf8e;         /* was: --green                         */
+ --info:         #7aa8ff;         /* was: --blue                          */
+ --warning:      #ffc26b;         /* was: --yellow                        */
+ --danger:       #ff6b7a;         /* was: --red / --pink                  */
+ --highlight:    #ff9d6c;         /* was: --orange                        */
 
  /* Legacy aliases — keep the existing rules working unchanged.
     Change --primary to re-theme the accent; all these names follow it. */
@@ -77,18 +77,110 @@ body.has-custom-bg #window {
     background: transparent !important;
 }
 body.has-custom-bg #window-body {
-    background: rgba(10, 10, 12, 0.72) !important;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(10, 10, 12, 0.35) !important;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
 }
 body.has-custom-bg #top-header-bar {
-    background: rgba(17, 18, 22, 0.8) !important;
+    background: rgba(17, 18, 22, 0.72) !important;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
 }
 body.has-custom-bg #sidebar,
 body.has-custom-bg #main-pane {
     background: transparent !important;
+}
+
+/* Translucent chat elements (Dark Theme) */
+body.has-custom-bg .chat-prompt-wrap,
+body.has-custom-bg #chat > .log-entry.md-content {
+    background: rgba(24, 26, 34, 0.72) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+body.has-custom-bg .code-box,
+body.has-custom-bg .thought-body,
+body.has-custom-bg .tool-output-text,
+body.has-custom-bg .compression-summary {
+    background: rgba(16, 16, 20, 0.65) !important;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+/* Translucent buttons & inputs (Dark Theme) */
+body.has-custom-bg #prompt-input-row {
+    background: rgba(24, 26, 34, 0.75) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+body.has-custom-bg #cmd {
+    background: transparent !important;
+}
+body.has-custom-bg .mode-segmented-group,
+body.has-custom-bg #model-select-btn,
+body.has-custom-bg .status-token-metric,
+body.has-custom-bg .pill-btn,
+body.has-custom-bg .editor-view-segmented,
+body.has-custom-bg .jump-to-bottom-btn {
+    background: rgba(24, 26, 34, 0.72) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+body.has-custom-bg .btn-prompt-action,
+body.has-custom-bg .btn-copy-code {
+    background: rgba(24, 26, 34, 0.65) !important;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+body.has-custom-bg .editor-tab.active,
+body.has-custom-bg .editor-tab.diff-tab.active,
+body.has-custom-bg .editor-tab.plan-tab.active {
+    background: rgba(21, 23, 29, 0.75) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* Translucent Monaco editor & views (Dark Theme) */
+body.has-custom-bg #editor-view,
+body.has-custom-bg #diff-view {
+    background: transparent !important;
+}
+body.has-custom-bg #monaco-editor-container,
+body.has-custom-bg #monaco-diff-container,
+body.has-custom-bg .monaco-editor,
+body.has-custom-bg .monaco-editor .monaco-editor-background,
+body.has-custom-bg .monaco-editor .margin,
+body.has-custom-bg .monaco-editor .inputarea.ime-input,
+body.has-custom-bg #markdown-preview-container {
+    background-color: rgba(14, 15, 19, 0.72) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+body.has-custom-bg .monaco-editor .minimap,
+body.has-custom-bg .monaco-editor .minimap-slider,
+body.has-custom-bg .monaco-editor .minimap-decorations-layer {
+    background-color: transparent !important;
+}
+
+/* Translucent popovers & dialogs (Dark Theme) */
+body.has-custom-bg #sessions-popover,
+body.has-custom-bg #settings-popover .settings-panel,
+body.has-custom-bg #yesno-modal,
+body.has-custom-bg #cleardata-modal,
+body.has-custom-bg #about-modal,
+body.has-custom-bg #newtool-modal,
+body.has-custom-bg #models-modal,
+body.has-custom-bg #msg-delete-modal,
+body.has-custom-bg #msg-edit-modal,
+body.has-custom-bg #settings-modal,
+body.has-custom-bg #model-select-dropdown,
+body.has-custom-bg #model-picker-dropdown,
+body.has-custom-bg #explorer-context-menu,
+body.has-custom-bg #autocomplete-popup,
+body.has-custom-bg .attach-menu {
+    background: rgba(21, 21, 25, 0.88) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
 }
 
 /* Window + layout */
@@ -311,10 +403,10 @@ html.theme-light #sidebar, html.theme-light #main-pane {
  box-shadow: none;
 }
 html.theme-light body.has-custom-bg #window-body {
-    background: rgba(255, 255, 255, 0.76) !important;
+    background: rgba(255, 255, 255, 0.38) !important;
 }
 html.theme-light body.has-custom-bg #top-header-bar {
-    background: rgba(247, 247, 249, 0.85) !important;
+    background: rgba(247, 247, 249, 0.75) !important;
 }
 html.theme-light #sidebar { border-right: 1px solid var(--border); }
 html.theme-light #chat-view, html.theme-light #chat-container, html.theme-light #chat, html.theme-light #tabs-bar { background: transparent; }
@@ -369,4 +461,95 @@ html.theme-light #btn-workspace-display:hover, html.theme-light .workspace-pill-
 html.theme-light #btn-exit-workspace { color: var(--dim); }
 html.theme-light #btn-exit-workspace:hover { color: var(--danger); background: rgba(255,107,122,0.1); }
 html.theme-light .toast { background: rgba(255,255,255,0.98); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-html.theme-light #monaco-diff-container, html.theme-light #monaco-editor-container { background: #fff; }
+
+/* Translucent chat elements (Light Theme) */
+html.theme-light body.has-custom-bg .chat-prompt-wrap,
+html.theme-light body.has-custom-bg #chat > .log-entry.md-content {
+    background: rgba(247, 247, 249, 0.72) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+html.theme-light body.has-custom-bg .code-box,
+html.theme-light body.has-custom-bg .thought-body,
+html.theme-light body.has-custom-bg .tool-output-text,
+html.theme-light body.has-custom-bg .compression-summary {
+    background: rgba(255, 255, 255, 0.65) !important;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+/* Translucent buttons & inputs (Light Theme) */
+html.theme-light body.has-custom-bg #prompt-input-row {
+    background: rgba(255, 255, 255, 0.75) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+html.theme-light body.has-custom-bg #cmd {
+    background: transparent !important;
+}
+html.theme-light body.has-custom-bg .mode-segmented-group,
+html.theme-light body.has-custom-bg #model-select-btn,
+html.theme-light body.has-custom-bg .status-token-metric,
+html.theme-light body.has-custom-bg .pill-btn,
+html.theme-light body.has-custom-bg .editor-view-segmented,
+html.theme-light body.has-custom-bg .jump-to-bottom-btn {
+    background: rgba(255, 255, 255, 0.75) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+html.theme-light body.has-custom-bg .btn-prompt-action,
+html.theme-light body.has-custom-bg .btn-copy-code {
+    background: rgba(255, 255, 255, 0.65) !important;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+html.theme-light body.has-custom-bg .editor-tab.active,
+html.theme-light body.has-custom-bg .editor-tab.diff-tab.active,
+html.theme-light body.has-custom-bg .editor-tab.plan-tab.active {
+    background: rgba(255, 255, 255, 0.78) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* Translucent Monaco editor & views (Light Theme) */
+html.theme-light body.has-custom-bg #monaco-diff-container,
+html.theme-light body.has-custom-bg #monaco-editor-container,
+html.theme-light body.has-custom-bg .monaco-editor,
+html.theme-light body.has-custom-bg .monaco-editor .monaco-editor-background,
+html.theme-light body.has-custom-bg .monaco-editor .margin,
+html.theme-light body.has-custom-bg .monaco-editor .inputarea.ime-input,
+html.theme-light body.has-custom-bg #markdown-preview-container {
+    background-color: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+html.theme-light body.has-custom-bg .monaco-editor .minimap,
+html.theme-light body.has-custom-bg .monaco-editor .minimap-slider {
+    background-color: transparent !important;
+}
+
+/* Translucent popovers & dialogs (Light Theme) */
+html.theme-light body.has-custom-bg #sessions-popover,
+html.theme-light body.has-custom-bg #settings-popover .settings-panel,
+html.theme-light body.has-custom-bg #yesno-modal,
+html.theme-light body.has-custom-bg #cleardata-modal,
+html.theme-light body.has-custom-bg #about-modal,
+html.theme-light body.has-custom-bg #newtool-modal,
+html.theme-light body.has-custom-bg #models-modal,
+html.theme-light body.has-custom-bg #msg-delete-modal,
+html.theme-light body.has-custom-bg #msg-edit-modal,
+html.theme-light body.has-custom-bg #settings-modal,
+html.theme-light body.has-custom-bg #model-select-dropdown,
+html.theme-light body.has-custom-bg #model-picker-dropdown,
+html.theme-light body.has-custom-bg #explorer-context-menu,
+html.theme-light body.has-custom-bg #autocomplete-popup,
+html.theme-light body.has-custom-bg .attach-menu {
+    background: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+
+html.theme-light:not(:has(body.has-custom-bg)) #monaco-diff-container,
+html.theme-light:not(:has(body.has-custom-bg)) #monaco-editor-container {
+    background: #fff;
+}
