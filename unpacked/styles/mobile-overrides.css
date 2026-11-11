@@ -1,7 +1,7 @@
 /* Loaded after #modern-theme so these win on phones */
 /* ---- Width-safe prompt dock (any viewport, incl. iPad / narrow chat pane next to the explorer) ---- */
 #main-pane, #chat, #bottom-dock-area, #prompt-bar, #prompt-top-row,
-#prompt-input-row, #statusbar { min-width: 0; box-sizing: border-box; }
+#prompt-input-row, #statusbar, #doc-control-bar, #doc-bar-info { min-width: 0; box-sizing: border-box; }
 #bottom-dock-area { max-width: 100%; }
 #cmd { min-width: 0; }
 
@@ -72,6 +72,13 @@
     #mode-toolbar { flex: 1 1 0; }
     #model-group { flex: 0 1 auto; }
     #model-select-btn { max-width: 140px; }
+
+    #doc-control-bar { padding: 0 8px; gap: 6px; }
+    #doc-bar-badge { display: none !important; }
+}
+@media (max-width: 480px) {
+    #doc-bar-dirty { display: none !important; }
+    .doc-bar-btn { padding: 0 5px; }
 }
 @media (max-width: 380px) {
     #model-select-btn { max-width: 96px; }

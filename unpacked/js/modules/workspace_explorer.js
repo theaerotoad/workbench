@@ -483,11 +483,16 @@ function showContextMenu(e, node) {
 
     const renderMdBtn = document.getElementById('ctx-render-md');
     if (renderMdBtn) {
-        if (node && node.kind === 'file' && node.name.toLowerCase().endsWith('.md')) {
+        const renderer = (node && node.kind === 'file' && typeof getDocumentRenderer === 'function')
+            ? getDocumentRenderer(node.path)
+            : null;
+        if (renderer) {
             renderMdBtn.style.display = 'flex';
+            const labelEl = renderMdBtn.querySelector('span:last-child');
+            if (labelEl) labelEl.textContent = `Render ${renderer.label}`;
             renderMdBtn.onclick = () => {
                 contextMenu.style.display = 'none';
-                window.openFileTab('render:' + node.path);
+                window.openFileTab(node.path, { viewMode: 'render' });
             };
         } else {
             renderMdBtn.style.display = 'none';

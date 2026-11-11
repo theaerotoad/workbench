@@ -373,11 +373,30 @@ async function restoreActiveSessionContent() {
     renderAllPromptGroups();
 
     const savedTabs = Array.isArray(current.openTabs) && current.openTabs.length ? current.openTabs : ['chat'];
-    state.openTabs = savedTabs.slice();
+    const migratedViewModes = {
+        ...(current.tabViewModes && typeof current.tabViewModes === 'object' ? current.tabViewModes : {})
+    };
+    const normalizedTabs = [];
+    for (const rawTab of savedTabs) {
+        if (typeof rawTab !== 'string' || !rawTab) continue;
+        if (rawTab.startsWith('render:')) {
+            const fp = rawTab.slice('render:'.length);
+            if (fp) {
+                migratedViewModes[fp] = 'render';
+                if (!normalizedTabs.includes(fp)) normalizedTabs.push(fp);
+            }
+        } else if (!normalizedTabs.includes(rawTab)) {
+            normalizedTabs.push(rawTab);
+        }
+    }
+    if (!normalizedTabs.length) normalizedTabs.push('chat');
+    state.openTabs = normalizedTabs;
+    state.tabViewModes = migratedViewModes;
     try {
         await switchTab('chat');
     } catch(e) {
         state.openTabs = ['chat'];
+        state.tabViewModes = {};
         await switchTab('chat');
     }
 }
@@ -437,6 +456,7 @@ async function saveSession(sessionId, force) {
             state.sessions[id].chatHTML = serializeTermHTML();
             state.sessions[id].openTabs = state.openTabs;
             state.sessions[id].activeTab = state.activeTab;
+            state.sessions[id].tabViewModes = { ...(state.tabViewModes || {}) };
         }
         state.sessions[id].updatedAt = Date.now();
         state.sessions[id].modifiedFiles = Array.from(ctx.modifiedFiles);
@@ -472,6 +492,7 @@ async function saveSession(sessionId, force) {
             patch.chatHTML = state.sessions[id].chatHTML;
             patch.openTabs = state.sessions[id].openTabs;
             patch.activeTab = state.sessions[id].activeTab;
+            patch.tabViewModes = state.sessions[id].tabViewModes;
             patch.linesAdded = state.sessions[id].linesAdded;
             patch.linesRemoved = state.sessions[id].linesRemoved;
             patch.lastTokenUsage = state.sessions[id].lastTokenUsage;

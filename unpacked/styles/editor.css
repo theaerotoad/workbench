@@ -81,6 +81,10 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
     border-radius: 2px; color: var(--dim); margin-left: 2px;
 }
 .tab-close:hover { background: rgba(255, 255, 255, 0.15); color: var(--red); }
+.tab-render-badge {
+    margin-left: 1px;
+    flex-shrink: 0;
+}
 .tab-dirty-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--fg); opacity: 0.75; margin-left: 2px; flex-shrink: 0;
@@ -140,14 +144,88 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
     width: 100%; height: 100%; background: var(--bg-main);
 }
 
+/* Document Control Bar */
+#doc-control-bar {
+    height: 30px; min-height: 30px; padding: 0 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--bg-panel); border-bottom: 1px solid var(--border);
+    flex-shrink: 0; user-select: none; box-sizing: border-box;
+}
+#doc-bar-info {
+    display: flex; align-items: center; gap: 6px;
+    min-width: 0; flex: 1 1 auto; overflow: hidden;
+}
+#doc-bar-icon {
+    font-size: 14px; color: var(--dim); flex-shrink: 0;
+}
+#doc-bar-path {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--fg); opacity: 0.85;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0;
+}
+.doc-bar-badge {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 1px 6px; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+    color: var(--dim); white-space: nowrap; flex-shrink: 0;
+}
+.doc-bar-dirty {
+    font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 3px;
+    background: rgba(255, 194, 107, 0.12); border: 1px solid rgba(255, 194, 107, 0.35);
+    color: var(--yellow); white-space: nowrap; flex-shrink: 0;
+}
+#doc-bar-controls {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+#doc-view-toggle {
+    display: inline-flex; padding: 1px;
+}
+#doc-view-toggle .seg-btn {
+    padding: 1px 7px; font-size: 11px;
+}
+#doc-bar-image-controls,
+#doc-bar-extra-actions {
+    display: inline-flex; align-items: center; gap: 4px;
+}
+#doc-bar-extra-actions:empty {
+    display: none;
+}
+.doc-bar-btn {
+    height: 22px; background: var(--bg-input); color: var(--dim);
+    border: 1px solid var(--border); border-radius: 3px; padding: 0 7px;
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 4px;
+    cursor: pointer; white-space: nowrap; transition: all 0.12s ease;
+}
+.doc-bar-btn:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+    border-color: var(--border-highlight); color: var(--fg);
+}
+.doc-bar-btn.dirty {
+    border-color: rgba(255, 194, 107, 0.55);
+    color: var(--yellow);
+    background: rgba(255, 194, 107, 0.08);
+}
+.doc-bar-btn.dirty:hover {
+    border-color: var(--yellow);
+    background: rgba(255, 194, 107, 0.16);
+    color: var(--yellow);
+}
+.doc-bar-zoom-label {
+    min-width: 46px; justify-content: center;
+    font-family: var(--font-mono); font-size: 10.5px;
+}
+
 /* Monaco Editor View */
 #editor-view {
     display: none; flex-grow: 1; flex-direction: column;
     overflow: hidden; background: var(--bg-main); position: relative;
 }
 #monaco-editor-container {
-    flex-grow: 1; position: relative; overflow: hidden;
-    width: 100%; height: 100%; background: var(--bg-main);
+    flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden;
+    width: 100%; background: var(--bg-main);
 }
 
 /* Editor Save Error Banner */
@@ -182,7 +260,7 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
 /* Binary & Image Viewer */
 #editor-binary-notice {
     display: none; flex-direction: column; align-items: center;
-    justify-content: center; height: 100%; gap: 12px;
+    justify-content: center; flex: 1 1 auto; min-height: 0; width: 100%; gap: 12px;
     color: var(--dim); font-size: 13px; position: relative;
     overflow: hidden;
 }
@@ -193,24 +271,11 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
     cursor: grab; user-select: none; -webkit-user-drag: none; touch-action: none;
 }
 #editor-image-preview.panning { cursor: grabbing; transition: none; }
-#image-zoom-bar {
-    display: none; align-items: center; gap: 4px;
-    position: absolute; top: 10px; right: 10px; z-index: 2;
-}
-#image-zoom-bar .img-zoom-btn {
-    background: var(--bg-input); color: var(--fg);
-    border: 1px solid var(--border); padding: 2px 6px;
-    border-radius: 3px; cursor: pointer; font-family: inherit;
-    font-size: 12px; font-weight: 600; display: inline-flex;
-    align-items: center; gap: 4px; transition: all 0.15s ease;
-}
-#image-zoom-bar .img-zoom-btn:hover { background: var(--border); border-color: var(--magenta); color: var(--magenta); }
-#img-scale-label { min-width: 52px; justify-content: center; cursor: pointer;}
 #editor-binary-msg { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); max-width: 90%; text-align: center; }
 
 /* Attachment Text Preview */
 #attachment-text-preview {
-    display: none; width: 100%; height: 100%;
+    display: none; width: 100%; flex: 1 1 auto; min-height: 0;
     overflow: auto; padding: 16px 20px;
     font-family: var(--font-mono); font-size: 12.5px;
     line-height: 1.6; white-space: pre-wrap;
@@ -219,13 +284,13 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
 
 /* HTML Preview Frame */
 #html-preview-frame {
-    display: none; width: 100%; height: 100%;
+    display: none; width: 100%; flex: 1 1 auto; min-height: 0;
     border: none; background: #ffffff; color-scheme: light;
 }
 
 /* Markdown Preview Container */
 #markdown-preview-container {
-    display: none; width: 100%; height: 100%;
+    display: none; width: 100%; flex: 1 1 auto; min-height: 0;
     overflow-y: auto; padding: 20px 30px;
     box-sizing: border-box; background: var(--bg-main);
     color: var(--fg);
