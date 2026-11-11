@@ -82,9 +82,9 @@ body.has-custom-bg #window-body {
     -webkit-backdrop-filter: blur(3px);
 }
 body.has-custom-bg #top-header-bar {
-    background: rgba(17, 18, 22, 0.72) !important;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    background: rgba(17, 18, 22, 0.40) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 body.has-custom-bg #sidebar,
 body.has-custom-bg #main-pane {
@@ -418,7 +418,9 @@ html.theme-light body.has-custom-bg #window-body {
     background: rgba(255, 255, 255, 0.38) !important;
 }
 html.theme-light body.has-custom-bg #top-header-bar {
-    background: rgba(247, 247, 249, 0.75) !important;
+    background: rgba(247, 247, 249, 0.45) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 /* Translucent chat elements (Light Theme) */
