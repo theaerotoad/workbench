@@ -24,7 +24,10 @@ const CONFIG_DEFAULTS = {
     'webdav-sync-agent': 'false',
     'editor-word-wrap': 'false',
     'show-code-preview': 'true',
-    'split-view-enabled': 'false'
+    'split-view-enabled': 'false',
+    'bg-image-enabled': 'false',
+    'bg-image-path': '',
+    'bg-image-blur': '10'
 };
 
 const CONFIG_FILE = '.agent/config.json';

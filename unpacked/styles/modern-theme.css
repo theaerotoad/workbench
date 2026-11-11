@@ -55,8 +55,44 @@ body{font-family:var(--font-ui);
 *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
 *::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22)}
 
+/* Background Layer Overlay */
+#bg-image-layer {
+    position: fixed;
+    inset: -30px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    z-index: 0;
+    transform: scale(1.08);
+    transform-origin: center center;
+    filter: blur(var(--bg-blur, 10px));
+    opacity: 0;
+    transition: opacity 0.3s ease, filter 0.2s ease;
+}
+body.has-custom-bg #bg-image-layer {
+    opacity: 1;
+}
+body.has-custom-bg #window {
+    background: transparent !important;
+}
+body.has-custom-bg #window-body {
+    background: rgba(10, 10, 12, 0.72) !important;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+body.has-custom-bg #top-header-bar {
+    background: rgba(17, 18, 22, 0.8) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+body.has-custom-bg #sidebar,
+body.has-custom-bg #main-pane {
+    background: transparent !important;
+}
+
 /* Window + layout */
-#window{border-radius:0;background:#0a0a0b;border:none;box-shadow:none}
+#window{border-radius:0;background:#0a0a0b;border:none;box-shadow:none;position:relative;z-index:1}
 #top-header-bar{background:#111216;border-bottom:1px solid var(--border)}
 #window-body{padding:0;background:var(--bg-main)}
 #sidebar{border-radius:0;border:none;border-right:1px solid var(--border);
@@ -273,6 +309,12 @@ html.theme-light #sidebar, html.theme-light #main-pane {
  background: var(--bg-main);
  border: none;
  box-shadow: none;
+}
+html.theme-light body.has-custom-bg #window-body {
+    background: rgba(255, 255, 255, 0.76) !important;
+}
+html.theme-light body.has-custom-bg #top-header-bar {
+    background: rgba(247, 247, 249, 0.85) !important;
 }
 html.theme-light #sidebar { border-right: 1px solid var(--border); }
 html.theme-light #chat-view, html.theme-light #chat-container, html.theme-light #chat, html.theme-light #tabs-bar { background: transparent; }

@@ -55,10 +55,62 @@ function applyTheme() {
     if (themeBtn) {
         themeBtn.title = theme === 'light' ? 'Switch to Dark Theme' : 'Switch to Light Theme';
     }
+    applyBackgroundImage();
+}
+
+let _currentBgBlobUrl = null;
+
+async function applyBackgroundImage() {
+    const layer = document.getElementById('bg-image-layer');
+    if (!layer) return;
+
+    const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
+    const bgPath = AppConfig.get('bg-image-path', '');
+    const blurPx = AppConfig.get('bg-image-blur', '10');
+
+    layer.style.setProperty('--bg-blur', `${blurPx}px`);
+
+    if (!enabled || !bgPath) {
+        document.body.classList.remove('has-custom-bg');
+        layer.style.backgroundImage = 'none';
+        if (_currentBgBlobUrl) {
+            URL.revokeObjectURL(_currentBgBlobUrl);
+            _currentBgBlobUrl = null;
+        }
+        return;
+    }
+
+    try {
+        let src = null;
+        if (typeof readImageBlobUrl === 'function') {
+            src = await readImageBlobUrl(bgPath);
+        } else if (typeof readImageDataUrl === 'function') {
+            src = await readImageDataUrl(bgPath);
+        }
+
+        if (src) {
+            if (_currentBgBlobUrl && _currentBgBlobUrl !== src && _currentBgBlobUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(_currentBgBlobUrl);
+            }
+            if (src.startsWith('blob:')) {
+                _currentBgBlobUrl = src;
+            }
+            layer.style.backgroundImage = `url("${src}")`;
+            document.body.classList.add('has-custom-bg');
+        } else {
+            document.body.classList.remove('has-custom-bg');
+            layer.style.backgroundImage = 'none';
+        }
+    } catch (e) {
+        console.warn('Failed to apply background image:', e);
+        document.body.classList.remove('has-custom-bg');
+        layer.style.backgroundImage = 'none';
+    }
 }
 
 // --- AST_EXPORTS_START ---
 window.applyTheme = applyTheme;
+window.applyBackgroundImage = applyBackgroundImage;
 // --- AST_EXPORTS_END ---
 
 // --- applyWindowMode.js ---

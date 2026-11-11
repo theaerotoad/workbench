@@ -113,6 +113,9 @@ function notifyTabActivated(tabId, opts = {}) {
         if (typeof window.renderAccentSwatches === 'function') {
             window.renderAccentSwatches();
         }
+        if (typeof updateBackgroundSettingsUI === 'function') {
+            updateBackgroundSettingsUI();
+        }
     } else if (tabId === 'workspace') {
         if (typeof window.applyConfigToUI === 'function') {
             window.applyConfigToUI();
@@ -199,6 +202,176 @@ export function initSettingsModal() {
         });
     }
 
+    // Appearance tab: Background Image Controls
+    const bgUploadBtn = document.getElementById('settings-bg-upload-btn');
+    const bgFileInput = document.getElementById('settings-bg-file-input');
+    const bgPickWsBtn = document.getElementById('settings-bg-pick-ws-btn');
+    const bgClearBtn = document.getElementById('settings-bg-clear-btn');
+    const bgBlurInput = document.getElementById('settings-bg-blur');
+
+    if (bgUploadBtn && bgFileInput) {
+        bgUploadBtn.addEventListener('click', () => bgFileInput.click());
+        bgFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const extMatch = file.name.match(/\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i);
+            const ext = extMatch ? extMatch[1].toLowerCase() : 'png';
+            const destPath = `.agent/background.${ext}`;
+
+            try {
+                if (typeof window.writeAgentFileToDisk === 'function') {
+                    await window.fs?.ensureParentDirs(destPath, { track: false });
+                    if (window.rootHandle) {
+                        await window.rawWrite(destPath, file);
+                    }
+                }
+                if (window.registry) {
+                    const dataUrl = await new Promise((res, rej) => {
+                        const reader = new FileReader();
+                        reader.onload = () => res(reader.result);
+                        reader.onerror = rej;
+                        reader.readAsDataURL(file);
+                    });
+                    window.registry.files[destPath] = dataUrl;
+                    window.registry.meta[destPath] = {
+                        kind: 'file',
+                        size: file.size,
+                        isBinary: true,
+                        virtual: !window.rootHandle
+                    };
+                }
+
+                AppConfig.set('bg-image-path', destPath);
+                AppConfig.set('bg-image-enabled', 'true');
+                if (typeof window.applyBackgroundImage === 'function') {
+                    await window.applyBackgroundImage();
+                }
+                updateBackgroundSettingsUI();
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Background image set', 'success');
+                }
+            } catch (err) {
+                console.error(err);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Failed to save background image: ' + err.message, 'error');
+                }
+            } finally {
+                bgFileInput.value = '';
+            }
+        });
+    }
+
+    if (bgPickWsBtn) {
+        bgPickWsBtn.addEventListener('click', async () => {
+            if (!window.registry || !window.registry.meta) return;
+            const imagePaths = Object.keys(window.registry.meta).filter(p =>
+                window.registry.meta[p]?.kind === 'file' &&
+                /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(p) &&
+                !p.startsWith('.agent/background.')
+            ).sort();
+
+            if (imagePaths.length === 0) {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('No compatible image files found in workspace', 'info');
+                }
+                return;
+            }
+
+            const promptText = 'Select an image file from workspace:\n\n' + imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n');
+            const choice = await window.promptDialog?.(promptText, imagePaths[0], {
+                confirmLabel: 'Set Background',
+                validate: (val) => imagePaths.includes(val.trim()) ? null : 'Please enter an existing image path'
+            });
+
+            if (!choice) return;
+            const srcPath = choice.trim();
+            const extMatch = srcPath.match(/\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i);
+            const ext = extMatch ? extMatch[1].toLowerCase() : 'png';
+            const destPath = `.agent/background.${ext}`;
+
+            try {
+                let fileBlob = null;
+                if (window.rootHandle) {
+                    const handle = await window.getHandleByPath(srcPath);
+                    if (handle) fileBlob = await handle.getFile();
+                }
+                if (!fileBlob && window.registry.files[srcPath]) {
+                    const val = window.registry.files[srcPath];
+                    fileBlob = val instanceof Blob ? val : new Blob([val]);
+                }
+
+                if (fileBlob) {
+                    await window.fs?.ensureParentDirs(destPath, { track: false });
+                    if (window.rootHandle) {
+                        await window.rawWrite(destPath, fileBlob);
+                    }
+                    if (typeof window.readImageDataUrl === 'function') {
+                        const dataUrl = await window.readImageDataUrl(srcPath);
+                        if (dataUrl) window.registry.files[destPath] = dataUrl;
+                    }
+                    window.registry.meta[destPath] = {
+                        kind: 'file',
+                        size: fileBlob.size || 0,
+                        isBinary: true,
+                        virtual: !window.rootHandle
+                    };
+                }
+
+                AppConfig.set('bg-image-path', destPath);
+                AppConfig.set('bg-image-enabled', 'true');
+                if (typeof window.applyBackgroundImage === 'function') {
+                    await window.applyBackgroundImage();
+                }
+                updateBackgroundSettingsUI();
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Background image copied and set', 'success');
+                }
+            } catch (err) {
+                console.error(err);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Failed to copy image: ' + err.message, 'error');
+                }
+            }
+        });
+    }
+
+    if (bgClearBtn) {
+        bgClearBtn.addEventListener('click', async () => {
+            const oldPath = AppConfig.get('bg-image-path', '');
+            AppConfig.set('bg-image-enabled', 'false');
+            AppConfig.set('bg-image-path', '');
+
+            if (oldPath && oldPath.startsWith('.agent/background.')) {
+                try {
+                    if (window.rootHandle) {
+                        await window.rawDelete(oldPath);
+                    }
+                    delete window.registry?.files?.[oldPath];
+                    delete window.registry?.meta?.[oldPath];
+                } catch (e) {}
+            }
+
+            if (typeof window.applyBackgroundImage === 'function') {
+                await window.applyBackgroundImage();
+            }
+            updateBackgroundSettingsUI();
+            if (typeof window.showToast === 'function') {
+                window.showToast('Background cleared', 'info');
+            }
+        });
+    }
+
+    if (bgBlurInput) {
+        bgBlurInput.addEventListener('input', (e) => {
+            const val = e.target.value;
+            const label = document.getElementById('settings-bg-blur-label');
+            if (label) label.textContent = `${val}px`;
+            AppConfig.set('bg-image-blur', String(val));
+            const layer = document.getElementById('bg-image-layer');
+            if (layer) layer.style.setProperty('--bg-blur', `${val}px`);
+        });
+    }
+
     // Shield agent switch inside Security tab
     const agentSwitch = document.getElementById('shield-agent-switch');
     if (agentSwitch) {
@@ -278,6 +451,47 @@ export function initSettingsModal() {
     _isInitialized = true;
 }
 
+function updateBackgroundSettingsUI() {
+    const enabled = AppConfig.get('bg-image-enabled', 'false') === 'true';
+    const bgPath = AppConfig.get('bg-image-path', '');
+    const blurVal = AppConfig.get('bg-image-blur', '10');
+
+    const thumb = document.getElementById('settings-bg-thumb');
+    const clearBtn = document.getElementById('settings-bg-clear-btn');
+    const blurInput = document.getElementById('settings-bg-blur');
+    const blurLabel = document.getElementById('settings-bg-blur-label');
+
+    if (blurInput) blurInput.value = blurVal;
+    if (blurLabel) blurLabel.textContent = `${blurVal}px`;
+
+    if (enabled && bgPath) {
+        if (clearBtn) clearBtn.style.display = 'inline-flex';
+        if (thumb) {
+            thumb.innerHTML = '';
+            (async () => {
+                let src = null;
+                if (typeof window.readImageBlobUrl === 'function') {
+                    src = await window.readImageBlobUrl(bgPath);
+                } else if (typeof window.readImageDataUrl === 'function') {
+                    src = await window.readImageDataUrl(bgPath);
+                }
+                if (src) {
+                    thumb.style.backgroundImage = `url("${src}")`;
+                } else {
+                    thumb.style.backgroundImage = 'none';
+                    thumb.innerHTML = '<span class="icon" style="font-size:24px;">image</span>';
+                }
+            })();
+        }
+    } else {
+        if (clearBtn) clearBtn.style.display = 'none';
+        if (thumb) {
+            thumb.style.backgroundImage = 'none';
+            thumb.innerHTML = '<span class="icon" style="font-size:24px;">image</span>';
+        }
+    }
+}
+
 function ensureSettingsModalInit() {
     if (!_isInitialized) {
         initSettingsModal();
@@ -297,3 +511,4 @@ window.closeSettingsModal = closeSettingsModal;
 window.openAboutModal = () => openSettingsModal('about');
 window.switchSettingsTab = switchSettingsTab;
 window.getActiveSettingsTab = getActiveSettingsTab;
+window.updateBackgroundSettingsUI = updateBackgroundSettingsUI;

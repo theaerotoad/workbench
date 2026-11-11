@@ -179,7 +179,7 @@ export async function writeDisk(filePath, content, opts) {
         }
     }
 
-    if (window.isAgentPath(filePath) && !window.isVirtualAgentFile(filePath)) {
+    if (window.isAgentPath(filePath) && !window.isVirtualAgentFile(filePath) && !filePath.startsWith('.agent/background.')) {
         window.print(`<span class="red">[blocked] Creation of files/folders inside .agent is not allowed.</span>`, "", sessionId);
         return;
     }

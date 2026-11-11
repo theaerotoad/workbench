@@ -399,6 +399,36 @@ html.theme-light .settings-about-card .about-divider {
     border-top-color: #e4e4e7;
 }
 
+/* Background Image Settings Controls */
+.settings-bg-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+}
+.settings-bg-thumb {
+    width: 64px;
+    height: 48px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: var(--bg-input);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.settings-bg-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
 /* Mobile & Narrow Screen Overrides */
 @media (max-width: 768px) {
     #settings-modal {

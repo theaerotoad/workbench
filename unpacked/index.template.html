@@ -30,6 +30,7 @@
 </head>
 <body class="no-workspace">
 
+<div id="bg-image-layer" aria-hidden="true"></div>
 <div id="sidebar-overlay"></div>
 
 <div id="window" class="initializing">
@@ -333,6 +334,40 @@
                                 </div>
                                 <div class="settings-field-row">
                                     <div id="settings-accent-swatches" role="group" aria-label="Accent color"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Background Image Panel -->
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">wallpaper</span>
+                                <span>Background Wallpaper</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-bg-preview-wrap">
+                                    <div class="settings-bg-thumb" id="settings-bg-thumb">
+                                        <span class="icon" style="font-size:24px;">image</span>
+                                    </div>
+                                    <div class="settings-bg-actions">
+                                        <input type="file" id="settings-bg-file-input" accept="image/*" style="display:none;">
+                                        <button type="button" id="settings-bg-upload-btn" class="pill-btn">
+                                            <span class="icon" style="font-size:14px;">upload</span>
+                                            <span>Upload Image</span>
+                                        </button>
+                                        <button type="button" id="settings-bg-pick-ws-btn" class="pill-btn">
+                                            <span class="icon" style="font-size:14px;">folder_open</span>
+                                            <span>Pick From Workspace</span>
+                                        </button>
+                                        <button type="button" id="settings-bg-clear-btn" class="pill-btn danger" style="display:none;">
+                                            <span class="icon" style="font-size:14px;">delete</span>
+                                            <span>Clear</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field-row" id="settings-bg-blur-row" style="margin-top: 8px;">
+                                    <label for="settings-bg-blur" style="flex:1;">Blur Radius: <span id="settings-bg-blur-label">10px</span></label>
+                                    <input type="range" id="settings-bg-blur" min="0" max="40" step="1" value="10" style="flex:2;">
                                 </div>
                             </div>
                         </div>
