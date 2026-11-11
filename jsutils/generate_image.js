@@ -412,16 +412,31 @@ async function handler(args, api) {
         return fail(api, fp, "This version of Ion does not support api.callModel. Update Ion.");
     }
 
-    // Resolve model name from models.json or argument
+    // Resolve model name and provider metadata from models.json or argument
     let modelName = String(args.model || '').trim();
-    if (!modelName && typeof api?.listModels === 'function') {
+    let matchedModel = null;
+    if (typeof api?.listModels === 'function') {
         try {
             const models = await api.listModels();
-            const matched = models.find(m => m.id === modelId);
-            if (matched && matched.name) {
-                modelName = matched.name;
+            if (Array.isArray(models)) {
+                matchedModel = models.find(m =>
+                    (m.uuid && m.uuid.toLowerCase() === modelId.toLowerCase()) ||
+                    (m.id && String(m.id).toLowerCase() === modelId.toLowerCase()) ||
+                    (m.name && m.name.toLowerCase() === modelId.toLowerCase()) ||
+                    (m.providerName && `${m.providerName}::${m.name}`.toLowerCase() === modelId.toLowerCase())
+                ) || null;
+                if (!modelName && matchedModel && matchedModel.name) {
+                    modelName = matchedModel.name;
+                }
             }
         } catch (_) {}
+    }
+    if (!modelName) {
+        if (modelId.includes('::')) {
+            modelName = modelId.split('::').pop().trim();
+        } else if (!/^[0-9a-f-]{36}$/i.test(modelId)) {
+            modelName = modelId;
+        }
     }
 
     const defaultSteps = Number(await getSetting('defaultSteps', 20));
@@ -500,14 +515,33 @@ async function handler(args, api) {
         }
     }, 1000);
 
-    // 3. Call endpoint via Ion's secure model gateway
+    // 3. Call endpoint via Ion's secure model gateway.
+    // Determine the optimal path based on whether the provider URL already includes /v1,
+    // and fallback/retry with the alternate path if a 404 occurs.
+    const baseUrl = matchedModel?.url ? String(matchedModel.url).trim().replace(/\/+$/, '') : '';
+    const hasV1InBase = baseUrl.endsWith('/v1');
+    const primaryPath = hasV1InBase ? '/images/generations' : '/v1/images/generations';
+    const fallbackPath = hasV1InBase ? '/v1/images/generations' : '/images/generations';
+
     let res;
     try {
         res = await api.callModel(modelId, {
-            path: '/v1/images/generations',
+            path: primaryPath,
             body: JSON.stringify(payload),
             timeoutMs: TIMEOUT_MS
         });
+
+        // If the primary path returns 404, retry with the alternate path format
+        if (res && res.status === 404) {
+            const retryRes = await api.callModel(modelId, {
+                path: fallbackPath,
+                body: JSON.stringify(payload),
+                timeoutMs: TIMEOUT_MS
+            });
+            if (retryRes && (retryRes.ok || retryRes.status !== 404)) {
+                res = retryRes;
+            }
+        }
     } catch (e) {
         isFinished = true;
         clearInterval(progressTimer);

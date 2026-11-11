@@ -103,8 +103,10 @@ function getAllModelEntries() {
     MODEL_PROVIDERS.forEach(p => {
         (p.models || []).forEach(m => {
             const rawName = m.name || '';
+            const uuid = (typeof m.uuid === 'string' ? m.uuid.toLowerCase() : '');
             out.push({
-                uuid: (typeof m.uuid === 'string' ? m.uuid.toLowerCase() : ''),
+                id: uuid || `${p.provider || ''}::${rawName}`,
+                uuid: uuid,
                 providerName: p.provider || 'Unknown provider',
                 name: rawName,
                 displayName: shortenModelName(rawName),
@@ -123,7 +125,7 @@ function findModelEntry(providerName, modelName) {
     return getAllModelEntries().find(e => e.providerName === providerName && e.name === modelName) || null;
 }
 
-// Resolves a model UUID to its entry. Also accepts the legacy 'Provider::model' id so tool settings
+// Resolves a model UUID to its entry. Also accepts the legacy 'Provider::model' id or raw model name so tool settings
 // saved before UUIDs existed keep working.
 function findModelEntryById(id) {
     const s = String(id || '').trim();
@@ -131,6 +133,10 @@ function findModelEntryById(id) {
     const all = getAllModelEntries();
     const byUuid = all.find(e => e.uuid && e.uuid === s.toLowerCase());
     if (byUuid) return byUuid;
+    const byId = all.find(e => e.id && e.id.toLowerCase() === s.toLowerCase());
+    if (byId) return byId;
+    const byName = all.find(e => e.name && e.name.toLowerCase() === s.toLowerCase());
+    if (byName) return byName;
     const i = s.indexOf('::');
     if (i === -1) return null;
     return all.find(e => e.providerName === s.slice(0, i) && e.name === s.slice(i + 2)) || null;
