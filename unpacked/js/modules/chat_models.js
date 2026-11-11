@@ -592,6 +592,7 @@ function showModelPicker(targetLine, targetColumn, editorOffset, currentModelNam
     if (top + dropdownH > window.innerHeight - 10) {
         top = editorOffset.top - dropdownH - 5;
     }
+    if (top < 10) top = 10;
     if (left + dropdownW > window.innerWidth - 10) {
         left = window.innerWidth - dropdownW - 10;
     }

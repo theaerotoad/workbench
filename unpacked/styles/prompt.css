@@ -324,13 +324,13 @@
 
 #model-picker-overlay {
     display: none; position: fixed; top: 0; left: 0;
-    right: 0; bottom: 0; z-index: 500;
+    right: 0; bottom: 0; z-index: 1100;
 }
 #model-picker-dropdown {
     display: none; position: fixed; background: var(--bg-panel);
     border: 1px solid var(--border-highlight); border-radius: 8px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.9);
-    width: 380px; max-height: 420px; z-index: 501;
+    width: 380px; max-height: 420px; z-index: 1101;
     overflow: hidden; flex-direction: column;
 }
 #model-picker-header {
