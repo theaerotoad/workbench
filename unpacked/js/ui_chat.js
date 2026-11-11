@@ -1119,15 +1119,40 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// --- Android / Browser Back Button Modal Navigation ---
+// --- Android / Browser Back Button Modal & Workspace Navigation ---
 (function initModalHistoryManager() {
+    let hasWorkspaceHistory = false;
     let activeModalDepth = 0;
     let pendingProgrammaticPops = 0;
     let isHandlingPopstate = false;
 
+    function isWorkspaceActive() {
+        if (window.rootHandle) return true;
+        const overlay = document.getElementById('no-folder-overlay');
+        if (overlay && overlay.classList.contains('hidden')) return true;
+        if (document.body && !document.body.classList.contains('no-workspace')) return true;
+        return false;
+    }
+
+    function exitCurrentWorkspace() {
+        if (typeof window.closeWorkspace === 'function') {
+            window.closeWorkspace();
+        } else {
+            const exitBtn = document.getElementById('btn-exit-workspace');
+            if (exitBtn) exitBtn.click();
+        }
+    }
+
     try {
         if (window.history && window.history.replaceState) {
-            window.history.replaceState(null, '');
+            if (isWorkspaceActive()) {
+                window.history.replaceState({ isWorkspace: false }, '');
+                window.history.pushState({ isWorkspace: true }, '');
+                hasWorkspaceHistory = true;
+            } else {
+                window.history.replaceState({ isWorkspace: false }, '');
+                hasWorkspaceHistory = false;
+            }
         }
     } catch (_) {}
 
@@ -1141,6 +1166,7 @@ document.addEventListener('keydown', (e) => {
         { id: 'sessions-popover-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-picker-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-select-overlay', isOpen: el => el.style.display === 'block' },
+        { id: 'explorer-context-menu', isOpen: el => el.style.display === 'block' },
         { id: 'sidebar', isOpen: el => el.classList.contains('mobile-open') }
     ];
 
@@ -1248,16 +1274,13 @@ document.addEventListener('keydown', (e) => {
 
     function syncModalHistory() {
         if (isHandlingPopstate) return;
-        const targetDepth = getOpenModalCount();
-        if (targetDepth > activeModalDepth) {
-            while (activeModalDepth < targetDepth) {
-                activeModalDepth++;
-                try {
-                    history.pushState({ workbenchModal: activeModalDepth }, '');
-                } catch (_) {}
-            }
-        } else if (targetDepth < activeModalDepth) {
-            while (activeModalDepth > targetDepth) {
+
+        const wsActive = isWorkspaceActive();
+        const targetModalDepth = getOpenModalCount();
+
+        // 1. If modals closed, unwind modal history entries first
+        if (targetModalDepth < activeModalDepth) {
+            while (activeModalDepth > targetModalDepth) {
                 activeModalDepth--;
                 pendingProgrammaticPops++;
                 setTimeout(() => {
@@ -1268,6 +1291,41 @@ document.addEventListener('keydown', (e) => {
                 } catch (_) {
                     pendingProgrammaticPops--;
                 }
+            }
+            return;
+        }
+
+        // 2. Synchronize workspace history level
+        if (wsActive && !hasWorkspaceHistory) {
+            if (!history.state || !history.state.isWorkspace) {
+                try {
+                    history.pushState({ isWorkspace: true }, '');
+                } catch (_) {}
+            }
+            hasWorkspaceHistory = true;
+        } else if (!wsActive && hasWorkspaceHistory) {
+            hasWorkspaceHistory = false;
+            if (history.state && history.state.isWorkspace) {
+                pendingProgrammaticPops++;
+                setTimeout(() => {
+                    if (pendingProgrammaticPops > 0) pendingProgrammaticPops = 0;
+                }, 500);
+                try {
+                    history.back();
+                } catch (_) {
+                    pendingProgrammaticPops--;
+                }
+                return;
+            }
+        }
+
+        // 3. If new modals opened, push modal history entries
+        if (targetModalDepth > activeModalDepth) {
+            while (activeModalDepth < targetModalDepth) {
+                activeModalDepth++;
+                try {
+                    history.pushState({ isWorkspace: wsActive, workbenchModal: activeModalDepth }, '');
+                } catch (_) {}
             }
         }
     }
@@ -1288,6 +1346,21 @@ document.addEventListener('keydown', (e) => {
                     syncModalHistory();
                 }, 60);
             }
+            return;
+        }
+
+        // Back pressed on main screen (no modals open): return to workspace selector view
+        if (hasWorkspaceHistory || isWorkspaceActive()) {
+            hasWorkspaceHistory = false;
+            isHandlingPopstate = true;
+            try {
+                exitCurrentWorkspace();
+            } finally {
+                setTimeout(() => {
+                    isHandlingPopstate = false;
+                    syncModalHistory();
+                }, 100);
+            }
         }
     });
 
@@ -1302,6 +1375,14 @@ document.addEventListener('keydown', (e) => {
                 observer.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
             }
         });
+        const noFolder = document.getElementById('no-folder-overlay');
+        if (noFolder) {
+            observer.observe(noFolder, { attributes: true, attributeFilter: ['class', 'style'] });
+        }
+        if (document.body) {
+            observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        }
+        syncModalHistory();
     };
 
     if (document.readyState === 'loading') {
