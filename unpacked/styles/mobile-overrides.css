@@ -75,6 +75,8 @@
 
     #doc-control-bar { padding: 0 8px; gap: 6px; }
     #doc-bar-badge { display: none !important; }
+    .editor-tab { flex: 0 1 132px; min-width: 64px; max-width: 145px; }
+    .editor-tab.active { flex: 0 1 168px; min-width: 80px; max-width: 180px; }
 }
 @media (max-width: 480px) {
     #doc-bar-dirty { display: none !important; }

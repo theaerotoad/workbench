@@ -200,7 +200,8 @@ body.has-custom-bg #model-picker-dropdown,
 body.has-custom-bg #tool-model-dropdown,
 body.has-custom-bg #explorer-context-menu,
 body.has-custom-bg #autocomplete-popup,
-body.has-custom-bg .attach-menu {
+body.has-custom-bg .attach-menu,
+body.has-custom-bg #tabs-overflow-menu {
     background: rgba(21, 21, 25, 0.85) !important;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
@@ -329,7 +330,7 @@ transition:transform .1s,filter .15s}
 #sessions-popover,#settings-popover .settings-panel,#yesno-modal,#cleardata-modal,#about-modal,#newtool-modal,
 #models-modal,#msg-delete-modal,#msg-edit-modal{border-radius:4px;background:rgba(21,21,23,.98);
 border:1px solid var(--border-highlight);box-shadow:0 30px 80px rgba(0,0,0,.8)}
-#model-select-dropdown,#model-picker-dropdown,#explorer-context-menu,#autocomplete-popup,.attach-menu{border-radius:4px;
+#model-select-dropdown,#model-picker-dropdown,#explorer-context-menu,#autocomplete-popup,.attach-menu,#tabs-overflow-menu{border-radius:4px;
 background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shadow:0 20px 50px rgba(0,0,0,.7)}
 #sessions-popover-overlay,#settings-popover,#yesno-modal-overlay,#cleardata-modal-overlay,#about-modal-overlay,
 #newtool-modal-overlay,#models-modal-overlay,#msg-delete-modal-overlay,#msg-edit-modal-overlay{background:rgba(0,0,0,.72);transition:background .15s ease}
@@ -548,7 +549,8 @@ html.theme-light body.has-custom-bg #model-picker-dropdown,
 html.theme-light body.has-custom-bg #tool-model-dropdown,
 html.theme-light body.has-custom-bg #explorer-context-menu,
 html.theme-light body.has-custom-bg #autocomplete-popup,
-html.theme-light body.has-custom-bg .attach-menu {
+html.theme-light body.has-custom-bg .attach-menu,
+html.theme-light body.has-custom-bg #tabs-overflow-menu {
     background: rgba(255, 255, 255, 0.88) !important;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
@@ -588,7 +590,9 @@ html.theme-light .status-token-metric:hover { background: rgba(0,0,0,0.04); colo
 html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 html.theme-light .session-item-row.active { box-shadow: 0 0 20px rgba(var(--accent-rgb),0.15); }
 html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }
-html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #tool-model-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }
+html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #tool-model-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu, html.theme-light #tabs-overflow-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }
+html.theme-light .btn-tabs-overflow.has-overflow { background: rgba(0, 0, 0, 0.045); border-color: rgba(0, 0, 0, 0.12); }
+html.theme-light .tabs-overflow-item:hover { background: rgba(0, 0, 0, 0.05); }
 html.theme-light #tabs-bar { border-bottom: 1px solid var(--border); }
 html.theme-light #doc-control-bar { background: #f7f7f9; border-bottom: 1px solid var(--border); }
 html.theme-light .doc-bar-badge { background: rgba(0, 0, 0, 0.045); border-color: rgba(0, 0, 0, 0.09); color: var(--dim); }

@@ -901,8 +901,14 @@
                     </div>
                 </div>
 
-                <div id="tabs-actions"></div>
+                <div id="tabs-actions">
+                    <button type="button" id="btn-tabs-overflow" class="btn-tabs-overflow" title="All open tabs" aria-haspopup="menu" aria-expanded="false" style="display:none;">
+                        <span id="tabs-overflow-count" class="tabs-overflow-count"></span>
+                        <span class="icon" style="font-size: 15px;">expand_more</span>
+                    </button>
+                </div>
             </div>
+            <div id="tabs-overflow-menu" role="menu" aria-label="Open tabs" style="display:none;"></div>
 
             <div id="chat-view">
                 <div id="chat-container">

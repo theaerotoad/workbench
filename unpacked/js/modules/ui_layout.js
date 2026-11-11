@@ -204,6 +204,7 @@ function applySplitView() {
     requestAnimationFrame(() => {
         if (window.monacoEditor) window.monacoEditor.layout();
         if (window.monacoDiffEditor) window.monacoDiffEditor.layout();
+        if (typeof updateTabsOverflowState === 'function') updateTabsOverflowState();
     });
 }
 
@@ -806,6 +807,251 @@ window.renderAccentSwatches = renderAccentSwatches;
 // --- AST_EXPORTS_END ---
 
 // --- renderTabs.js ---
+function getVisibleTabsList() {
+    const isSplit = document.body.classList.contains('split-view-active');
+    const tabs = Array.isArray(state.openTabs) ? state.openTabs : [];
+    return isSplit ? tabs.filter(t => t !== 'chat') : tabs.slice();
+}
+
+function describeTabEntry(tabId) {
+    if (tabId === 'chat') {
+        return { icon: 'chat', color: '', label: 'chat', sublabel: '', title: 'Chat', closable: false, isDirty: false };
+    }
+    if (tabId.startsWith('filediff:')) {
+        const rest = tabId.replace('filediff:', '');
+        const parts = rest.split('::');
+        const fp = parts[0];
+        const isCheckpointDiff = parts.length === 3;
+        const fname = fp.split('/').pop();
+        const dir = fp.includes('/') ? fp.slice(0, fp.lastIndexOf('/')) : '';
+        const prefix = isCheckpointDiff ? 'history' : 'changes';
+        return {
+            icon: isCheckpointDiff ? 'schedule' : 'difference',
+            color: 'var(--primary)',
+            label: `${prefix}: ${fname}`,
+            sublabel: dir,
+            title: isCheckpointDiff ? `Checkpoint diff for ${fp}` : `Changes diff for ${fp}`,
+            closable: true,
+            isDirty: false
+        };
+    }
+    if (tabId.startsWith('attachment:')) {
+        const attId = tabId.replace('attachment:', '');
+        let att = state.attachmentStore[attId];
+        if (!att) {
+            const imgEl = document.querySelector(`[data-attachment-id="${attId}"] img`);
+            if (imgEl) {
+                att = { name: imgEl.alt || 'Attachment', dataUrl: imgEl.src, type: 'image', attachmentId: attId };
+                state.attachmentStore[attId] = att;
+            }
+        }
+        const isImg = att?.type === 'image';
+        return {
+            icon: isImg ? 'image' : 'description',
+            color: isImg ? 'var(--green)' : 'var(--yellow)',
+            label: att?.name || 'attachment',
+            sublabel: 'Attachment',
+            title: att?.name || 'Pasted attachment',
+            closable: true,
+            isDirty: false
+        };
+    }
+    const vInfo = getFileVisualInfo(tabId);
+    const isDirty = isFileDirty(tabId);
+    const fname = tabId.split('/').pop();
+    const dir = tabId.includes('/') ? tabId.slice(0, tabId.lastIndexOf('/')) : '';
+    return {
+        icon: vInfo.icon,
+        color: vInfo.color,
+        label: fname,
+        sublabel: dir,
+        title: isDirty ? `${tabId} (unsaved changes)` : tabId,
+        closable: true,
+        isDirty
+    };
+}
+
+function isTabClippedInStrip(tabId) {
+    if (!tabsListContainer) return false;
+    const stripRect = tabsListContainer.getBoundingClientRect();
+    if (!stripRect.width) return false;
+    const el = Array.from(tabsListContainer.children).find(c => c.getAttribute('data-tab-id') === tabId);
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.left < stripRect.left + 4 || r.right > stripRect.right - 4;
+}
+
+function scrollActiveTabIntoView() {
+    if (!tabsListContainer || !state.activeTab) return;
+    const activeEl = Array.from(tabsListContainer.children).find(c => c.getAttribute('data-tab-id') === state.activeTab);
+    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+        activeEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+    updateTabsOverflowState();
+}
+
+function updateTabsOverflowState() {
+    if (!tabsListContainer) return;
+    const visibleTabs = getVisibleTabsList();
+    const overflowBtn = typeof btnTabsOverflow !== 'undefined' && btnTabsOverflow ? btnTabsOverflow : document.getElementById('btn-tabs-overflow');
+    const countEl = typeof tabsOverflowCount !== 'undefined' && tabsOverflowCount ? tabsOverflowCount : document.getElementById('tabs-overflow-count');
+
+    const maxScroll = Math.max(0, tabsListContainer.scrollWidth - tabsListContainer.clientWidth);
+    const isOverflowing = maxScroll > 2;
+    const canScrollLeft = isOverflowing && tabsListContainer.scrollLeft > 2;
+    const canScrollRight = isOverflowing && tabsListContainer.scrollLeft < maxScroll - 2;
+
+    tabsListContainer.classList.toggle('can-scroll-left', canScrollLeft);
+    tabsListContainer.classList.toggle('can-scroll-right', canScrollRight);
+
+    if (overflowBtn) {
+        const showBtn = visibleTabs.length > 1;
+        overflowBtn.style.display = showBtn ? 'inline-flex' : 'none';
+        overflowBtn.classList.toggle('has-overflow', isOverflowing);
+        overflowBtn.title = isOverflowing
+            ? `${visibleTabs.length} open tabs (some scrolled off-screen)`
+            : `${visibleTabs.length} open tabs`;
+        if (countEl) {
+            countEl.textContent = String(visibleTabs.length);
+        }
+    }
+}
+
+function closeTabsOverflowMenu() {
+    const menu = typeof tabsOverflowMenu !== 'undefined' && tabsOverflowMenu ? tabsOverflowMenu : document.getElementById('tabs-overflow-menu');
+    const btn = typeof btnTabsOverflow !== 'undefined' && btnTabsOverflow ? btnTabsOverflow : document.getElementById('btn-tabs-overflow');
+    if (menu) menu.style.display = 'none';
+    if (btn) {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function renderTabsOverflowMenu() {
+    const menu = typeof tabsOverflowMenu !== 'undefined' && tabsOverflowMenu ? tabsOverflowMenu : document.getElementById('tabs-overflow-menu');
+    if (!menu) return;
+    const visibleTabs = getVisibleTabsList();
+    menu.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'tabs-overflow-header';
+
+    const title = document.createElement('span');
+    title.className = 'tabs-overflow-title';
+    title.textContent = `Open Tabs (${visibleTabs.length})`;
+    header.appendChild(title);
+
+    const otherClosable = visibleTabs.filter(t => t !== 'chat' && t !== state.activeTab);
+    if (otherClosable.length > 0) {
+        const closeOthersBtn = document.createElement('button');
+        closeOthersBtn.type = 'button';
+        closeOthersBtn.className = 'tabs-overflow-close-others';
+        closeOthersBtn.textContent = 'Close others';
+        closeOthersBtn.title = 'Close all other tabs';
+        closeOthersBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            closeTabsOverflowMenu();
+            for (const tid of otherClosable) {
+                await closeTab(tid);
+            }
+        });
+        header.appendChild(closeOthersBtn);
+    }
+    menu.appendChild(header);
+
+    const list = document.createElement('div');
+    list.className = 'tabs-overflow-list';
+
+    visibleTabs.forEach(tabId => {
+        const meta = describeTabEntry(tabId);
+        const isActive = tabId === state.activeTab;
+        const isClipped = isTabClippedInStrip(tabId);
+
+        const row = document.createElement('div');
+        row.className = `tabs-overflow-item ${isActive ? 'active' : ''} ${isClipped ? 'offscreen' : ''}`;
+        row.setAttribute('role', 'menuitem');
+        row.title = meta.title;
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'icon tabs-overflow-item-icon';
+        iconSpan.style.color = meta.color || '';
+        iconSpan.textContent = meta.icon;
+        row.appendChild(iconSpan);
+
+        const textWrap = document.createElement('div');
+        textWrap.className = 'tabs-overflow-item-text';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'tabs-overflow-item-name';
+        nameSpan.textContent = meta.label;
+        textWrap.appendChild(nameSpan);
+
+        if (meta.sublabel) {
+            const pathSpan = document.createElement('span');
+            pathSpan.className = 'tabs-overflow-item-path';
+            pathSpan.textContent = meta.sublabel;
+            textWrap.appendChild(pathSpan);
+        }
+        row.appendChild(textWrap);
+
+        if (meta.isDirty) {
+            const dirtyDot = document.createElement('span');
+            dirtyDot.className = 'tab-dirty-dot';
+            dirtyDot.title = 'Unsaved changes';
+            row.appendChild(dirtyDot);
+        }
+
+        if (meta.closable) {
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'tabs-overflow-item-close icon-btn';
+            closeBtn.title = 'Close tab';
+            closeBtn.innerHTML = '<span class="icon" style="font-size:13px;">close</span>';
+            closeBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await closeTab(tabId);
+                if (getVisibleTabsList().length <= 1) {
+                    closeTabsOverflowMenu();
+                } else {
+                    renderTabsOverflowMenu();
+                }
+            });
+            row.appendChild(closeBtn);
+        }
+
+        row.addEventListener('click', async () => {
+            closeTabsOverflowMenu();
+            await switchTab(tabId);
+        });
+
+        list.appendChild(row);
+    });
+
+    menu.appendChild(list);
+}
+
+function toggleTabsOverflowMenu(forceShow) {
+    const menu = typeof tabsOverflowMenu !== 'undefined' && tabsOverflowMenu ? tabsOverflowMenu : document.getElementById('tabs-overflow-menu');
+    const btn = typeof btnTabsOverflow !== 'undefined' && btnTabsOverflow ? btnTabsOverflow : document.getElementById('btn-tabs-overflow');
+    if (!menu || !btn) return;
+    const isOpen = menu.style.display === 'block';
+    const nextOpen = forceShow !== undefined ? !!forceShow : !isOpen;
+    if (!nextOpen) {
+        closeTabsOverflowMenu();
+        return;
+    }
+    renderTabsOverflowMenu();
+    menu.style.display = 'block';
+    btn.classList.add('active');
+    btn.setAttribute('aria-expanded', 'true');
+
+    const btnRect = btn.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth || 260;
+    const left = Math.max(8, Math.min(btnRect.right - menuWidth, window.innerWidth - menuWidth - 8));
+    menu.style.top = `${Math.round(btnRect.bottom + 6)}px`;
+    menu.style.left = `${Math.round(left)}px`;
+}
+
 function renderTabs() {
     tabsListContainer.innerHTML = '';
     state.openTabs.forEach(tabId => {
@@ -817,7 +1063,7 @@ function renderTabs() {
         tab.className = `editor-tab ${isFileDiff ? 'diff-tab' : ''} ${isPlan ? 'plan-tab' : ''} ${state.activeTab === tabId ? 'active' : ''}`;
 
         if (tabId === 'chat') {
-            tab.innerHTML = `<span class="icon" style="font-size: 13px;">chat</span><span>chat</span>`;
+            tab.innerHTML = `<span class="icon" style="font-size: 13px;">chat</span><span class="tab-label">chat</span>`;
             tab.addEventListener('click', () => switchTab('chat'));
         } else if (isFileDiff) {
             const rest = tabId.replace('filediff:', '');
@@ -825,7 +1071,7 @@ function renderTabs() {
             const fp = parts[0];
             const isCheckpointDiff = parts.length === 3;
             const fname = fp.split('/').pop();
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--primary);">${isCheckpointDiff ? 'schedule' : 'difference'}</span><span>${isCheckpointDiff ? 'history' : 'changes'}: ${escapeHTML(fname)}</span>`;
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--primary);">${isCheckpointDiff ? 'schedule' : 'difference'}</span><span class="tab-label">${isCheckpointDiff ? 'history' : 'changes'}: ${escapeHTML(fname)}</span>`;
             tab.title = isCheckpointDiff ? `Checkpoint diff for ${fp}` : `Changes diff for ${fp}`;
 
             const closeBtn = document.createElement('span');
@@ -849,7 +1095,7 @@ function renderTabs() {
             }
             const icon = att?.type === 'image' ? 'image' : 'description';
             const color = att?.type === 'image' ? 'var(--green)' : 'var(--yellow)';
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${color};">${icon}</span><span>${escapeHTML(att?.name || 'attachment')}</span>`;
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${color};">${icon}</span><span class="tab-label">${escapeHTML(att?.name || 'attachment')}</span>`;
             tab.title = att?.name || 'Pasted attachment';
 
             const closeBtn = document.createElement('span');
@@ -864,13 +1110,8 @@ function renderTabs() {
         } else {
             const vInfo = getFileVisualInfo(tabId);
             const isDirty = isFileDirty(tabId);
-            const isRendered = state.tabViewModes?.[tabId] === 'render' && !!getDocumentRenderer(tabId);
-            const renderBadge = isRendered
-                ? `<span class="icon tab-render-badge" style="font-size: 11px; color: var(--info); opacity: 0.85;" title="Rendered view">visibility</span>`
-                : '';
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${vInfo.color};">${vInfo.icon}</span><span>${escapeHTML(tabId.split('/').pop())}</span>${renderBadge}`;
-            const titleSuffix = [isRendered ? 'rendered' : '', isDirty ? 'unsaved changes' : ''].filter(Boolean).join(', ');
-            tab.title = titleSuffix ? `${tabId} (${titleSuffix})` : tabId;
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${vInfo.color};">${vInfo.icon}</span><span class="tab-label">${escapeHTML(tabId.split('/').pop())}</span>`;
+            tab.title = isDirty ? `${tabId} (unsaved changes)` : tabId;
 
             const closeBtn = document.createElement('span');
             closeBtn.className = 'tab-close icon';
@@ -894,10 +1135,15 @@ function renderTabs() {
         tabsListContainer.appendChild(tab);
     });
 
+    requestAnimationFrame(() => scrollActiveTabIntoView());
 }
 
 // --- AST_EXPORTS_START ---
 window.renderTabs = renderTabs;
+window.updateTabsOverflowState = updateTabsOverflowState;
+window.scrollActiveTabIntoView = scrollActiveTabIntoView;
+window.toggleTabsOverflowMenu = toggleTabsOverflowMenu;
+window.closeTabsOverflowMenu = closeTabsOverflowMenu;
 // --- AST_EXPORTS_END ---
 
 // --- resetImgView.js ---
@@ -1398,6 +1644,7 @@ async function switchTab(tabId, opts = {}) {
         }
     }
     
+    closeTabsOverflowMenu();
     state.activeTab = tabId;
     // Any tab switch that did not come from an explorer click re-syncs the explorer highlight to the active tab.
     if (!opts.keepFocus) { explorerSelection.clear(); explorerAnchor = null; explorerSelectionCleared = false; }

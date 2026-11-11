@@ -273,6 +273,44 @@ tabsListContainer.addEventListener('wheel', (e) => {
     }
 }, { passive: false });
 
+tabsListContainer.addEventListener('scroll', () => {
+    if (typeof updateTabsOverflowState === 'function') updateTabsOverflowState();
+}, { passive: true });
+
+if (typeof ResizeObserver !== 'undefined') {
+    const _tabsResizeObs = new ResizeObserver(() => {
+        if (typeof updateTabsOverflowState === 'function') updateTabsOverflowState();
+    });
+    _tabsResizeObs.observe(tabsListContainer);
+}
+
+window.addEventListener('resize', () => {
+    if (typeof closeTabsOverflowMenu === 'function') closeTabsOverflowMenu();
+    if (typeof updateTabsOverflowState === 'function') updateTabsOverflowState();
+}, { passive: true });
+
+if (btnTabsOverflow) {
+    btnTabsOverflow.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof toggleTabsOverflowMenu === 'function') toggleTabsOverflowMenu();
+    });
+}
+
+document.addEventListener('click', (e) => {
+    if (!tabsOverflowMenu || tabsOverflowMenu.style.display !== 'block') return;
+    if (e.target.closest('#tabs-overflow-menu') || e.target.closest('#btn-tabs-overflow')) return;
+    if (typeof closeTabsOverflowMenu === 'function') closeTabsOverflowMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && tabsOverflowMenu && tabsOverflowMenu.style.display === 'block') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof closeTabsOverflowMenu === 'function') closeTabsOverflowMenu();
+    }
+}, true);
+
 imgZoomIn.addEventListener('click', () => imgZoomBy(1));
 imgZoomOut.addEventListener('click', () => imgZoomBy(-1));
 imgScaleLabel.addEventListener('click', () => resetImgView(true));

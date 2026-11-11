@@ -141,6 +141,9 @@ export const tabNavSettings = document.getElementById('tab-nav-settings') || doc
 export const btnSidebarSettings = document.getElementById('btn-sidebar-settings');
 export const btnThemeToggle = document.getElementById('btn-theme-toggle');
 export const tabsListContainer = document.getElementById('tabs-list-container');
+export const btnTabsOverflow = document.getElementById('btn-tabs-overflow');
+export const tabsOverflowCount = document.getElementById('tabs-overflow-count');
+export const tabsOverflowMenu = document.getElementById('tabs-overflow-menu');
 export const term = document.getElementById('chat');
 export const toastContainer = document.getElementById('toast-container');
 export const toolsListEl = document.getElementById('tools-list');
@@ -182,6 +185,6 @@ Object.entries({
     searchInput, searchResultsEl, sessionsList, sessionsPopover, sessionsPopoverOverlay,
     settingsModal, settingsModalClose, settingsModalOverlay, settingsPopover, sidebarEl,
     sidebarOverlay, statusModeBadge, tabNavChanges, tabNavExplorer, tabNavSearch,
-    tabNavSettings, btnSidebarSettings, btnThemeToggle, tabsListContainer, term, toastContainer, toolsListEl, viewChanges,
+    tabNavSettings, btnSidebarSettings, btnThemeToggle, tabsListContainer, btnTabsOverflow, tabsOverflowCount, tabsOverflowMenu, term, toastContainer, toolsListEl, viewChanges,
     viewExplorer, viewSearch, viewSettings
 }).forEach(([k, v]) => window[k] = v);
