@@ -205,7 +205,6 @@ export function initSettingsModal() {
     // Appearance tab: Background Image Controls
     const bgUploadBtn = document.getElementById('settings-bg-upload-btn');
     const bgFileInput = document.getElementById('settings-bg-file-input');
-    const bgPickWsBtn = document.getElementById('settings-bg-pick-ws-btn');
     const bgClearBtn = document.getElementById('settings-bg-clear-btn');
     const bgBlurInput = document.getElementById('settings-bg-blur');
 
@@ -219,6 +218,15 @@ export function initSettingsModal() {
             const destPath = `.agent/background.${ext}`;
 
             try {
+                const oldPath = AppConfig.get('bg-image-path', '');
+                if (oldPath && oldPath !== destPath && oldPath.startsWith('.agent/background.')) {
+                    try {
+                        if (window.rootHandle) await window.rawDelete(oldPath);
+                        delete window.registry?.files?.[oldPath];
+                        delete window.registry?.meta?.[oldPath];
+                    } catch (e) {}
+                }
+
                 if (typeof window.writeAgentFileToDisk === 'function') {
                     await window.fs?.ensureParentDirs(destPath, { track: false });
                     if (window.rootHandle) {
@@ -257,80 +265,6 @@ export function initSettingsModal() {
                 }
             } finally {
                 bgFileInput.value = '';
-            }
-        });
-    }
-
-    if (bgPickWsBtn) {
-        bgPickWsBtn.addEventListener('click', async () => {
-            if (!window.registry || !window.registry.meta) return;
-            const imagePaths = Object.keys(window.registry.meta).filter(p =>
-                window.registry.meta[p]?.kind === 'file' &&
-                /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(p) &&
-                !p.startsWith('.agent/background.')
-            ).sort();
-
-            if (imagePaths.length === 0) {
-                if (typeof window.showToast === 'function') {
-                    window.showToast('No compatible image files found in workspace', 'info');
-                }
-                return;
-            }
-
-            const promptText = 'Select an image file from workspace:\n\n' + imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n');
-            const choice = await window.promptDialog?.(promptText, imagePaths[0], {
-                confirmLabel: 'Set Background',
-                validate: (val) => imagePaths.includes(val.trim()) ? null : 'Please enter an existing image path'
-            });
-
-            if (!choice) return;
-            const srcPath = choice.trim();
-            const extMatch = srcPath.match(/\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i);
-            const ext = extMatch ? extMatch[1].toLowerCase() : 'png';
-            const destPath = `.agent/background.${ext}`;
-
-            try {
-                let fileBlob = null;
-                if (window.rootHandle) {
-                    const handle = await window.getHandleByPath(srcPath);
-                    if (handle) fileBlob = await handle.getFile();
-                }
-                if (!fileBlob && window.registry.files[srcPath]) {
-                    const val = window.registry.files[srcPath];
-                    fileBlob = val instanceof Blob ? val : new Blob([val]);
-                }
-
-                if (fileBlob) {
-                    await window.fs?.ensureParentDirs(destPath, { track: false });
-                    if (window.rootHandle) {
-                        await window.rawWrite(destPath, fileBlob);
-                    }
-                    if (typeof window.readImageDataUrl === 'function') {
-                        const dataUrl = await window.readImageDataUrl(srcPath);
-                        if (dataUrl) window.registry.files[destPath] = dataUrl;
-                    }
-                    window.registry.meta[destPath] = {
-                        kind: 'file',
-                        size: fileBlob.size || 0,
-                        isBinary: true,
-                        virtual: !window.rootHandle
-                    };
-                }
-
-                AppConfig.set('bg-image-path', destPath);
-                AppConfig.set('bg-image-enabled', 'true');
-                if (typeof window.applyBackgroundImage === 'function') {
-                    await window.applyBackgroundImage();
-                }
-                updateBackgroundSettingsUI();
-                if (typeof window.showToast === 'function') {
-                    window.showToast('Background image copied and set', 'success');
-                }
-            } catch (err) {
-                console.error(err);
-                if (typeof window.showToast === 'function') {
-                    window.showToast('Failed to copy image: ' + err.message, 'error');
-                }
             }
         });
     }

@@ -108,9 +108,74 @@ async function applyBackgroundImage() {
     }
 }
 
+async function setWorkspaceImageAsBackground(filePath) {
+    if (!filePath) return;
+    const extMatch = filePath.match(/\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : 'png';
+    const destPath = `.agent/background.${ext}`;
+
+    try {
+        const oldPath = AppConfig.get('bg-image-path', '');
+        if (oldPath && oldPath !== destPath && oldPath.startsWith('.agent/background.')) {
+            try {
+                if (window.rootHandle) await window.rawDelete(oldPath);
+                delete window.registry?.files?.[oldPath];
+                delete window.registry?.meta?.[oldPath];
+            } catch (e) {}
+        }
+
+        let fileBlob = null;
+        if (window.rootHandle) {
+            const handle = await window.getHandleByPath(filePath);
+            if (handle) fileBlob = await handle.getFile();
+        }
+        if (!fileBlob && window.registry?.files?.[filePath]) {
+            const val = window.registry.files[filePath];
+            fileBlob = val instanceof Blob ? val : new Blob([val]);
+        }
+
+        if (fileBlob) {
+            await window.fs?.ensureParentDirs(destPath, { track: false });
+            if (window.rootHandle) {
+                await window.rawWrite(destPath, fileBlob);
+            }
+            if (typeof window.readImageDataUrl === 'function') {
+                const dataUrl = await window.readImageDataUrl(filePath);
+                if (dataUrl && window.registry) window.registry.files[destPath] = dataUrl;
+            }
+            if (window.registry) {
+                window.registry.meta[destPath] = {
+                    kind: 'file',
+                    size: fileBlob.size || 0,
+                    isBinary: true,
+                    virtual: !window.rootHandle
+                };
+            }
+        }
+
+        AppConfig.set('bg-image-path', destPath);
+        AppConfig.set('bg-image-enabled', 'true');
+        if (typeof window.applyBackgroundImage === 'function') {
+            await window.applyBackgroundImage();
+        }
+        if (typeof window.updateBackgroundSettingsUI === 'function') {
+            window.updateBackgroundSettingsUI();
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('Set as background wallpaper', 'success');
+        }
+    } catch (err) {
+        console.error('Failed to set wallpaper:', err);
+        if (typeof window.showToast === 'function') {
+            window.showToast('Failed to set wallpaper: ' + err.message, 'error');
+        }
+    }
+}
+
 // --- AST_EXPORTS_START ---
 window.applyTheme = applyTheme;
 window.applyBackgroundImage = applyBackgroundImage;
+window.setWorkspaceImageAsBackground = setWorkspaceImageAsBackground;
 // --- AST_EXPORTS_END ---
 
 // --- applyWindowMode.js ---

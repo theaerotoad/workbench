@@ -355,10 +355,6 @@
                                             <span class="icon" style="font-size:14px;">upload</span>
                                             <span>Upload Image</span>
                                         </button>
-                                        <button type="button" id="settings-bg-pick-ws-btn" class="pill-btn">
-                                            <span class="icon" style="font-size:14px;">folder_open</span>
-                                            <span>Pick From Workspace</span>
-                                        </button>
                                         <button type="button" id="settings-bg-clear-btn" class="pill-btn danger" style="display:none;">
                                             <span class="icon" style="font-size:14px;">delete</span>
                                             <span>Clear</span>
@@ -858,6 +854,10 @@
                 <div class="context-menu-item" data-action="attach-prompt" data-scope="file">
                     <span class="icon" style="font-size:14px; color:var(--magenta);">alternate_email</span>
                     <span>Attach to Prompt (@)</span>
+                </div>
+                <div class="context-menu-item" id="ctx-set-background" data-action="set-background" data-scope="file" style="display:none;">
+                    <span class="icon" style="font-size:14px; color:var(--primary);">wallpaper</span>
+                    <span>Set as Wallpaper</span>
                 </div>
                 <div class="context-menu-item" data-action="download" data-scope="downloadable">
                     <span class="icon" style="font-size:14px; color:var(--green);">download</span>

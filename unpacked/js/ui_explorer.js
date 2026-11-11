@@ -182,6 +182,10 @@ contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
             const already = new Set(state.attachedReferences.filter(r => r.type === 'file').map(r => r.filepath));
             const toAttach = filePaths.filter(pth => !already.has(pth) || !inMulti);
             toAttach.forEach(pth => attachReference({ type: 'file', filepath: pth }));
+        } else if (action === 'set-background') {
+            if (node && node.kind !== 'directory' && typeof window.setWorkspaceImageAsBackground === 'function') {
+                await window.setWorkspaceImageAsBackground(node.path);
+            }
         } else if (action === 'rename') {
             const newName = (await promptDialog(`Rename "${node.name}" to:`, node.name, { confirmLabel: 'Rename', validate: (v) => validateEntryName(v, { allowSlash: false }) }))?.trim();
             if (!newName || newName === node.name) return;

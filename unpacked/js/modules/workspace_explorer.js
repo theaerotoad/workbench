@@ -494,6 +494,15 @@ function showContextMenu(e, node) {
         }
     }
 
+    const setBgBtn = document.getElementById('ctx-set-background');
+    if (setBgBtn) {
+        const isImg = node && node.kind === 'file' && (
+            typeof isImageFilePath === 'function' ? isImageFilePath(node.path) :
+            (window.isImageFilePath ? window.isImageFilePath(node.path) : /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(node.path))
+        );
+        setBgBtn.style.display = isImg ? 'flex' : 'none';
+    }
+
     contextMenu.style.display = 'block';
     contextMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 190)}px`;
     contextMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 260)}px`;
