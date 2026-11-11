@@ -901,22 +901,7 @@
                     </div>
                 </div>
 
-                <div id="tabs-actions">
-                    <div class="editor-view-segmented" id="editor-mode-toggle">
-                        <button id="btn-view-edit" class="seg-btn active" title="Switch to Code Editor">
-                            <span class="icon" style="font-size: 13px;">code</span>
-                            <span>Edit</span>
-                        </button>
-                        <button id="btn-view-preview" class="seg-btn" title="Switch to HTML Live Preview">
-                            <span class="icon" style="font-size: 13px;">visibility</span>
-                            <span>Preview</span>
-                        </button>
-                    </div>
-
-                    <button id="btn-tab-save" class="btn-tab-action" title="Save file [Ctrl+S] · Save As [Ctrl+Shift+S]" style="display:none;">
-                        <span class="icon" style="font-size: 15px;">save</span>
-                    </button>
-                </div>
+                <div id="tabs-actions"></div>
             </div>
 
             <div id="chat-view">
@@ -958,6 +943,40 @@
             </div>
 
             <div id="editor-view">
+                <div id="doc-control-bar" role="toolbar" aria-label="Document controls">
+                    <div id="doc-bar-info">
+                        <span class="icon" id="doc-bar-icon">description</span>
+                        <span id="doc-bar-path"></span>
+                        <span id="doc-bar-badge" class="doc-bar-badge" style="display:none;"></span>
+                        <span id="doc-bar-dirty" class="doc-bar-dirty" title="Unsaved changes" style="display:none;">Modified</span>
+                    </div>
+                    <div id="doc-bar-controls">
+                        <div class="editor-view-segmented" id="doc-view-toggle" style="display:none;">
+                            <button type="button" id="btn-doc-edit" class="seg-btn active" data-view="edit" title="Edit source" aria-pressed="true">
+                                <span class="icon" style="font-size: 13px;">code</span>
+                                <span>Edit</span>
+                            </button>
+                            <button type="button" id="btn-doc-render" class="seg-btn" data-view="render" title="Render document" aria-pressed="false">
+                                <span class="icon" style="font-size: 13px;">visibility</span>
+                                <span>Render</span>
+                            </button>
+                        </div>
+                        <div id="doc-bar-image-controls" class="doc-bar-image-controls" style="display:none;">
+                            <button type="button" id="img-zoom-out" class="doc-bar-btn" title="Zoom out">
+                                <span class="icon" style="font-size:13px;">remove</span>
+                            </button>
+                            <button type="button" id="img-scale-label" class="doc-bar-btn doc-bar-zoom-label" title="Reset zoom (100%)">100%</button>
+                            <button type="button" id="img-zoom-in" class="doc-bar-btn" title="Zoom in">
+                                <span class="icon" style="font-size:13px;">add</span>
+                            </button>
+                        </div>
+                        <div id="doc-bar-extra-actions" class="doc-bar-extra-actions"></div>
+                        <button type="button" id="btn-doc-save" class="doc-bar-btn" title="Save file [Ctrl+S] · Save As [Ctrl+Shift+S]" style="display:none;">
+                            <span class="icon" style="font-size: 14px;">save</span>
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </div>
                 <div id="editor-save-error" class="editor-save-error" style="display:none;">
                     <span class="icon">error</span>
                     <span id="editor-save-error-text"></span>
@@ -967,15 +986,6 @@
                 </div>
                 <div id="monaco-editor-container"></div>
                 <div id="editor-binary-notice">
-                    <div id="image-zoom-bar">
-                        <button id="img-zoom-out" class="img-zoom-btn" title="Zoom out">
-                            <span class="icon" style="font-size:13px;">remove</span>
-                        </button>
-                        <button id="img-scale-label" class="img-zoom-btn" title="Click to reset to 100%">100%</button>
-                        <button id="img-zoom-in" class="img-zoom-btn" title="Zoom in">
-                            <span class="icon" style="font-size:13px;">add</span>
-                        </button>
-                    </div>
                     <img id="editor-image-preview" style="display:none;" />
                     <span id="editor-binary-msg">Binary file</span>
                 </div>

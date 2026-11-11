@@ -17,6 +17,7 @@ const state = {
     dirtyFiles: new Set(),
     suppressDirtyTracking: false,
     editorViewMode: 'edit',
+    tabViewModes: {},
     attachedReferences: [],
     preEditAttachedReferences: null,
     attachmentStore: {},

@@ -337,10 +337,10 @@ document.addEventListener('click', (e) => {
     }
 });
 
-btnViewEdit.addEventListener('click', () => setEditorSubView('edit'));
-btnViewPreview.addEventListener('click', () => setEditorSubView('preview'));
+btnDocEdit.addEventListener('click', () => setEditorSubView('edit'));
+btnDocRender.addEventListener('click', () => setEditorSubView('render'));
 
-btnTabSave.addEventListener('click', (e) => {
+btnDocSave.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     saveEditorFile();

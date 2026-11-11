@@ -19,9 +19,21 @@ export const btnSidebarCloseMobile = document.getElementById('btn-sidebar-close-
 export const btnSidebarCloseMobile2 = document.getElementById('btn-sidebar-close-mobile-2');
 export const btnSidebarCollapse = document.getElementById('btn-sidebar-collapse');
 export const btnSidebarToggleMobile = document.getElementById('btn-sidebar-toggle-mobile');
-export const btnTabSave = document.getElementById('btn-tab-save');
-export const btnViewEdit = document.getElementById('btn-view-edit');
-export const btnViewPreview = document.getElementById('btn-view-preview');
+export const docControlBar = document.getElementById('doc-control-bar');
+export const docBarInfo = document.getElementById('doc-bar-info');
+export const docBarIcon = document.getElementById('doc-bar-icon');
+export const docBarPath = document.getElementById('doc-bar-path');
+export const docBarBadge = document.getElementById('doc-bar-badge');
+export const docBarDirty = document.getElementById('doc-bar-dirty');
+export const docViewToggle = document.getElementById('doc-view-toggle');
+export const btnDocEdit = document.getElementById('btn-doc-edit');
+export const btnDocRender = document.getElementById('btn-doc-render');
+export const docBarImageControls = document.getElementById('doc-bar-image-controls');
+export const docBarExtraActions = document.getElementById('doc-bar-extra-actions');
+export const btnDocSave = document.getElementById('btn-doc-save');
+export const btnTabSave = btnDocSave;
+export const btnViewEdit = btnDocEdit;
+export const btnViewPreview = btnDocRender;
 export const btnWorkspaceDisplay = document.getElementById('btn-workspace-display');
 export const workspaceBtnIcon = document.getElementById('workspace-btn-icon');
 export const workspaceBtnName = document.getElementById('workspace-btn-name');
@@ -38,7 +50,7 @@ export const diffView = document.getElementById('diff-view');
 export const editorBinaryMsg = document.getElementById('editor-binary-msg');
 export const editorBinaryNotice = document.getElementById('editor-binary-notice');
 export const editorImagePreview = document.getElementById('editor-image-preview');
-export const editorModeToggle = document.getElementById('editor-mode-toggle');
+export const editorModeToggle = docViewToggle;
 export const editorView = document.getElementById('editor-view');
 export const fileCountEl = document.getElementById('file-count');
 export const fileTreeEl = document.getElementById('file-tree');
@@ -46,7 +58,7 @@ export const graphBreadcrumb = document.getElementById('graph-breadcrumb');
 export const graphBreadcrumbFile = document.getElementById('graph-breadcrumb-file');
 export const graphPanelLabel = document.getElementById('graph-panel-label');
 export const htmlPreviewFrame = document.getElementById('html-preview-frame');
-export const imageZoomBar = document.getElementById('image-zoom-bar');
+export const imageZoomBar = docBarImageControls;
 export const imgScaleLabel = document.getElementById('img-scale-label');
 export const imgZoomIn = document.getElementById('img-zoom-in');
 export const imgZoomOut = document.getElementById('img-zoom-out');
@@ -143,7 +155,10 @@ Object.entries({
     btnDiffDiscard, btnDiffNextHunk, btnDiffPrevHunk, btnDiffSave, btnDiffToggleInline,
     btnExitWorkspace, btnNewFile, btnNewFolder, btnReloadTree, btnSessionToggle,
     btnSettingsToggle, btnSidebarCloseMobile, btnSidebarCloseMobile2, btnSidebarCollapse,
-    btnSidebarToggleMobile, btnTabSave, btnViewEdit, btnViewPreview, btnWorkspaceDisplay,
+    btnSidebarToggleMobile, docControlBar, docBarInfo, docBarIcon, docBarPath,
+    docBarBadge, docBarDirty, docViewToggle, btnDocEdit, btnDocRender,
+    docBarImageControls, docBarExtraActions, btnDocSave, btnTabSave, btnViewEdit,
+    btnViewPreview, btnWorkspaceDisplay,
     workspaceBtnIcon, workspaceBtnName, changesCountEl,
     changesList, chatView, checkpointTimelineList, contextMenu, diffLayoutIcon,
     diffLayoutText, diffStats, diffTitle, diffView, editorBinaryMsg, editorBinaryNotice,

@@ -211,6 +211,286 @@ function applySplitView() {
 window.applySplitView = applySplitView;
 // --- AST_EXPORTS_END ---
 
+// --- docRenderers.js ---
+const DOCUMENT_RENDERERS = [
+    {
+        id: 'markdown',
+        label: 'Markdown',
+        editLabel: 'Edit',
+        editIcon: 'code',
+        renderLabel: 'Render',
+        renderIcon: 'visibility',
+        defaultView: 'edit',
+        matches: (filepath) => /\.(md|markdown|mdown|mkd)$/i.test(filepath),
+        containerId: 'markdown-preview-container',
+        render: async (filepath, content) => {
+            await updateMarkdownPreview(filepath, content);
+        }
+    },
+    {
+        id: 'html',
+        label: 'HTML',
+        editLabel: 'Edit',
+        editIcon: 'code',
+        renderLabel: 'Render',
+        renderIcon: 'visibility',
+        defaultView: 'edit',
+        matches: (filepath) => /\.(html|htm)$/i.test(filepath),
+        containerId: 'html-preview-frame',
+        render: async (filepath, content) => {
+            updateHtmlPreview(filepath, content);
+        }
+    }
+];
+
+const DOCUMENT_ACTIONS = [];
+const _tabDocMetaCache = new Map();
+
+function getDocumentRenderer(filepath) {
+    if (!filepath || typeof filepath !== 'string') return null;
+    if (filepath.startsWith('attachment:') || filepath.startsWith('filediff:') || filepath === 'chat') return null;
+    return DOCUMENT_RENDERERS.find(r => {
+        try {
+            return typeof r.matches === 'function' && r.matches(filepath);
+        } catch (e) {
+            console.warn('Renderer match error:', r.id, e);
+            return false;
+        }
+    }) || null;
+}
+
+function registerDocumentRenderer(rendererDef) {
+    if (!rendererDef || !rendererDef.id || typeof rendererDef.matches !== 'function') {
+        throw new Error('Invalid document renderer definition: requires id and matches(filepath)');
+    }
+    const idx = DOCUMENT_RENDERERS.findIndex(r => r.id === rendererDef.id);
+    if (idx !== -1) {
+        DOCUMENT_RENDERERS[idx] = { ...DOCUMENT_RENDERERS[idx], ...rendererDef };
+    } else {
+        DOCUMENT_RENDERERS.push(rendererDef);
+    }
+    if (state.activeTab && state.activeTab !== 'chat' && !state.activeTab.startsWith('filediff:')) {
+        updateDocumentControlBar(state.activeTab);
+    }
+}
+
+function registerDocumentAction(actionDef) {
+    if (!actionDef || !actionDef.id || typeof actionDef.onClick !== 'function') {
+        throw new Error('Invalid document action definition: requires id and onClick(ctx)');
+    }
+    const idx = DOCUMENT_ACTIONS.findIndex(a => a.id === actionDef.id);
+    if (idx !== -1) {
+        DOCUMENT_ACTIONS[idx] = { ...DOCUMENT_ACTIONS[idx], ...actionDef };
+    } else {
+        DOCUMENT_ACTIONS.push(actionDef);
+    }
+    if (state.activeTab && state.activeTab !== 'chat' && !state.activeTab.startsWith('filediff:')) {
+        updateDocumentControlBar(state.activeTab);
+    }
+}
+
+const DOC_LANG_LABELS = {
+    javascript: 'JavaScript',
+    typescript: 'TypeScript',
+    python: 'Python',
+    json: 'JSON',
+    css: 'CSS',
+    scss: 'SCSS',
+    less: 'LESS',
+    yaml: 'YAML',
+    xml: 'XML',
+    sql: 'SQL',
+    shell: 'Shell',
+    rust: 'Rust',
+    go: 'Go',
+    java: 'Java',
+    cpp: 'C++',
+    c: 'C',
+    csharp: 'C#',
+    ruby: 'Ruby',
+    php: 'PHP',
+    swift: 'Swift',
+    kotlin: 'Kotlin',
+    plaintext: 'Plain Text'
+};
+
+function formatDocTypeBadge(filepath, renderer) {
+    if (renderer && renderer.label) return renderer.label;
+    const lang = typeof langOf === 'function' ? langOf(filepath) : '';
+    if (lang && DOC_LANG_LABELS[lang]) return DOC_LANG_LABELS[lang];
+    if (lang && lang !== 'plaintext') return lang.charAt(0).toUpperCase() + lang.slice(1);
+    const extMatch = (filepath || '').match(/\.([a-z0-9]+)$/i);
+    return extMatch ? extMatch[1].toUpperCase() : 'Plain Text';
+}
+
+function updateDocumentControlBar(tabId, metaCtx) {
+    const bar = typeof docControlBar !== 'undefined' && docControlBar ? docControlBar : document.getElementById('doc-control-bar');
+    if (!bar || !tabId || tabId === 'chat' || tabId.startsWith('filediff:')) return;
+
+    const resolvedMeta = metaCtx || _tabDocMetaCache.get(tabId) || {};
+    const iconEl = typeof docBarIcon !== 'undefined' && docBarIcon ? docBarIcon : document.getElementById('doc-bar-icon');
+    const pathEl = typeof docBarPath !== 'undefined' && docBarPath ? docBarPath : document.getElementById('doc-bar-path');
+    const badgeEl = typeof docBarBadge !== 'undefined' && docBarBadge ? docBarBadge : document.getElementById('doc-bar-badge');
+    const dirtyEl = typeof docBarDirty !== 'undefined' && docBarDirty ? docBarDirty : document.getElementById('doc-bar-dirty');
+    const toggleEl = typeof docViewToggle !== 'undefined' && docViewToggle ? docViewToggle : document.getElementById('doc-view-toggle');
+    const editBtn = typeof btnDocEdit !== 'undefined' && btnDocEdit ? btnDocEdit : document.getElementById('btn-doc-edit');
+    const renderBtn = typeof btnDocRender !== 'undefined' && btnDocRender ? btnDocRender : document.getElementById('btn-doc-render');
+    const imgCtrlEl = typeof docBarImageControls !== 'undefined' && docBarImageControls ? docBarImageControls : document.getElementById('doc-bar-image-controls');
+    const extraEl = typeof docBarExtraActions !== 'undefined' && docBarExtraActions ? docBarExtraActions : document.getElementById('doc-bar-extra-actions');
+    const saveBtn = typeof btnDocSave !== 'undefined' && btnDocSave ? btnDocSave : document.getElementById('btn-doc-save');
+
+    let kind = resolvedMeta.kind || 'text';
+    let renderer = null;
+    let displayPath = tabId;
+    let iconName = 'description';
+    let iconColor = '';
+    let badgeText = '';
+    let isDirty = false;
+    let showImageControls = false;
+    let showSave = false;
+
+    if (tabId.startsWith('attachment:')) {
+        kind = 'attachment';
+        const att = resolvedMeta.attachment || state.attachmentStore[tabId.replace('attachment:', '')];
+        displayPath = att?.name || 'Attachment';
+        if (!att) {
+            iconName = 'broken_image';
+            iconColor = 'var(--dim)';
+            badgeText = 'Unavailable';
+        } else if (att.type === 'image') {
+            iconName = 'image';
+            iconColor = 'var(--green)';
+            badgeText = 'Attachment';
+            showImageControls = true;
+        } else {
+            iconName = 'description';
+            iconColor = 'var(--yellow)';
+            badgeText = 'Attachment';
+        }
+    } else if (resolvedMeta.kind === 'image') {
+        kind = 'image';
+        const vInfo = typeof getFileVisualInfo === 'function' ? getFileVisualInfo(tabId) : { icon: 'image', color: 'var(--green)' };
+        iconName = vInfo.icon;
+        iconColor = vInfo.color;
+        badgeText = resolvedMeta.size != null ? `Image · ${formatFileSize(resolvedMeta.size)}` : 'Image';
+        showImageControls = true;
+    } else if (resolvedMeta.kind === 'binary') {
+        kind = 'binary';
+        const vInfo = typeof getFileVisualInfo === 'function' ? getFileVisualInfo(tabId) : { icon: 'draft', color: 'var(--dim)' };
+        iconName = vInfo.icon;
+        iconColor = vInfo.color;
+        badgeText = resolvedMeta.size != null ? `Binary · ${formatFileSize(resolvedMeta.size)}` : 'Binary';
+    } else {
+        kind = 'text';
+        const vInfo = typeof getFileVisualInfo === 'function' ? getFileVisualInfo(tabId) : { icon: 'description', color: '' };
+        iconName = vInfo.icon;
+        iconColor = vInfo.color;
+        renderer = getDocumentRenderer(tabId);
+        badgeText = formatDocTypeBadge(tabId, renderer);
+        isDirty = isFileDirty(tabId);
+        showSave = true;
+    }
+
+    if (iconEl) {
+        iconEl.textContent = iconName;
+        iconEl.style.color = iconColor || '';
+    }
+    if (pathEl) {
+        pathEl.textContent = displayPath;
+        pathEl.title = displayPath;
+    }
+    if (badgeEl) {
+        if (badgeText) {
+            badgeEl.textContent = badgeText;
+            badgeEl.style.display = '';
+        } else {
+            badgeEl.textContent = '';
+            badgeEl.style.display = 'none';
+        }
+    }
+    if (dirtyEl) {
+        dirtyEl.style.display = isDirty ? '' : 'none';
+    }
+    if (toggleEl) {
+        if (renderer) {
+            toggleEl.style.display = 'inline-flex';
+            if (editBtn) {
+                const eIcon = editBtn.querySelector('.icon');
+                const eLabel = editBtn.querySelector('span:last-child');
+                if (eIcon) eIcon.textContent = renderer.editIcon || 'code';
+                if (eLabel) eLabel.textContent = renderer.editLabel || 'Edit';
+                editBtn.title = `Switch to ${renderer.editLabel || 'Edit'} view`;
+            }
+            if (renderBtn) {
+                const rIcon = renderBtn.querySelector('.icon');
+                const rLabel = renderBtn.querySelector('span:last-child');
+                if (rIcon) rIcon.textContent = renderer.renderIcon || 'visibility';
+                if (rLabel) rLabel.textContent = renderer.renderLabel || 'Render';
+                renderBtn.title = `Switch to ${renderer.renderLabel || 'Render'} view`;
+            }
+        } else {
+            toggleEl.style.display = 'none';
+        }
+    }
+    if (imgCtrlEl) {
+        imgCtrlEl.style.display = showImageControls ? 'inline-flex' : 'none';
+    }
+    if (saveBtn) {
+        saveBtn.style.display = showSave ? 'inline-flex' : 'none';
+        saveBtn.classList.toggle('dirty', isDirty);
+    }
+    if (extraEl) {
+        extraEl.innerHTML = '';
+        const ctx = {
+            tabId,
+            filepath: kind === 'attachment' ? null : tabId,
+            kind,
+            renderer,
+            viewMode: renderer ? (state.tabViewModes?.[tabId] || renderer.defaultView || 'edit') : 'edit',
+            isDirty
+        };
+        DOCUMENT_ACTIONS.forEach(action => {
+            try {
+                if (typeof action.appliesTo === 'function' && !action.appliesTo(ctx)) return;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'doc-bar-btn';
+                btn.id = `doc-action-${action.id}`;
+                if (action.title) btn.title = action.title;
+                if (action.icon) {
+                    const ic = document.createElement('span');
+                    ic.className = 'icon';
+                    ic.style.fontSize = '14px';
+                    ic.textContent = action.icon;
+                    btn.appendChild(ic);
+                }
+                if (action.label) {
+                    const lbl = document.createElement('span');
+                    lbl.textContent = action.label;
+                    btn.appendChild(lbl);
+                }
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    action.onClick(ctx, e);
+                });
+                extraEl.appendChild(btn);
+            } catch (e) {
+                console.warn('Error rendering document action:', action.id, e);
+            }
+        });
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.DOCUMENT_RENDERERS = DOCUMENT_RENDERERS;
+window.DOCUMENT_ACTIONS = DOCUMENT_ACTIONS;
+window.getDocumentRenderer = getDocumentRenderer;
+window.registerDocumentRenderer = registerDocumentRenderer;
+window.registerDocumentAction = registerDocumentAction;
+window.updateDocumentControlBar = updateDocumentControlBar;
+// --- AST_EXPORTS_END ---
+
 // --- clearFileDirty.js ---
 function clearFileDirty(filepath) {
     if (state.dirtyFiles.has(filepath)) {
@@ -219,7 +499,10 @@ function clearFileDirty(filepath) {
     }
     if (state.currentEditorPath === filepath) {
         state.isEditorDirty = false;
-        btnTabSave.classList.remove('dirty');
+        const saveBtn = typeof btnDocSave !== 'undefined' && btnDocSave ? btnDocSave : document.getElementById('btn-doc-save');
+        const dirtyEl = typeof docBarDirty !== 'undefined' && docBarDirty ? docBarDirty : document.getElementById('doc-bar-dirty');
+        if (saveBtn) saveBtn.classList.remove('dirty');
+        if (dirtyEl) dirtyEl.style.display = 'none';
     }
 }
 
@@ -246,6 +529,8 @@ async function closeTab(tabId) {
         clearFileDirty(tabId);
     }
     state.openTabs = state.openTabs.filter(t => t !== tabId);
+    if (state.tabViewModes) delete state.tabViewModes[tabId];
+    _tabDocMetaCache.delete(tabId);
     if (state.activeTab === tabId) {
         switchTab(state.openTabs[state.openTabs.length - 1] || 'chat');
     } else {
@@ -262,10 +547,13 @@ window.closeTab = closeTab;
 function closeTabNoConfirm(tabId) {
     if (!state.openTabs.includes(tabId)) return;
     state.openTabs = state.openTabs.filter(t => t !== tabId);
+    if (state.tabViewModes) delete state.tabViewModes[tabId];
+    _tabDocMetaCache.delete(tabId);
     if (state.activeTab === tabId) {
         const prevTab = state.openTabs[state.openTabs.length - 1] || 'chat';
         switchTab(prevTab);
     } else {
+        renderTabs();
         persistTabState();
     }
     if (tabId !== 'chat' && !tabId.startsWith('attachment:')) {
@@ -404,7 +692,10 @@ function markFileDirty(filepath) {
     }
     if (state.currentEditorPath === filepath) {
         state.isEditorDirty = true;
-        btnTabSave.classList.add('dirty');
+        const saveBtn = typeof btnDocSave !== 'undefined' && btnDocSave ? btnDocSave : document.getElementById('btn-doc-save');
+        const dirtyEl = typeof docBarDirty !== 'undefined' && docBarDirty ? docBarDirty : document.getElementById('doc-bar-dirty');
+        if (saveBtn) saveBtn.classList.add('dirty');
+        if (dirtyEl) dirtyEl.style.display = '';
         hideEditorSaveError();
     }
 }
@@ -458,11 +749,21 @@ window.openFileTab = openFileTab;
 function persistTabState() {
     const id = state.activeSessionId;
     if (!id || deletedSessionIds.has(id) || !state.sessions[id]) return Promise.resolve(null);
+    const cleanViewModes = {};
+    if (state.tabViewModes) {
+        for (const [k, v] of Object.entries(state.tabViewModes)) {
+            if (state.openTabs.includes(k) && (v === 'edit' || v === 'render')) {
+                cleanViewModes[k] = v;
+            }
+        }
+    }
     state.sessions[id].openTabs = state.openTabs.slice();
     state.sessions[id].activeTab = state.activeTab;
+    state.sessions[id].tabViewModes = cleanViewModes;
     return patchSessionRecordInDB(getWorkspaceSessionKey(), id, {
         openTabs: state.sessions[id].openTabs,
-        activeTab: state.sessions[id].activeTab
+        activeTab: state.sessions[id].activeTab,
+        tabViewModes: state.sessions[id].tabViewModes
     });
 }
 
@@ -536,21 +837,6 @@ function renderTabs() {
             });
             tab.appendChild(closeBtn);
             tab.addEventListener('click', () => switchTab(tabId));
-        } else if (tabId.startsWith('render:')) {
-            const filepath = tabId.replace('render:', '');
-            const fname = filepath.split('/').pop();
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: var(--info);">preview</span><span>Render: ${escapeHTML(fname)}</span>`;
-            tab.title = `Rendered Markdown: ${filepath}`;
-
-            const closeBtn = document.createElement('span');
-            closeBtn.className = 'tab-close icon';
-            closeBtn.innerText = 'close';
-            closeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeTab(tabId);
-            });
-            tab.appendChild(closeBtn);
-            tab.addEventListener('click', () => switchTab(tabId));
         } else if (isAttachment) {
             const attId = tabId.replace('attachment:', '');
             let att = state.attachmentStore[attId];
@@ -578,8 +864,13 @@ function renderTabs() {
         } else {
             const vInfo = getFileVisualInfo(tabId);
             const isDirty = isFileDirty(tabId);
-            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${vInfo.color};">${vInfo.icon}</span><span>${escapeHTML(tabId.split('/').pop())}</span>`;
-            tab.title = isDirty ? `${tabId} (unsaved changes)` : tabId;
+            const isRendered = state.tabViewModes?.[tabId] === 'render' && !!getDocumentRenderer(tabId);
+            const renderBadge = isRendered
+                ? `<span class="icon tab-render-badge" style="font-size: 11px; color: var(--info); opacity: 0.85;" title="Rendered view">visibility</span>`
+                : '';
+            tab.innerHTML = `<span class="icon" style="font-size: 13px; color: ${vInfo.color};">${vInfo.icon}</span><span>${escapeHTML(tabId.split('/').pop())}</span>${renderBadge}`;
+            const titleSuffix = [isRendered ? 'rendered' : '', isDirty ? 'unsaved changes' : ''].filter(Boolean).join(', ');
+            tab.title = titleSuffix ? `${tabId} (${titleSuffix})` : tabId;
 
             const closeBtn = document.createElement('span');
             closeBtn.className = 'tab-close icon';
@@ -691,8 +982,9 @@ window.saveDiffModifiedFile = saveDiffModifiedFile;
 // --- saveEditorFile.js ---
 async function saveEditorFile() {
     if (state.isSaving || !state.currentEditorPath || !monacoEditor) return;
+    const saveBtn = typeof btnDocSave !== 'undefined' && btnDocSave ? btnDocSave : document.getElementById('btn-doc-save');
     state.isSaving = true;
-    btnTabSave.style.opacity = '0.6';
+    if (saveBtn) saveBtn.style.opacity = '0.6';
     hideEditorSaveError();
 
     try {
@@ -744,11 +1036,14 @@ async function saveEditorFile() {
 
         clearFileDirty(state.currentEditorPath);
 
-        if (state.editorViewMode === 'preview') {
-            updateHtmlPreview();
+        if (state.editorViewMode === 'render' || state.editorViewMode === 'preview') {
+            const renderer = getDocumentRenderer(state.currentEditorPath);
+            if (renderer && typeof renderer.render === 'function') {
+                await renderer.render(state.currentEditorPath, content);
+            }
         }
 
-        const saveIcon = btnTabSave.querySelector('.icon');
+        const saveIcon = saveBtn ? saveBtn.querySelector('.icon') : null;
         if (saveIcon) {
             saveIcon.innerText = 'check';
             saveIcon.style.color = 'var(--green)';
@@ -762,7 +1057,7 @@ async function saveEditorFile() {
         showToast(`Save error: ${err.message}. Your changes are preserved.`, 'error');
     } finally {
         state.isSaving = false;
-        btnTabSave.style.opacity = '1';
+        if (saveBtn) saveBtn.style.opacity = '1';
     }
 }
 
@@ -832,7 +1127,10 @@ async function saveFileAs() {
             return;
         }
 
-        await openFileTab(target);
+        const inheritedViewMode = (state.tabViewModes && state.tabViewModes[srcPath] && getDocumentRenderer(target))
+            ? state.tabViewModes[srcPath]
+            : undefined;
+        await openFileTab(target, inheritedViewMode ? { viewMode: inheritedViewMode } : {});
         await syncWorkspace(false);
     } catch (err) {
         showToast(`Save As failed: ${err.message}`, 'error');
@@ -874,17 +1172,48 @@ window.setDuoSwitch = setDuoSwitch;
 
 // --- setEditorSubView.js ---
 function setEditorSubView(mode, opts = {}) {
-    state.editorViewMode = mode;
-    if (mode === 'preview') {
-        btnViewPreview.classList.add('active');
-        btnViewEdit.classList.remove('active');
-        monacoContainer.style.display = 'none';
-        htmlPreviewFrame.style.display = 'block';
-        requestAnimationFrame(() => updateHtmlPreview());
+    const normalizedMode = mode === 'preview' ? 'render' : mode;
+    const filepath = opts.filepath || state.currentEditorPath;
+    const renderer = getDocumentRenderer(filepath);
+    const resolvedMode = (normalizedMode === 'render' && renderer) ? 'render' : 'edit';
+
+    state.tabViewModes = state.tabViewModes || {};
+    let modeChanged = false;
+    if (filepath) {
+        if (renderer) {
+            modeChanged = state.tabViewModes[filepath] !== resolvedMode;
+            state.tabViewModes[filepath] = resolvedMode;
+        } else {
+            delete state.tabViewModes[filepath];
+        }
+    }
+    state.editorViewMode = resolvedMode;
+
+    const editBtn = typeof btnDocEdit !== 'undefined' && btnDocEdit ? btnDocEdit : document.getElementById('btn-doc-edit');
+    const renderBtn = typeof btnDocRender !== 'undefined' && btnDocRender ? btnDocRender : document.getElementById('btn-doc-render');
+    if (editBtn) {
+        editBtn.classList.toggle('active', resolvedMode === 'edit');
+        editBtn.setAttribute('aria-pressed', resolvedMode === 'edit' ? 'true' : 'false');
+    }
+    if (renderBtn) {
+        renderBtn.classList.toggle('active', resolvedMode === 'render');
+        renderBtn.setAttribute('aria-pressed', resolvedMode === 'render' ? 'true' : 'false');
+    }
+
+    const knownContainerIds = new Set(['monaco-editor-container', 'html-preview-frame', 'markdown-preview-container']);
+    DOCUMENT_RENDERERS.forEach(r => { if (r.containerId) knownContainerIds.add(r.containerId); });
+    knownContainerIds.forEach(cid => {
+        const el = document.getElementById(cid);
+        if (el) el.style.display = 'none';
+    });
+
+    if (resolvedMode === 'render' && renderer) {
+        const targetContainer = renderer.containerId ? document.getElementById(renderer.containerId) : null;
+        if (targetContainer) targetContainer.style.display = 'block';
+        if (typeof renderer.render === 'function') {
+            requestAnimationFrame(() => renderer.render(filepath));
+        }
     } else {
-        btnViewEdit.classList.add('active');
-        btnViewPreview.classList.remove('active');
-        htmlPreviewFrame.style.display = 'none';
         monacoContainer.style.display = 'block';
         if (window.monacoEditor) {
             requestAnimationFrame(() => {
@@ -892,6 +1221,11 @@ function setEditorSubView(mode, opts = {}) {
                 if (opts.focus !== false) window.monacoEditor.focus();
             });
         }
+    }
+
+    if (modeChanged && !opts.skipPersist) {
+        renderTabs();
+        persistTabState();
     }
 }
 
@@ -1026,7 +1360,10 @@ window.showEditorSaveError = showEditorSaveError;
 
 // --- showImgZoomBar.js ---
 function showImgZoomBar(show) {
-    imageZoomBar.style.display = show ? 'flex' : 'none';
+    const ctrl = typeof docBarImageControls !== 'undefined' && docBarImageControls
+        ? docBarImageControls
+        : document.getElementById('doc-bar-image-controls');
+    if (ctrl) ctrl.style.display = show ? 'inline-flex' : 'none';
     if (show) resetImgView(false);
 }
 
@@ -1036,6 +1373,21 @@ window.showImgZoomBar = showImgZoomBar;
 
 // --- switchTab.js ---
 async function switchTab(tabId, opts = {}) {
+    if (typeof tabId === 'string' && tabId.startsWith('render:')) {
+        const targetPath = tabId.slice('render:'.length);
+        const idx = state.openTabs.indexOf(tabId);
+        if (idx !== -1) {
+            if (!state.openTabs.includes(targetPath)) {
+                state.openTabs[idx] = targetPath;
+            } else {
+                state.openTabs.splice(idx, 1);
+            }
+        } else if (!state.openTabs.includes(targetPath)) {
+            state.openTabs.push(targetPath);
+        }
+        return switchTab(targetPath, { ...opts, viewMode: 'render' });
+    }
+
     const isSplit = document.body.classList.contains('split-view-active');
     let focusChat = false;
     if (isSplit && tabId === 'chat') {
@@ -1057,15 +1409,11 @@ async function switchTab(tabId, opts = {}) {
         editorView.style.display = 'none';
         diffView.style.display = 'none';
         chatView.style.display = 'flex';
-        editorModeToggle.style.display = 'none';
-        btnTabSave.style.display = 'none';
         focusPrompt();
     } else if (tabId.startsWith('filediff:')) {
         chatView.style.display = 'none';
         editorView.style.display = 'none';
         diffView.style.display = 'flex';
-        editorModeToggle.style.display = 'none';
-        btnTabSave.style.display = 'none';
         const rest = tabId.replace('filediff:', '');
         const parts = rest.split('::');
         const fp = parts[0];
@@ -1076,12 +1424,13 @@ async function switchTab(tabId, opts = {}) {
         diffView.style.display = 'none';
         editorView.style.display = 'flex';
         state.currentEditorPath = null;
-        editorModeToggle.style.display = 'none';
-        btnTabSave.style.display = 'none';
+        hideEditorSaveError();
 
         let att = state.attachmentStore[tabId.replace('attachment:', '')];
         monacoContainer.style.display = 'none';
         htmlPreviewFrame.style.display = 'none';
+        const mdContainer = document.getElementById('markdown-preview-container');
+        if (mdContainer) mdContainer.style.display = 'none';
         attachmentTextPreview.style.display = 'none';
 
         if (!att) {
@@ -1097,6 +1446,10 @@ async function switchTab(tabId, opts = {}) {
                 state.attachmentStore[att.attachmentId] = att;
             }
         }
+
+        const metaCtx = { kind: 'attachment', attachment: att };
+        _tabDocMetaCache.set(tabId, metaCtx);
+        updateDocumentControlBar(tabId, metaCtx);
 
         if (!att) {
             editorBinaryNotice.style.display = 'flex';
@@ -1116,25 +1469,6 @@ async function switchTab(tabId, opts = {}) {
             attachmentTextPreview.style.display = 'block';
             attachmentTextPreview.textContent = att.content;
         }
-    } else if (tabId.startsWith('render:')) {
-        chatView.style.display = 'none';
-        diffView.style.display = 'none';
-        editorView.style.display = 'flex';
-        state.currentEditorPath = null;
-        editorModeToggle.style.display = 'none';
-        btnTabSave.style.display = 'none';
-
-        monacoContainer.style.display = 'none';
-        htmlPreviewFrame.style.display = 'none';
-        editorBinaryNotice.style.display = 'none';
-        attachmentTextPreview.style.display = 'none';
-
-        const mdContainer = document.getElementById('markdown-preview-container');
-        if (mdContainer) {
-            mdContainer.style.display = 'block';
-            const filepath = tabId.replace('render:', '');
-            await updateMarkdownPreview(filepath);
-        }
     } else {
         chatView.style.display = 'none';
         diffView.style.display = 'none';
@@ -1142,30 +1476,36 @@ async function switchTab(tabId, opts = {}) {
         state.currentEditorPath = tabId;
         hideEditorSaveError();
         attachmentTextPreview.style.display = 'none';
-        const mdContainer = document.getElementById('markdown-preview-container');
-        if (mdContainer) mdContainer.style.display = 'none';
+
+        const activateTextOrRenderedView = () => {
+            editorBinaryNotice.style.display = 'none';
+            const renderer = getDocumentRenderer(tabId);
+            state.tabViewModes = state.tabViewModes || {};
+            const requestedMode = opts.viewMode === 'preview' ? 'render' : opts.viewMode;
+            const savedMode = state.tabViewModes[tabId];
+            const targetMode = renderer
+                ? (requestedMode || savedMode || renderer.defaultView || 'edit')
+                : 'edit';
+            state.tabViewModes[tabId] = targetMode;
+            const metaCtx = { kind: 'text' };
+            _tabDocMetaCache.set(tabId, metaCtx);
+            updateDocumentControlBar(tabId, metaCtx);
+            setEditorSubView(targetMode, { filepath: tabId, focus: !opts.keepFocus, skipPersist: true });
+            renderTabs();
+            persistTabState();
+        };
 
         // Fast path: if Monaco model already exists, activate it immediately with 0 network calls
         if (typeof monacoModels !== 'undefined' && monacoModels.has(tabId)) {
-            editorBinaryNotice.style.display = 'none';
             if (monacoEditor) {
                 const model = monacoModels.get(tabId);
                 withDirtyTrackingSuppressed(() => monacoEditor.setModel(model));
                 state.isEditorDirty = isFileDirty(tabId);
-                btnTabSave.classList.toggle('dirty', state.isEditorDirty);
                 clearGutterDiffMarkers();
                 scheduleGutterDiffUpdate();
             }
 
-            const isHtml = tabId.endsWith('.html') || tabId.endsWith('.htm');
-            editorModeToggle.style.display = isHtml ? 'flex' : 'none';
-            btnTabSave.style.display = isHtml ? 'flex' : 'none';
-
-            if (isHtml && state.editorViewMode === 'preview') {
-                setEditorSubView('preview');
-            } else {
-                setEditorSubView('edit', { focus: !opts.keepFocus });
-            }
+            activateTextOrRenderedView();
 
             if (focusChat && window.focusPrompt) {
                 window.focusPrompt();
@@ -1180,12 +1520,15 @@ async function switchTab(tabId, opts = {}) {
         if (isBinaryFile && !isImage) {
             monacoContainer.style.display = 'none';
             htmlPreviewFrame.style.display = 'none';
+            const mdContainer = document.getElementById('markdown-preview-container');
+            if (mdContainer) mdContainer.style.display = 'none';
             editorBinaryNotice.style.display = 'flex';
             editorImagePreview.style.display = 'none';
             showImgZoomBar(false);
+            const metaCtx = { kind: 'binary', size: meta?.size || 0 };
+            _tabDocMetaCache.set(tabId, metaCtx);
+            updateDocumentControlBar(tabId, metaCtx);
             editorBinaryMsg.innerText = `Binary file (${formatFileSize(meta?.size || 0)}) - cannot be displayed in text editor.`;
-            editorModeToggle.style.display = 'none';
-            btnTabSave.style.display = 'none';
             return;
         }
 
@@ -1195,13 +1538,16 @@ async function switchTab(tabId, opts = {}) {
             if (dataUrl) {
                 monacoContainer.style.display = 'none';
                 htmlPreviewFrame.style.display = 'none';
+                const mdContainer = document.getElementById('markdown-preview-container');
+                if (mdContainer) mdContainer.style.display = 'none';
                 editorBinaryNotice.style.display = 'flex';
                 editorImagePreview.src = dataUrl;
                 editorImagePreview.style.display = 'block';
                 showImgZoomBar(true);
+                const metaCtx = { kind: 'image', size: meta.size || 0 };
+                _tabDocMetaCache.set(tabId, metaCtx);
+                updateDocumentControlBar(tabId, metaCtx);
                 editorBinaryMsg.innerText = `${tabId.split('/').pop()} (${formatFileSize(meta.size || 0)})`;
-                editorModeToggle.style.display = 'none';
-                btnTabSave.style.display = 'none';
                 return;
             }
         }
@@ -1213,39 +1559,30 @@ async function switchTab(tabId, opts = {}) {
                 const url = URL.createObjectURL(file);
                 monacoContainer.style.display = 'none';
                 htmlPreviewFrame.style.display = 'none';
+                const mdContainer = document.getElementById('markdown-preview-container');
+                if (mdContainer) mdContainer.style.display = 'none';
                 editorBinaryNotice.style.display = 'flex';
                 editorImagePreview.src = url;
                 editorImagePreview.style.display = 'block';
                 showImgZoomBar(true);
+                const metaCtx = { kind: 'image', size: file.size };
+                _tabDocMetaCache.set(tabId, metaCtx);
+                updateDocumentControlBar(tabId, metaCtx);
                 editorBinaryMsg.innerText = `${tabId.split('/').pop()} (${formatFileSize(file.size)})`;
-                editorModeToggle.style.display = 'none';
-                btnTabSave.style.display = 'none';
                 return;
             } catch(e) {}
         }
-
-        editorBinaryNotice.style.display = 'none';
 
         const content = await readFileContent(tabId);
         if (monacoEditor) {
             const model = getOrCreateModel(tabId, content);
             withDirtyTrackingSuppressed(() => monacoEditor.setModel(model));
             state.isEditorDirty = isFileDirty(tabId);
-            btnTabSave.classList.toggle('dirty', state.isEditorDirty);
             clearGutterDiffMarkers();
             scheduleGutterDiffUpdate();
         }
 
-        const isHtml = tabId.endsWith('.html') || tabId.endsWith('.htm');
-        editorModeToggle.style.display = isHtml ? 'flex' : 'none';
-        btnTabSave.style.display = isHtml ? 'flex' : 'none';
-
-        if (isHtml && state.editorViewMode === 'preview') {
-            setEditorSubView('preview');
-        } else {
-            // keepFocus: opened from the explorer, so focus stays in the explorer instead of jumping into the editor.
-            setEditorSubView('edit', { focus: !opts.keepFocus });
-        }
+        activateTextOrRenderedView();
 
         if (focusChat && window.focusPrompt) {
             window.focusPrompt();
@@ -1358,10 +1695,15 @@ window.updateGenGlow = updateGenGlow;
 // --- AST_EXPORTS_END ---
 
 // --- updateHtmlPreview.js ---
-function updateHtmlPreview() {
-    if (!state.currentEditorPath) return;
-    const content = monacoEditor ? monacoEditor.getValue() : (registry.files[state.currentEditorPath] || '');
-    htmlPreviewFrame.srcdoc = withStorageShim(content);
+function updateHtmlPreview(filepath, content) {
+    const targetPath = filepath || state.currentEditorPath;
+    if (!targetPath) return;
+    let htmlContent = content;
+    if (htmlContent === undefined) {
+        const model = typeof monacoModels !== 'undefined' ? monacoModels.get(targetPath) : null;
+        htmlContent = model ? model.getValue() : (registry.files[targetPath] || '');
+    }
+    htmlPreviewFrame.srcdoc = withStorageShim(htmlContent);
 }
 
 // --- AST_EXPORTS_START ---
@@ -1375,7 +1717,12 @@ async function updateMarkdownPreview(filepath, content) {
     
     let latestContent = content;
     if (latestContent === undefined) {
-        latestContent = await window.readFileContent(filepath);
+        const model = typeof monacoModels !== 'undefined' ? monacoModels.get(filepath) : null;
+        if (model) {
+            latestContent = model.getValue();
+        } else {
+            latestContent = await window.readFileContent(filepath);
+        }
         if (latestContent === undefined || latestContent === null) {
             latestContent = '';
         }
