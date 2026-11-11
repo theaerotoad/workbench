@@ -85,6 +85,8 @@ function closeWorkspace() {
     term.innerHTML = '';
     resetScrollState();
 
+    window._bgBlobCache = null;
+
     if (typeof resetToolRegistry === 'function') {
         resetToolRegistry();
     } else {

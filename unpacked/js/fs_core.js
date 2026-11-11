@@ -341,12 +341,21 @@ export async function readFileTextSniffed(file) {
 export async function readImageBlobUrl(filepath) {
  if (!filepath) return null;
 
- if (window._bgBlobCache && window._bgBlobCache.path === filepath && window._bgBlobCache.url) {
+ const wsKey = window.wsStorageName && window.rootHandle ? window.wsStorageName(window.rootHandle) : 'none';
+ const meta = registry.meta[filepath];
+ const fileRef = registry.files[filepath];
+ const cacheHint = meta ? meta.size : (fileRef ? (fileRef.size || fileRef.length) : 0);
+
+ if (window._bgBlobCache && 
+  window._bgBlobCache.path === filepath && 
+  window._bgBlobCache.ws === wsKey && 
+  window._bgBlobCache.hint === cacheHint && 
+  window._bgBlobCache.url) {
   return window._bgBlobCache.url;
  }
 
- if (typeof registry.files[filepath] === 'string' && registry.files[filepath].startsWith('data:')) {
-  return registry.files[filepath];
+ if (typeof fileRef === 'string' && fileRef.startsWith('data:')) {
+  return fileRef;
  }
  try {
   let blob = null;
@@ -373,7 +382,7 @@ export async function readImageBlobUrl(filepath) {
         }
         if (blob) {
          const url = URL.createObjectURL(blob);
-         window._bgBlobCache = { path: filepath, url };
+         window._bgBlobCache = { path: filepath, ws: wsKey, hint: cacheHint, url };
          return url;
         }
        } catch (e) {
