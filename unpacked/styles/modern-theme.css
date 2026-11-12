@@ -185,6 +185,7 @@ body.has-custom-bg .monaco-editor .minimap-decorations-layer {
 }
 
 /* Translucent popovers & dialogs (Dark Theme) */
+body.has-custom-bg #workspaces-popover,
 body.has-custom-bg #sessions-popover,
 body.has-custom-bg #settings-popover .settings-panel,
 body.has-custom-bg #yesno-modal,
@@ -327,19 +328,19 @@ transition:transform .1s,filter .15s}
 #queued-prompt-banner{border-radius:3px}
 
 /* Popovers, menus, modals */
-#sessions-popover,#settings-popover .settings-panel,#yesno-modal,#cleardata-modal,#about-modal,#newtool-modal,
+#workspaces-popover,#sessions-popover,#settings-popover .settings-panel,#yesno-modal,#cleardata-modal,#about-modal,#newtool-modal,
 #models-modal,#msg-delete-modal,#msg-edit-modal{border-radius:4px;background:rgba(21,21,23,.98);
 border:1px solid var(--border-highlight);box-shadow:0 30px 80px rgba(0,0,0,.8)}
 #model-select-dropdown,#model-picker-dropdown,#explorer-context-menu,#autocomplete-popup,.attach-menu,#tabs-overflow-menu{border-radius:4px;
 background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shadow:0 20px 50px rgba(0,0,0,.7)}
-#sessions-popover-overlay,#settings-popover,#yesno-modal-overlay,#cleardata-modal-overlay,#about-modal-overlay,
+#workspaces-popover-overlay,#sessions-popover-overlay,#settings-popover,#yesno-modal-overlay,#cleardata-modal-overlay,#about-modal-overlay,
 #newtool-modal-overlay,#models-modal-overlay,#msg-delete-modal-overlay,#msg-edit-modal-overlay{background:rgba(0,0,0,.72);transition:background .15s ease}
-.session-item-row,.recent-folder-item,.cleardata-option,.msg-del-option,.settings-panel-group,.tool-section-panel,
+.workspace-item-row,.session-item-row,.recent-folder-item,.cleardata-option,.msg-del-option,.settings-panel-group,.tool-section-panel,
 #newtool-browse-list,#newtool-dropzone{border-radius:3px}
-.session-item-row:hover,.recent-folder-item:hover,.cleardata-option:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.07)}
-.session-item-row.active{border-color:var(--accent);background:rgba(var(--accent-rgb),.13);box-shadow:0 0 20px rgba(var(--accent-rgb),.12)}
+.workspace-item-row:hover,.workspace-item-row.highlighted,.session-item-row:hover,.recent-folder-item:hover,.cleardata-option:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.07)}
+.workspace-item-row.active,.session-item-row.active{border-color:var(--accent);background:rgba(var(--accent-rgb),.13);box-shadow:0 0 20px rgba(var(--accent-rgb),.12)}
 #btn-workspace-display,.workspace-pill-btn{background:transparent;border:none;border-radius:6px;padding:4px 8px;height:28px;color:var(--dim);font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background .15s,color .15s}
-#btn-workspace-display:hover,.workspace-pill-btn:hover{background:var(--bg-hover);color:var(--fg)}
+#btn-workspace-display:hover,#btn-workspace-display.active,.workspace-pill-btn:hover,.workspace-pill-btn.active{background:var(--bg-hover);color:var(--fg)}
 .workspace-status-dot{width:6px;height:6px;border-radius:50%;background:var(--success,#3ecf8e);display:inline-block}
 
 #btn-session-toggle,.session-pill-btn{width:auto;max-width:none;min-width:0;height:28px;background:transparent;border:none;border-radius:6px;padding:4px 8px;color:var(--dim);font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:flex-start;gap:6px;cursor:pointer;transition:background .15s,color .15s;flex:0 1 auto}
@@ -367,10 +368,10 @@ background:rgba(21,21,23,.98);border:1px solid var(--border-highlight);box-shado
 .btn-confirm.primary:hover{filter:brightness(1.1);background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 .tri-switch,.tri-btn,.tri-thumb{border-radius:3px}.tri-btn{padding:2px 6px}
 .settings-field-row input[type="text"],.settings-field-row input[type="number"],.settings-field-row input[type="password"],
-.settings-field-row select,.mm-row input,#search-input,#newtool-browse-search,#model-select-search,#model-picker-filter input{
+.settings-field-row select,.mm-row input,#search-input,#newtool-browse-search,#model-select-search,#model-picker-filter input,#workspace-switcher-search{
  border-radius:3px;background:#0e0e10;transition:border-color .15s,box-shadow .15s}
 .settings-field-row input:focus,.settings-field-row select:focus,.mm-row input:focus,#search-input:focus,
-#newtool-browse-search:focus,#model-select-search:focus,#model-picker-filter input:focus{
+#newtool-browse-search:focus,#model-select-search:focus,#model-picker-filter input:focus,#workspace-switcher-search:focus{
  border-color:rgba(var(--accent-rgb),.7);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.12)}
 
 /* Toasts */
@@ -534,6 +535,7 @@ html.theme-light body.has-custom-bg .monaco-editor .minimap-decorations-layer {
 }
 
 /* Translucent popovers & dialogs (Light Theme) */
+html.theme-light body.has-custom-bg #workspaces-popover,
 html.theme-light body.has-custom-bg #sessions-popover,
 html.theme-light body.has-custom-bg #settings-popover .settings-panel,
 html.theme-light body.has-custom-bg #yesno-modal,
@@ -571,7 +573,7 @@ html.theme-light .code-header { background: rgba(0,0,0,0.03); border-bottom: 1px
 html.theme-light .code-header .tool-badge { background: rgba(0,0,0,0.06); }
 html.theme-light .code-box .btn-copy-code:hover { background: rgba(0,0,0,0.08); color: var(--fg); }
 html.theme-light .thought-body, html.theme-light .tool-output-text, html.theme-light .compression-summary { background: #fdfdfd; border-color: rgba(0,0,0,0.1); color: var(--fg); }
-html.theme-light .settings-field-row input[type="text"], html.theme-light .settings-field-row input[type="number"], html.theme-light .settings-field-row input[type="password"], html.theme-light .settings-field-row select, html.theme-light .mm-row input, html.theme-light #search-input, html.theme-light #newtool-browse-search, html.theme-light #model-select-search, html.theme-light #model-picker-filter input, html.theme-light #tool-model-search, html.theme-light #cmd { background: #fff; color: var(--fg); }
+html.theme-light .settings-field-row input[type="text"], html.theme-light .settings-field-row input[type="number"], html.theme-light .settings-field-row input[type="password"], html.theme-light .settings-field-row select, html.theme-light .mm-row input, html.theme-light #search-input, html.theme-light #newtool-browse-search, html.theme-light #model-select-search, html.theme-light #model-picker-filter input, html.theme-light #tool-model-search, html.theme-light #workspace-switcher-search, html.theme-light #cmd { background: #fff; color: var(--fg); }
 html.theme-light #prompt-input-row { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
 html.theme-light #bottom-dock-area { background: transparent; box-shadow: none; }
 html.theme-light #prompt-input-row { background: #ffffff; border-color: rgba(0,0,0,0.12); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
@@ -589,7 +591,7 @@ html.theme-light .status-token-metric { background: #ffffff; border-color: rgba(
 html.theme-light .status-token-metric:hover { background: rgba(0,0,0,0.04); color: var(--fg); }
 html.theme-light #model-select-btn { background: #ffffff; border-color: rgba(0,0,0,0.12); }
 html.theme-light .session-item-row.active { box-shadow: 0 0 20px rgba(var(--accent-rgb),0.15); }
-html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }
+html.theme-light #workspaces-popover, html.theme-light #sessions-popover, html.theme-light #settings-popover .settings-panel, html.theme-light #yesno-modal, html.theme-light #cleardata-modal, html.theme-light #about-modal, html.theme-light #newtool-modal, html.theme-light #models-modal, html.theme-light #msg-delete-modal, html.theme-light #msg-edit-modal { background: rgba(255,255,255,0.95); box-shadow: 0 30px 80px rgba(0,0,0,0.15); }
 html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown, html.theme-light #tool-model-dropdown, html.theme-light #explorer-context-menu, html.theme-light #autocomplete-popup, html.theme-light .attach-menu, html.theme-light #tabs-overflow-menu { background: rgba(255,255,255,0.98); box-shadow: 0 20px 50px rgba(0,0,0,0.12); }
 html.theme-light .btn-tabs-overflow.has-overflow { background: rgba(0, 0, 0, 0.045); border-color: rgba(0, 0, 0, 0.12); }
 html.theme-light .tabs-overflow-item:hover { background: rgba(0, 0, 0, 0.05); }
@@ -613,7 +615,7 @@ html.theme-light .ac-item.selected .ac-item-title { color: var(--fg); }
 html.theme-light #btn-session-toggle, html.theme-light .session-pill-btn { background: transparent; border: none; color: var(--dim); }
 html.theme-light #btn-session-toggle:hover, html.theme-light #btn-session-toggle.active, html.theme-light .session-pill-btn:hover, html.theme-light .session-pill-btn.active { color: var(--fg); background: rgba(0,0,0,0.05); }
 html.theme-light #btn-workspace-display, html.theme-light .workspace-pill-btn { background: transparent; border: none; color: var(--dim); }
-html.theme-light #btn-workspace-display:hover, html.theme-light .workspace-pill-btn:hover { color: var(--fg); background: rgba(0,0,0,0.05); }
+html.theme-light #btn-workspace-display:hover, html.theme-light #btn-workspace-display.active, html.theme-light .workspace-pill-btn:hover, html.theme-light .workspace-pill-btn.active { color: var(--fg); background: rgba(0,0,0,0.05); }
 html.theme-light #btn-exit-workspace { color: var(--dim); }
 html.theme-light #btn-exit-workspace:hover { color: var(--danger); background: rgba(255,107,122,0.1); }
 html.theme-light .toast { background: rgba(255,255,255,0.98); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }

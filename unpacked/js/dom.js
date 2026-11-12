@@ -37,6 +37,11 @@ export const btnViewPreview = btnDocRender;
 export const btnWorkspaceDisplay = document.getElementById('btn-workspace-display');
 export const workspaceBtnIcon = document.getElementById('workspace-btn-icon');
 export const workspaceBtnName = document.getElementById('workspace-btn-name');
+export const workspacesPopoverOverlay = document.getElementById('workspaces-popover-overlay');
+export const workspacesPopover = document.getElementById('workspaces-popover');
+export const workspaceSwitcherSearch = document.getElementById('workspace-switcher-search');
+export const workspacesList = document.getElementById('workspaces-list');
+export const btnPopoverCloseWorkspace = document.getElementById('btn-popover-close-workspace');
 export const changesCountEl = document.getElementById('changes-count');
 export const changesList = document.getElementById('changes-list');
 export const chatView = document.getElementById('chat-view');
@@ -162,7 +167,9 @@ Object.entries({
     docBarBadge, docBarDirty, docViewToggle, btnDocEdit, btnDocRender,
     docBarImageControls, docBarExtraActions, btnDocSave, btnTabSave, btnViewEdit,
     btnViewPreview, btnWorkspaceDisplay,
-    workspaceBtnIcon, workspaceBtnName, changesCountEl,
+    workspaceBtnIcon, workspaceBtnName, workspacesPopoverOverlay,
+    workspacesPopover, workspaceSwitcherSearch, workspacesList,
+    btnPopoverCloseWorkspace, changesCountEl,
     changesList, chatView, checkpointTimelineList, contextMenu, diffLayoutIcon,
     diffLayoutText, diffStats, diffTitle, diffView, editorBinaryMsg, editorBinaryNotice,
     editorImagePreview, editorModeToggle, editorView, fileCountEl, fileTreeEl,

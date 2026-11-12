@@ -85,6 +85,8 @@ function closeWorkspace() {
     term.innerHTML = '';
     resetScrollState();
 
+    if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
+
     window._bgBlobCache = null;
     if (typeof applyBackgroundImage === 'function') {
         applyBackgroundImage();
@@ -1180,14 +1182,16 @@ function updateWorkspaceTitle() {
             if (wsBtnName) wsBtnName.textContent = name;
             const iconName = rootHandle.isVirtual ? 'cloud_queue' : (rootHandle.isWebDAV ? 'dns' : 'folder');
             if (wsBtnIcon) wsBtnIcon.textContent = iconName;
-            wsBtn.title = (rootHandle.isVirtual ? 'Virtual workspace: ' : (rootHandle.isWebDAV ? 'WebDAV workspace: ' : 'Workspace: ')) + name;
+            wsBtn.title = (rootHandle.isVirtual ? 'Virtual workspace: ' : (rootHandle.isWebDAV ? 'WebDAV workspace: ' : 'Workspace: ')) + name + ' (Click to switch workspaces)';
             if (!wsBtn._boundClick) {
                 wsBtn._boundClick = true;
-                wsBtn.addEventListener('click', () => {
-                    if (typeof sessionsPopoverOverlay !== 'undefined' && sessionsPopoverOverlay.style.display === 'block') {
-                        hideSessionPopover();
+                wsBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const overlay = document.getElementById('workspaces-popover-overlay');
+                    if (overlay && overlay.style.display === 'block') {
+                        hideWorkspacePopover();
                     } else {
-                        showSessionPopover();
+                        showWorkspacePopover();
                     }
                 });
             }
@@ -1313,4 +1317,391 @@ function wsStorageName(h) {
 
 // --- AST_EXPORTS_START ---
 window.wsStorageName = wsStorageName;
+// --- AST_EXPORTS_END ---
+
+// --- workspaceSwitcher.js ---
+let _wsPopoverEntries = [];
+let _wsPopoverSelectedIdx = 0;
+let _wsPopoverBound = false;
+
+function isCurrentWorkspaceEntry(entry) {
+    if (!rootHandle || !entry) return false;
+    if (entry.virtual) {
+        const curVid = rootHandle._n?._ws?.vid || rootHandle.vid;
+        return !!(rootHandle.isVirtual && curVid && curVid === entry.vid);
+    }
+    if (entry.type === 'webdav') {
+        return !!(
+            rootHandle.isWebDAV &&
+            rootHandle.url === entry.url &&
+            (rootHandle.path || '/') === (entry.webdavPath || '/')
+        );
+    }
+    return !!(!rootHandle.isVirtual && !rootHandle.isWebDAV && rootHandle.name === entry.name);
+}
+
+function describeWorkspaceEntry(entry) {
+    if (entry.virtual) {
+        return {
+            icon: 'cloud_queue',
+            badge: 'Virtual',
+            subtitle: 'In-browser workspace'
+        };
+    }
+    if (entry.type === 'webdav') {
+        let hostPart = entry.url || '';
+        try {
+            hostPart = new URL(entry.url).host;
+        } catch (e) {}
+        const pathPart = entry.webdavPath && entry.webdavPath !== '/' ? entry.webdavPath : '';
+        return {
+            icon: 'dns',
+            badge: 'WebDAV',
+            subtitle: `${hostPart}${pathPart}`
+        };
+    }
+    return {
+        icon: 'folder',
+        badge: 'Local',
+        subtitle: 'Local folder'
+    };
+}
+
+function renderWorkspacePopoverList() {
+    const listEl = document.getElementById('workspaces-list');
+    const searchEl = document.getElementById('workspace-switcher-search');
+    if (!listEl) return;
+
+    const query = (searchEl ? searchEl.value : '').trim().toLowerCase();
+    const allFolders = getRecentFolders().filter(f => f.virtual || f.type === 'webdav' || HAS_FS_API);
+
+    const filtered = allFolders.filter(entry => {
+        if (!query) return true;
+        const meta = describeWorkspaceEntry(entry);
+        const haystack = `${entry.name || ''} ${meta.badge} ${meta.subtitle}`.toLowerCase();
+        return haystack.includes(query);
+    });
+
+    filtered.sort((a, b) => {
+        const aCur = isCurrentWorkspaceEntry(a) ? 1 : 0;
+        const bCur = isCurrentWorkspaceEntry(b) ? 1 : 0;
+        if (aCur !== bCur) return bCur - aCur;
+        return (b.lastAccessed || 0) - (a.lastAccessed || 0);
+    });
+
+    _wsPopoverEntries = filtered;
+    if (_wsPopoverSelectedIdx >= filtered.length) {
+        _wsPopoverSelectedIdx = Math.max(0, filtered.length - 1);
+    }
+
+    listEl.innerHTML = '';
+    if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'workspace-list-empty';
+        empty.textContent = query ? 'No workspaces match your filter' : 'No saved workspaces';
+        listEl.appendChild(empty);
+        return;
+    }
+
+    filtered.forEach((entry, idx) => {
+        const meta = describeWorkspaceEntry(entry);
+        const isCurrent = isCurrentWorkspaceEntry(entry);
+        const isHighlighted = idx === _wsPopoverSelectedIdx;
+
+        const row = document.createElement('div');
+        row.className = `workspace-item-row${isCurrent ? ' active' : ''}${isHighlighted ? ' highlighted' : ''}`;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+        row.title = entry.type === 'webdav' ? `${entry.name} (${meta.subtitle})` : entry.name;
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = `icon workspace-item-icon${entry.virtual || entry.type === 'webdav' ? ' filled' : ''}`;
+        iconSpan.textContent = meta.icon;
+        row.appendChild(iconSpan);
+
+        const info = document.createElement('div');
+        info.className = 'workspace-item-info';
+
+        const titleRow = document.createElement('div');
+        titleRow.className = 'workspace-item-title-row';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'workspace-item-name';
+        nameSpan.textContent = entry.name;
+        titleRow.appendChild(nameSpan);
+
+        if (isCurrent) {
+            const dot = document.createElement('span');
+            dot.className = 'workspace-status-dot';
+            dot.title = 'Active workspace';
+            titleRow.appendChild(dot);
+        }
+
+        const metaRow = document.createElement('div');
+        metaRow.className = 'workspace-item-meta';
+
+        const badge = document.createElement('span');
+        badge.className = 'workspace-type-badge';
+        badge.textContent = meta.badge;
+        metaRow.appendChild(badge);
+
+        if (entry.type === 'webdav' && meta.subtitle) {
+            const sub = document.createElement('span');
+            sub.className = 'workspace-item-subtitle';
+            sub.textContent = meta.subtitle;
+            metaRow.appendChild(sub);
+        }
+
+        info.appendChild(titleRow);
+        info.appendChild(metaRow);
+        row.appendChild(info);
+
+        if (isCurrent) {
+            const curTag = document.createElement('span');
+            curTag.className = 'workspace-current-badge';
+            curTag.textContent = 'Active';
+            row.appendChild(curTag);
+        }
+
+        row.addEventListener('mouseenter', () => {
+            if (_wsPopoverSelectedIdx !== idx) {
+                _wsPopoverSelectedIdx = idx;
+                Array.from(listEl.children).forEach((el, i) => {
+                    el.classList.toggle('highlighted', i === idx);
+                });
+            }
+        });
+
+        row.addEventListener('click', (e) => {
+            e.stopPropagation();
+            switchToWorkspaceEntry(entry);
+        });
+
+        listEl.appendChild(row);
+    });
+
+    const activeRow = listEl.children[_wsPopoverSelectedIdx];
+    if (activeRow && typeof activeRow.scrollIntoView === 'function') {
+        activeRow.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+async function switchToWorkspaceEntry(entry) {
+    if (!entry) return;
+    hideWorkspacePopover();
+
+    if (isCurrentWorkspaceEntry(entry)) return;
+
+    if (state.dirtyFiles && state.dirtyFiles.size > 0) {
+        const count = state.dirtyFiles.size;
+        const ok = await confirmDialog(
+            `You have unsaved changes in ${count} file${count === 1 ? '' : 's'}. Switch workspaces and discard unsaved changes?`,
+            { confirmLabel: 'Switch & Discard', danger: true }
+        );
+        if (!ok) return;
+    }
+
+    if (entry.virtual) {
+        try {
+            const db = await getDB();
+            const snap = await new Promise((res) => {
+                const req = db.transaction(STORE_HANDLES, 'readonly').objectStore(STORE_HANDLES).get('vws_' + entry.vid);
+                req.onsuccess = () => res(req.result);
+                req.onerror = () => res(null);
+            });
+            if (!snap) {
+                showToast('Virtual workspace data not found', 'error');
+                return;
+            }
+            if (rootHandle) await closeWorkspaceNoConfirm();
+            await openVirtualWorkspaceById(entry.vid);
+        } catch (err) {
+            showToast('Could not open virtual workspace: ' + err.message, 'error');
+        }
+        return;
+    }
+
+    if (entry.type === 'webdav') {
+        try {
+            const handle = new WebDAVDirHandle(entry.url, entry.webdavPath || '/', entry.auth, entry.name);
+            await handle._checkExists('');
+            if (rootHandle) await closeWorkspaceNoConfirm();
+            await setWorkspace(handle);
+            markRecentFolderAccessed(entry.name, entry);
+        } catch (err) {
+            showToast('Failed to connect to WebDAV workspace: ' + err.message, 'error');
+        }
+        return;
+    }
+
+    // Local folder workspace: acquire/verify permission before closing current workspace
+    let handle = null;
+    try {
+        const saved = await loadRecentHandleFromDB(entry.name);
+        if (saved) {
+            let perm = await saved.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') {
+                perm = await saved.requestPermission({ mode: 'readwrite' });
+            }
+            if (perm === 'granted') {
+                handle = saved;
+            }
+        }
+    } catch (e) {}
+
+    if (!handle) {
+        try {
+            handle = await pickFolderWithMemory();
+        } catch (err) {
+            if (err && err.name !== 'AbortError') {
+                showToast('Could not open folder: ' + err.message, 'error');
+            }
+            return;
+        }
+    }
+
+    if (!handle) return;
+    if (rootHandle) await closeWorkspaceNoConfirm();
+    await setWorkspace(handle);
+    if (handle.name === entry.name) {
+        markRecentFolderAccessed(entry.name);
+    } else {
+        await addToRecentFolders(handle);
+    }
+}
+
+function _ensureWorkspacePopoverBound() {
+    if (_wsPopoverBound) return;
+    _wsPopoverBound = true;
+
+    const searchEl = document.getElementById('workspace-switcher-search');
+    const closeWsBtn = document.getElementById('btn-popover-close-workspace');
+    const openFolderBtn = document.getElementById('btn-ws-pop-open-folder');
+    const newVirtualBtn = document.getElementById('btn-ws-pop-new-virtual');
+    const connectWebdavBtn = document.getElementById('btn-ws-pop-connect-webdav');
+
+    if (searchEl) {
+        searchEl.addEventListener('input', () => {
+            _wsPopoverSelectedIdx = 0;
+            renderWorkspacePopoverList();
+        });
+        searchEl.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (_wsPopoverEntries.length > 0) {
+                    _wsPopoverSelectedIdx = (_wsPopoverSelectedIdx + 1) % _wsPopoverEntries.length;
+                    renderWorkspacePopoverList();
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (_wsPopoverEntries.length > 0) {
+                    _wsPopoverSelectedIdx = (_wsPopoverSelectedIdx - 1 + _wsPopoverEntries.length) % _wsPopoverEntries.length;
+                    renderWorkspacePopoverList();
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const chosen = _wsPopoverEntries[_wsPopoverSelectedIdx];
+                if (chosen) switchToWorkspaceEntry(chosen);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                hideWorkspacePopover();
+            }
+        });
+    }
+
+    if (closeWsBtn) {
+        closeWsBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            hideWorkspacePopover();
+            if (state.dirtyFiles && state.dirtyFiles.size > 0) {
+                const count = state.dirtyFiles.size;
+                const ok = await confirmDialog(
+                    `You have unsaved changes in ${count} file${count === 1 ? '' : 's'}. Close workspace and discard unsaved changes?`,
+                    { confirmLabel: 'Close & Discard', danger: true }
+                );
+                if (!ok) return;
+            }
+            if (rootHandle) await closeWorkspaceNoConfirm();
+        });
+    }
+
+    if (openFolderBtn) {
+        openFolderBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            hideWorkspacePopover();
+            if (typeof window.openLocalFolderPicker === 'function') {
+                await window.openLocalFolderPicker();
+            }
+        });
+    }
+
+    if (newVirtualBtn) {
+        newVirtualBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            hideWorkspacePopover();
+            if (typeof window.openVirtualWorkspaceDialog === 'function') {
+                window.openVirtualWorkspaceDialog();
+            }
+        });
+    }
+
+    if (connectWebdavBtn) {
+        connectWebdavBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            hideWorkspacePopover();
+            if (typeof window.openWebDAVConfig === 'function') {
+                window.openWebDAVConfig(null);
+            }
+        });
+    }
+}
+
+function showWorkspacePopover() {
+    _ensureWorkspacePopoverBound();
+    if (typeof hideSessionPopover === 'function') hideSessionPopover();
+
+    const overlay = document.getElementById('workspaces-popover-overlay');
+    const popover = document.getElementById('workspaces-popover');
+    const wsBtn = document.getElementById('btn-workspace-display');
+    const searchEl = document.getElementById('workspace-switcher-search');
+    const openFolderBtn = document.getElementById('btn-ws-pop-open-folder');
+
+    if (!overlay || !popover) return;
+    if (openFolderBtn) openFolderBtn.style.display = HAS_FS_API ? '' : 'none';
+
+    if (searchEl) searchEl.value = '';
+    _wsPopoverSelectedIdx = 0;
+    renderWorkspacePopoverList();
+
+    overlay.style.display = 'block';
+    if (wsBtn) wsBtn.classList.add('active');
+
+    if (wsBtn) {
+        const rect = wsBtn.getBoundingClientRect();
+        const popoverWidth = popover.offsetWidth || 380;
+        let left = rect.left;
+        left = Math.max(10, Math.min(left, window.innerWidth - popoverWidth - 10));
+        popover.style.top = (rect.bottom + 8) + 'px';
+        popover.style.left = left + 'px';
+        popover.style.transform = 'none';
+    }
+
+    if (searchEl) {
+        requestAnimationFrame(() => searchEl.focus());
+    }
+}
+
+function hideWorkspacePopover() {
+    const overlay = document.getElementById('workspaces-popover-overlay');
+    const wsBtn = document.getElementById('btn-workspace-display');
+    if (overlay) overlay.style.display = 'none';
+    if (wsBtn) wsBtn.classList.remove('active');
+}
+
+// --- AST_EXPORTS_START ---
+window.showWorkspacePopover = showWorkspacePopover;
+window.hideWorkspacePopover = hideWorkspacePopover;
+window.renderWorkspacePopoverList = renderWorkspacePopoverList;
+window.switchToWorkspaceEntry = switchToWorkspaceEntry;
 // --- AST_EXPORTS_END ---

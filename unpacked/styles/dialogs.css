@@ -57,7 +57,8 @@
     font-family: inherit;
     box-sizing: border-box;
 }
-#btn-workspace-display:hover, .workspace-pill-btn:hover {
+#btn-workspace-display:hover, #btn-workspace-display.active,
+.workspace-pill-btn:hover, .workspace-pill-btn.active {
     background: var(--bg-hover, #1f222d);
     color: var(--fg);
 }
@@ -104,6 +105,206 @@
     background: rgba(255, 107, 122, 0.12);
     color: var(--danger, #ff6b7a);
     border-color: rgba(255, 107, 122, 0.25);
+}
+
+/* Workspaces Switcher Popover */
+#workspaces-popover-overlay {
+    display: none; position: absolute; top: 0; left: 0;
+    right: 0; bottom: 0; background: rgba(0, 0, 0, 0.55); z-index: 100;
+}
+#workspaces-popover {
+    position: absolute; top: 56px; left: 80px;
+    transform: none; background: var(--bg-panel);
+    border: 1px solid var(--border-highlight); border-radius: 8px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85);
+    padding: 8px; width: min(380px, calc(100vw - 16px)); max-height: 440px;
+    display: flex; flex-direction: column;
+    box-sizing: border-box;
+    z-index: 101; animation: popoverFadeIn 0.12s ease-out;
+}
+.btn-close-workspace-pop {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+}
+.btn-close-workspace-pop:hover {
+    background: rgba(255, 107, 122, 0.12);
+    color: var(--danger, #ff6b7a);
+    border-color: rgba(255, 107, 122, 0.3);
+}
+.workspace-search-wrap {
+    position: relative;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+.workspace-search-icon {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px;
+    color: var(--dim);
+    pointer-events: none;
+}
+#workspace-switcher-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 8px 5px 28px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#workspace-switcher-search:focus {
+    border-color: var(--primary);
+}
+#workspaces-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 260px;
+    overflow-y: auto;
+    min-height: 0;
+}
+.workspace-list-empty {
+    padding: 16px 8px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--dim);
+}
+.workspace-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--bg-main);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+.workspace-item-row:hover,
+.workspace-item-row.highlighted {
+    border-color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.08);
+}
+.workspace-item-row.active {
+    border-color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.15);
+}
+.workspace-item-icon {
+    font-size: 17px;
+    color: var(--magenta);
+    flex-shrink: 0;
+}
+.workspace-item-icon.filled {
+    font-variation-settings: 'FILL' 1;
+}
+.workspace-item-row:hover .workspace-item-icon,
+.workspace-item-row.highlighted .workspace-item-icon,
+.workspace-item-row.active .workspace-item-icon {
+    color: var(--primary);
+}
+.workspace-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+.workspace-item-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.workspace-item-name {
+    font-weight: 600;
+    color: var(--fg);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.workspace-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--dim);
+    min-width: 0;
+}
+.workspace-type-badge {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    flex-shrink: 0;
+}
+.workspace-item-subtitle {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.workspace-current-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--success, #3ecf8e);
+    background: rgba(62, 207, 142, 0.12);
+    border: 1px solid rgba(62, 207, 142, 0.3);
+    border-radius: 4px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+}
+.workspace-popover-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.workspace-footer-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 5px 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+.workspace-footer-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.1);
 }
 
 #sessions-popover-overlay {
@@ -400,13 +601,17 @@ html.theme-light .session-pill-btn.active {
     color: var(--fg);
     background: rgba(0, 0, 0, 0.05);
 }
-html.theme-light .workspace-pill-btn:hover {
+html.theme-light .workspace-pill-btn:hover,
+html.theme-light .workspace-pill-btn.active {
     color: var(--fg);
     background: rgba(0, 0, 0, 0.05);
+}
+html.theme-light .workspace-type-badge {
+    background: rgba(0, 0, 0, 0.04);
 }
 
 /* Responsive Modal Overrides */
 @media (max-width: 768px) {
-    #sessions-popover { width: calc(100vw - 16px); max-width: none; top: 52px; }
+    #workspaces-popover, #sessions-popover { width: calc(100vw - 16px); max-width: none; top: 52px; }
     #about-modal { width: 90vw; max-width: 280px; padding: 16px 14px; }
 }

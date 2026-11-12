@@ -40,6 +40,40 @@
         <div class="init-text">Loading workbench...</div>
     </div>
 
+    <div id="workspaces-popover-overlay">
+        <div id="workspaces-popover" role="dialog" aria-label="Switch workspace">
+            <div class="popover-header">
+                <div class="popover-header-title">
+                    <span class="icon" style="font-size: 14px;">workspaces</span>
+                    <span>Workspaces</span>
+                </div>
+                <button type="button" id="btn-popover-close-workspace" class="btn-close-workspace-pop" title="Close current workspace and return to start screen">
+                    <span class="icon" style="font-size: 13px;">logout</span>
+                    <span>Close Workspace</span>
+                </button>
+            </div>
+            <div class="workspace-search-wrap">
+                <span class="icon workspace-search-icon">search</span>
+                <input type="text" id="workspace-switcher-search" placeholder="Filter workspaces..." autocomplete="off" spellcheck="false" />
+            </div>
+            <div id="workspaces-list"></div>
+            <div class="workspace-popover-footer">
+                <button type="button" id="btn-ws-pop-open-folder" class="workspace-footer-btn" title="Open a local folder">
+                    <span class="icon" style="font-size: 14px;">folder_open</span>
+                    <span>Open Folder</span>
+                </button>
+                <button type="button" id="btn-ws-pop-new-virtual" class="workspace-footer-btn" title="Create a new in-memory virtual workspace">
+                    <span class="icon" style="font-size: 14px;">cloud_queue</span>
+                    <span>Virtual</span>
+                </button>
+                <button type="button" id="btn-ws-pop-connect-webdav" class="workspace-footer-btn" title="Connect to a remote WebDAV server">
+                    <span class="icon" style="font-size: 14px;">dns</span>
+                    <span>WebDAV</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="sessions-popover-overlay">
         <div id="sessions-popover">
             <div class="popover-header">
