@@ -483,6 +483,14 @@ window.promptDialog = promptDialog;
             const list = Array.from(pending.values());
             close();
             try {
+                if (rootHandle && state.dirtyFiles && state.dirtyFiles.size > 0) {
+                    const count = state.dirtyFiles.size;
+                    const ok = await confirmDialog(
+                        `You have unsaved changes in ${count} file${count === 1 ? '' : 's'}. Switch workspaces and discard unsaved changes?`,
+                        { confirmLabel: 'Switch & Discard', danger: true }
+                    );
+                    if (!ok) return;
+                }
                 if (rootHandle) await closeWorkspaceNoConfirm();
                 const handle = await createVirtualWorkspace(name, list);
                 const folders = getRecentFolders().filter(f => f.vid !== handle.vid);
@@ -496,6 +504,7 @@ window.promptDialog = promptDialog;
         updateNameToUnique();
         const nameEl = $('#vws-name'); nameEl.focus(); nameEl.select();
     }
+    window.openVirtualWorkspaceDialog = () => open();
     openBtn.addEventListener('click', () => { if (!isNoFolderOverlayHidden()) open(); });
 })();
 
@@ -634,6 +643,17 @@ window.promptDialog = promptDialog;
                 customName,
                 urlObj.hostname
             );
+            if (rootHandle && state.dirtyFiles && state.dirtyFiles.size > 0) {
+                const count = state.dirtyFiles.size;
+                const ok = await confirmDialog(
+                    `You have unsaved changes in ${count} file${count === 1 ? '' : 's'}. Switch workspaces and discard unsaved changes?`,
+                    { confirmLabel: 'Switch & Discard', danger: true }
+                );
+                if (!ok) {
+                    close();
+                    return;
+                }
+            }
             if (rootHandle) await closeWorkspaceNoConfirm();
             let folders = getRecentFolders();
             if (originalEditing) {
@@ -655,11 +675,18 @@ window.promptDialog = promptDialog;
     });
 })();
 
-document.getElementById('no-folder-btn').addEventListener('click', async () => {
-    if (isNoFolderOverlayHidden()) return;
-    if (rootHandle) await closeWorkspaceNoConfirm();
+async function openLocalFolderPicker() {
+    if (rootHandle && state.dirtyFiles && state.dirtyFiles.size > 0) {
+        const count = state.dirtyFiles.size;
+        const ok = await confirmDialog(
+            `You have unsaved changes in ${count} file${count === 1 ? '' : 's'}. Switch workspaces and discard unsaved changes?`,
+            { confirmLabel: 'Switch & Discard', danger: true }
+        );
+        if (!ok) return;
+    }
     try {
         const handle = await pickFolderWithMemory();
+        if (rootHandle) await closeWorkspaceNoConfirm();
         await setWorkspace(handle);
         await addToRecentFolders(handle);
     } catch(e) {
@@ -668,6 +695,12 @@ document.getElementById('no-folder-btn').addEventListener('click', async () => {
             showToast('This browser can\'t open folders from disk. Use a virtual workspace instead.', 'info', 4000);
         }
     }
+}
+window.openLocalFolderPicker = openLocalFolderPicker;
+
+document.getElementById('no-folder-btn').addEventListener('click', async () => {
+    if (isNoFolderOverlayHidden()) return;
+    await openLocalFolderPicker();
 });
 
 if (btnExitWorkspace) {

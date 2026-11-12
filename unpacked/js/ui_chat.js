@@ -60,6 +60,7 @@ modeTabBtns.forEach(btn => {
 
 btnSessionToggle.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
     const isShown = sessionsPopoverOverlay.style.display === 'block';
     if (isShown) hideSessionPopover();
     else showSessionPopover();
@@ -77,9 +78,22 @@ btnClearAllSessions.addEventListener('click', async (e) => {
     clearAllSessions();
 });
 
+if (typeof workspacesPopoverOverlay !== 'undefined' && workspacesPopoverOverlay) {
+    workspacesPopoverOverlay.addEventListener('click', (e) => {
+        if (e.target === workspacesPopoverOverlay && typeof hideWorkspacePopover === 'function') {
+            hideWorkspacePopover();
+        }
+    });
+}
+
 document.addEventListener('click', (e) => {
     if (!e.composedPath().includes(sessionsPopover) && e.target !== btnSessionToggle && !btnSessionToggle.contains(e.target)) {
         hideSessionPopover();
+    }
+    if (typeof workspacesPopover !== 'undefined' && workspacesPopover &&
+        !e.composedPath().includes(workspacesPopover) &&
+        e.target !== btnWorkspaceDisplay && (!btnWorkspaceDisplay || !btnWorkspaceDisplay.contains(e.target))) {
+        if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
     }
 });
 
@@ -422,6 +436,7 @@ if (btnSettingsToggle) {
     btnSettingsToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         hideSessionPopover();
+        if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
         openSettingsModal('security');
     });
 }
@@ -754,6 +769,10 @@ document.addEventListener('keydown', (e) => {
             acPopup.style.display = 'none';
             return;
         }
+        if (typeof workspacesPopoverOverlay !== 'undefined' && workspacesPopoverOverlay && workspacesPopoverOverlay.style.display === 'block') {
+            if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
+            return;
+        }
         if (sessionsPopoverOverlay.style.display === 'block') {
             hideSessionPopover();
             return;
@@ -969,6 +988,7 @@ if (btnAboutToggle) {
     btnAboutToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         hideSessionPopover();
+        if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
         openSettingsModal('about');
     });
 }
@@ -991,6 +1011,7 @@ if (btnSidebarSettings) {
     btnSidebarSettings.addEventListener('click', (e) => {
         e.stopPropagation();
         hideSessionPopover();
+        if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
         openSettingsModal('workspace');
     });
 }
@@ -1163,6 +1184,7 @@ document.addEventListener('keydown', (e) => {
         { id: 'msg-delete-modal-overlay', isOpen: el => el.classList.contains('visible') },
         { id: 'msg-edit-modal-overlay', isOpen: el => el.classList.contains('visible') },
         { id: 'webdav-modal-overlay', isOpen: el => el.style.display === 'flex' },
+        { id: 'workspaces-popover-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'sessions-popover-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-picker-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-select-overlay', isOpen: el => el.style.display === 'block' },
@@ -1247,7 +1269,15 @@ document.addEventListener('keydown', (e) => {
             else settingsModal.style.display = 'none';
             return true;
         }
-        // Priority 9: Sessions popover
+        // Priority 9: Workspaces switcher popover
+        const wsPop = document.getElementById('workspaces-popover-overlay');
+        if (wsPop && wsPop.style.display === 'block') {
+            if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
+            else if (window.hideWorkspacePopover) window.hideWorkspacePopover();
+            else wsPop.style.display = 'none';
+            return true;
+        }
+        // Priority 10: Sessions popover
         const sessPop = document.getElementById('sessions-popover-overlay');
         if (sessPop && sessPop.style.display === 'block') {
             if (typeof hideSessionPopover === 'function') hideSessionPopover();
