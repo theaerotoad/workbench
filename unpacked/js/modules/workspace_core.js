@@ -86,6 +86,13 @@ function closeWorkspace() {
     resetScrollState();
 
     window._bgBlobCache = null;
+    if (typeof applyBackgroundImage === 'function') {
+        applyBackgroundImage();
+    } else {
+        document.body.classList.remove('has-custom-bg');
+        const bgLayer = document.getElementById('bg-image-layer');
+        if (bgLayer) bgLayer.style.backgroundImage = 'none';
+    }
 
     if (typeof resetToolRegistry === 'function') {
         resetToolRegistry();

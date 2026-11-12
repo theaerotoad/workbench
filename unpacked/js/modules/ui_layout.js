@@ -102,11 +102,19 @@ async function applyBackgroundImage() {
         } else {
             document.body.classList.remove('has-custom-bg');
             layer.style.backgroundImage = 'none';
+            if (_currentBgBlobUrl) {
+                URL.revokeObjectURL(_currentBgBlobUrl);
+                _currentBgBlobUrl = null;
+            }
         }
     } catch (e) {
         console.warn('Failed to apply background image:', e);
         document.body.classList.remove('has-custom-bg');
         layer.style.backgroundImage = 'none';
+        if (_currentBgBlobUrl) {
+            URL.revokeObjectURL(_currentBgBlobUrl);
+            _currentBgBlobUrl = null;
+        }
     }
 }
 
