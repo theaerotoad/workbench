@@ -90,19 +90,38 @@ function xmlDecl(inner) {
 // --- package_context.js ---
 // Collects the pieces that only become known while walking the document: hyperlink
 // relationships, media parts, their content types, and ordered-list number instances.
-function makePackageContext() {
+function parseTemplateContext(entries) {
+    let maxRelId = 0, hasStyles = false, hasNumbering = false;
+    (entries || []).forEach(e => {
+        if (e.path === 'word/styles.xml') hasStyles = true;
+        if (e.path === 'word/numbering.xml') hasNumbering = true;
+        if (e.path === 'word/_rels/document.xml.rels') {
+            const xml = new TextDecoder('utf-8', { fatal: false }).decode(e.data);
+            const re = /Id="rId(\d+)"/g;
+            let match;
+            while ((match = re.exec(xml)) !== null) {
+                maxRelId = Math.max(maxRelId, parseInt(match[1], 10));
+            }
+        }
+    });
+    return { maxRelId, hasStyles, hasNumbering };
+}
+
+// Collects the pieces that only become known while walking the document: hyperlink
+// relationships, media parts, their content types, and ordered-list number instances.
+function makePackageContext(tplCtx) {
     const ctx = {
-        rels: [
-            { id: 'rId1', type: 'styles', target: 'styles.xml' },
-            { id: 'rId2', type: 'numbering', target: 'numbering.xml' }
-        ],
-        nextRelId: 3,
+        rels: [],
+        nextRelId: (tplCtx ? tplCtx.maxRelId : 0) + 1,
         media: [],           // { path, data, ext }
         mediaByKey: new Map(),
         exts: new Set(),
         orderedLists: 0,     // number of w:num instances needed for ordered lists
-        drawingSeq: 0
+        drawingSeq: 1000
     };
+    if (!tplCtx || !tplCtx.hasStyles) ctx.rels.push({ id: 'rId' + (ctx.nextRelId++), type: 'styles', target: 'styles.xml' });
+    if (!tplCtx || !tplCtx.hasNumbering) ctx.rels.push({ id: 'rId' + (ctx.nextRelId++), type: 'numbering', target: 'numbering.xml' });
+
     ctx.addExternalLink = function (href) {
         if (!/^(?:https?:|mailto:)/i.test(href)) return null;   // only external targets get a rel
         const existing = ctx.rels.find(r => r.type === 'hyperlink' && r.target === href);
@@ -124,7 +143,8 @@ function makePackageContext() {
     };
     ctx.nextOrderedList = function () {
         ctx.orderedLists++;
-        return ctx.orderedLists + 1;      // numId 1 is reserved for bullets
+        // Custom lists are offset to 1001+ to avoid colliding with template lists
+        return 1001 + ctx.orderedLists;
     };
     return ctx;
 }
@@ -696,7 +716,7 @@ function blockXml(block, ctx) {
 
         case 'item': {
             const ilvl = Math.min(MAX_LIST_LEVEL, block.level | 0);
-            const numId = block.ordered ? (block.numId || 2) : 1;
+            const numId = block.ordered ? (block.numId || 1002) : 1001;
             const ind = block.inQuote
                 ? `w:left="${QUOTE_INDENT + LEVEL_INDENT * (ilvl + 1)}" w:hanging="${LEVEL_INDENT}"`
                 : '';
@@ -723,8 +743,8 @@ function assignListNumbers(blocks, ctx) {
             }
             b.numId = stack[lvl].numId;
         } else {
-            stack[lvl] = { ordered: false, numId: 1 };
-            b.numId = 1;
+            stack[lvl] = { ordered: false, numId: 1001 };
+            b.numId = 1001;
         }
     });
 }
@@ -830,22 +850,60 @@ function numberingLevels(fmt) {
     return xml;
 }
 
-// abstractNum 1 = bullets, abstractNum 2 = decimal. numId 1 is the shared bullet
+// abstractNum 1001 = bullets, abstractNum 1002 = decimal. numId 1001 is the shared bullet
 // instance; every ordered list gets an instance with startOverride so it restarts.
 function buildNumberingXml(orderedListCount) {
     let xml = xmlDecl(`<w:numbering xmlns:w="${W_NS}">`) +
-        `<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('bullet')}</w:abstractNum>` +
-        `<w:abstractNum w:abstractNumId="2"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('decimal')}</w:abstractNum>` +
-        `<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>`;
+        `<w:abstractNum w:abstractNumId="1001"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('bullet')}</w:abstractNum>` +
+        `<w:abstractNum w:abstractNumId="1002"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('decimal')}</w:abstractNum>` +
+        `<w:num w:numId="1001"><w:abstractNumId w:val="1001"/></w:num>`;
     const overrides = Array.from({ length: MAX_LIST_LEVEL + 1 },
         (_, lvl) => `<w:lvlOverride w:ilvl="${lvl}"><w:startOverride w:val="1"/></w:lvlOverride>`).join('');
     for (let n = 1; n <= Math.max(1, orderedListCount); n++) {
-        xml += `<w:num w:numId="${n + 1}"><w:abstractNumId w:val="2"/>${overrides}</w:num>`;
+        xml += `<w:num w:numId="${1001 + n}"><w:abstractNumId w:val="1002"/>${overrides}</w:num>`;
     }
     return xml + '</w:numbering>';
 }
 
+// Appends our high-ID list definitions to a template's numbering.xml so Markdown
+// lists continue working without colliding with the template's native list IDs.
+function mergeNumberingXml(templateXml, orderedListCount) {
+    const abstractNums = 
+        `<w:abstractNum w:abstractNumId="1001"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('bullet')}</w:abstractNum>` +
+        `<w:abstractNum w:abstractNumId="1002"><w:multiLevelType w:val="hybridMultilevel"/>${numberingLevels('decimal')}</w:abstractNum>`;
+    let nums = `<w:num w:numId="1001"><w:abstractNumId w:val="1001"/></w:num>`;
+    const overrides = Array.from({ length: MAX_LIST_LEVEL + 1 },
+        (_, lvl) => `<w:lvlOverride w:ilvl="${lvl}"><w:startOverride w:val="1"/></w:lvlOverride>`).join('');
+    for (let n = 1; n <= Math.max(1, orderedListCount); n++) {
+        nums += `<w:num w:numId="${1001 + n}"><w:abstractNumId w:val="1002"/>${overrides}</w:num>`;
+    }
+    return templateXml.replace('</w:numbering>', abstractNums + nums + '</w:numbering>');
+}
+
 // --- ooxml_parts.js ---
+function mergeContentTypesXml(templateXml, exts) {
+    let xml = templateXml || buildContentTypesXml([]);
+    exts.forEach(ext => {
+        if (!xml.includes(`Extension="${ext}"`)) {
+            xml = xml.replace('</Types>', `<Default Extension="${ext}" ContentType="${MIME_BY_EXT[ext] || 'application/octet-stream'}"/></Types>`);
+        }
+    });
+    if (!xml.includes('PartName="/word/document.xml"')) {
+        xml = xml.replace('</Types>', `<Override PartName="/word/document.xml" ContentType="${DOCX_PART_CONTENT_TYPE}"/></Types>`);
+    }
+    return xml;
+}
+
+function mergeDocumentRelsXml(templateXml, newRels) {
+    const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';
+    let xml = templateXml || buildDocumentRelsXml([]);
+    newRels.forEach(r => {
+        const tag = `<Relationship Id="${r.id}" Type="${REL}${r.type}" Target="${xmlEscape(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`;
+        xml = xml.replace('</Relationships>', tag + '</Relationships>');
+    });
+    return xml;
+}
+
 function buildContentTypesXml(exts) {
     let xml = xmlDecl(`<Types xmlns="${PKG_CT_NS}">`) +
         `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -1220,25 +1278,50 @@ function hashKey(str) {
 async function buildDocxBlob(markdownText, opts) {
     const options = opts || {};
     const baseFile = options.filepath || '';
+    const tplEntries = options.templateEntries || []; // [{ path, data: Uint8Array }]
+
+    const tplCtx = parseTemplateContext(tplEntries);
     const blocks = parseMarkdown(markdownText);
     await convertDiagramBlocks(blocks);
     const mediaStats = await resolveImages(blocks, baseFile);
 
-    const ctx = makePackageContext();
+    const ctx = makePackageContext(tplCtx);
     const enc = new TextEncoder();
     const toEntry = (path, xml) => ({ path, data: enc.encode(xml) });
 
     // document.xml must be generated FIRST: it is what discovers the hyperlink rels, the
     // embedded media, and therefore which image extensions [Content_Types].xml has to declare.
     const documentXml = buildDocumentXml(blocks, ctx);
-    const entries = [
-        toEntry('[Content_Types].xml', buildContentTypesXml(Array.from(ctx.exts))),
-        toEntry('_rels/.rels', buildPackageRelsXml()),
-        toEntry('word/document.xml', documentXml),
-        toEntry('word/_rels/document.xml.rels', buildDocumentRelsXml(ctx.rels)),
-        toEntry('word/styles.xml', buildStylesXml()),
-        toEntry('word/numbering.xml', buildNumberingXml(ctx.orderedLists))
-    ];
+
+    const entries = [];
+    const tplPaths = new Set(tplEntries.map(e => e.path));
+    let tplContentTypes = null, tplDocRels = null, tplNumbering = null;
+
+    // Carry over template files (styles, themes, fonts, settings, etc.)
+    tplEntries.forEach(entry => {
+        if (entry.path === '[Content_Types].xml') { tplContentTypes = new TextDecoder('utf-8', { fatal: false }).decode(entry.data); return; }
+        if (entry.path === 'word/_rels/document.xml.rels') { tplDocRels = new TextDecoder('utf-8', { fatal: false }).decode(entry.data); return; }
+        if (entry.path === 'word/numbering.xml') { tplNumbering = new TextDecoder('utf-8', { fatal: false }).decode(entry.data); return; }
+        if (entry.path === 'word/document.xml') return; // We always overwrite the core document
+        entries.push(entry);
+    });
+
+    // Inject missing mandatory files if the template didn't provide them
+    if (!tplPaths.has('_rels/.rels')) entries.push(toEntry('_rels/.rels', buildPackageRelsXml()));
+    if (!tplPaths.has('word/styles.xml')) entries.push(toEntry('word/styles.xml', buildStylesXml()));
+
+    // Numbering merge: combine template's lists with our dynamic Markdown lists
+    if (!tplPaths.has('word/numbering.xml')) {
+        entries.push(toEntry('word/numbering.xml', buildNumberingXml(ctx.orderedLists)));
+    } else if (tplNumbering) {
+        entries.push(toEntry('word/numbering.xml', mergeNumberingXml(tplNumbering, ctx.orderedLists)));
+    }
+
+    // Core outputs: Document, modified ContentTypes, and appended Relationships
+    entries.push(toEntry('word/document.xml', documentXml));
+    entries.push(toEntry('word/_rels/document.xml.rels', mergeDocumentRelsXml(tplDocRels, ctx.rels)));
+    entries.push(toEntry('[Content_Types].xml', mergeContentTypesXml(tplContentTypes, Array.from(ctx.exts))));
+
     ctx.media.forEach(m => entries.push({ path: m.path, data: m.data }));
 
     if (typeof window.buildZip !== 'function') throw new Error('ZIP builder unavailable');
@@ -1287,7 +1370,7 @@ function setExportBusy(busy) {
     }
 }
 
-async function exportMarkdownToDocx(filepath) {
+async function exportMarkdownToDocx(filepath, templateFilepath = null) {
     if (!filepath) return false;
     if (exportInFlight) {
         if (typeof window.showToast === 'function') window.showToast('An export is already running…', 'info');
@@ -1301,7 +1384,15 @@ async function exportMarkdownToDocx(filepath) {
             if (typeof window.showToast === 'function') window.showToast(`${filepath} is empty — nothing to export`, 'error');
             return false;
         }
-        const blob = await buildDocxBlob(markdown, { filepath });
+
+        let templateEntries = [];
+        // Hook for caller to inject a template ZIP. Requires an unzipping utility in the environment.
+        if (templateFilepath && typeof window.vfsReadBlob === 'function' && typeof window.readZip === 'function') {
+            const tplBlob = await window.vfsReadBlob(templateFilepath);
+            if (tplBlob) templateEntries = await window.readZip(tplBlob); // Expected format: [{ path, data: Uint8Array }]
+        }
+
+        const blob = await buildDocxBlob(markdown, { filepath, templateEntries });
         const name = docxFileName(filepath);
         if (typeof window.triggerDownload !== 'function') throw new Error('download helper unavailable');
         window.triggerDownload(blob, name);
