@@ -92,6 +92,8 @@ function contextItemApplies(scope, node) {
 
     if (scope === 'downloadable') return node.kind !== 'directory' && isDownloadablePath(node.path);
     if (scope === 'downloaddir') return node.kind === 'directory' && isDownloadablePath(node.path);
+    // Markdown-only entries (e.g. "Export as .docx"); mirrors the doc-bar renderer check.
+    if (scope === 'markdown') return node.kind !== 'directory' && /\.(md|markdown|mdown|mkd)$/i.test(node.path || '');
     if (scope === 'file') return node.kind !== 'directory';
     if (scope === 'changed') return node.kind !== 'directory' && state.modifiedFiles.has(node.path);
     if (scope === 'restorable') return node.kind !== 'directory' && isRestorableAgentFile(node.path) && (!isToolFilePath(node.path) || isToolModified(toolNameFromPath(node.path)));

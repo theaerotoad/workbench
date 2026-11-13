@@ -23,6 +23,7 @@ import './modules/chat_tool_boxes.js';
 import './modules/chat_terminal.js';
 import './modules/chat_input.js';
 import './modules/chat_models.js';
+import './modules/docx_export.js';
 
 import '../js/db.js';
 import '../js/monaco.js';

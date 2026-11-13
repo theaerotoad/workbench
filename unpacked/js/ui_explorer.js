@@ -23,6 +23,7 @@ import './modules/chat_tool_boxes.js';
 import './modules/chat_terminal.js';
 import './modules/chat_input.js';
 import './modules/chat_models.js';
+import './modules/docx_export.js';
 
 import '../js/fs.js';
 import '../js/webdav.js';
@@ -166,6 +167,9 @@ contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
             downloadPath(node.path);
         } else if (action === 'download-zip') {
             downloadZip(node.path);
+        } else if (action === 'export-docx') {
+            if (typeof exportMarkdownToDocx === 'function') await exportMarkdownToDocx(node.path);
+            else showToast('Word export is not available', 'error');
         } else if (action === 'upload-files') {
             wsUploadTargetDir = targetDir;
             document.getElementById('ws-upload-input').click();
