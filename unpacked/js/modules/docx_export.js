@@ -1374,6 +1374,8 @@ async function rasterizeMath(latex, isBlock, css) {
     div.style.position = 'absolute';
     div.style.visibility = 'hidden';
     div.style.top = '-9999px';
+    div.style.left = '0';
+    div.style.width = 'max-content'; // Prevent viewport edge from forcing horizontal wrap
     div.style.display = 'inline-block';
     document.body.appendChild(div);
 
@@ -1382,12 +1384,16 @@ async function rasterizeMath(latex, isBlock, css) {
     wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     wrapper.style.display = 'inline-block';
     wrapper.style.margin = '0';
-    wrapper.style.padding = '8px 4px';
+    wrapper.style.padding = '12px'; // Extra uniform padding for font ink overflow
     wrapper.style.lineHeight = 'normal';
     wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
+    wrapper.style.whiteSpace = 'nowrap';
     wrapper.style.color = '#000000'; // Force black text so equations aren't invisible (white-on-white) if the user is in Dark Mode!
     wrapper.innerHTML = html;
     div.appendChild(wrapper);
+
+    // Wait for main document fonts to load so the DOM measurement uses true glyph metrics
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
 
     let rect = wrapper.getBoundingClientRect();
     // Compute true bounding box including absolutely positioned KaTeX elements
@@ -1409,17 +1415,17 @@ async function rasterizeMath(latex, isBlock, css) {
     const overflowRight = Math.max(0, maxX - rect.right);
 
     if (overflowTop > 0 || overflowBottom > 0 || overflowLeft > 0 || overflowRight > 0) {
-        wrapper.style.paddingTop = (8 + overflowTop) + 'px';
-        wrapper.style.paddingBottom = (8 + overflowBottom) + 'px';
-        wrapper.style.paddingLeft = (4 + overflowLeft) + 'px';
-        wrapper.style.paddingRight = (4 + overflowRight) + 'px';
+        wrapper.style.paddingTop = (12 + overflowTop) + 'px';
+        wrapper.style.paddingBottom = (12 + overflowBottom) + 'px';
+        wrapper.style.paddingLeft = (12 + overflowLeft) + 'px';
+        wrapper.style.paddingRight = (12 + overflowRight) + 'px';
         rect = wrapper.getBoundingClientRect();
     }
 
     document.body.removeChild(div);
 
-    const w = Math.max(1, Math.ceil(rect.width));
-    const h = Math.max(1, Math.ceil(rect.height));
+    const w = Math.max(1, Math.ceil(rect.width) + 2);
+    const h = Math.max(1, Math.ceil(rect.height) + 2);
 
     // Serializing to XML guarantees standard HTML tags (like <br>) become valid <br/> closures
     // We MUST replace HTML-only entities like   or the strict SVG XML parser will fatally crash
