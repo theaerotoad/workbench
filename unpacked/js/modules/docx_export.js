@@ -47,6 +47,8 @@ const RE_MATH_PH = new RegExp('^m(\\d+)' + MARK);
 
 const RE_FENCE_OPEN = /^(\s*)(`{3,}|~{3,})[ \t]*([^\s`~]*)/;
 const RE_FENCE_CLOSE = /^\s*(`{3,}|~{3,})[ \t]*$/;
+const RE_MATH_OPEN = /^(\s*)\$\$\s*$/;
+const RE_MATH_CLOSE = /^\s*\$\$\s*$/;
 const RE_HEADING = /^(\s*)(#{1,6})(?:\s+(.*?))?\s*$/;
 const RE_HR = /^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const RE_QUOTE = /^\s{0,3}>?[ \t]?(.*)$/;
@@ -440,6 +442,20 @@ function parseBlockLines(lines, env) {
         // `1. a\n\n2. b` keeps counting instead of restarting at 1.
         if (!trimmed) { flushPara(); continue; }
 
+        // Block math.
+        const mathOpen = RE_MATH_OPEN.exec(line);
+        if (mathOpen) {
+            flushPara(); closeList();
+            const body = [];
+            i++;
+            for (; i < lines.length; i++) {
+                if (RE_MATH_CLOSE.test(lines[i].trim())) break;
+                body.push(lines[i]);
+            }
+            blocks.push({ type: 'paragraph', runs: [{ math: true, text: body.join('\n'), block: true, bold: false, italic: false, strike: false }], inQuote: env.inQuote, jc: 'center' });
+            continue;
+        }
+
         // Fenced code block.
         const fence = RE_FENCE_OPEN.exec(line);
         if (fence) {
@@ -764,7 +780,7 @@ function blockXml(block, ctx) {
 
         default: {
             // Detect block-level images that have alt text and emit a caption paragraph
-            if (block.runs && block.runs.length === 1 && block.runs[0].image && block.runs[0].alt) {
+            if (block.runs && block.runs.length === 1 && block.runs[0].image && block.runs[0].alt && block.runs[0].alt !== 'equation') {
                 const imgP = `<w:p>${pPrXml({ style: 'Normal', jc: 'center' })}${runsXml(block.runs, ctx)}</w:p>`;
                 const capP = `<w:p>${pPrXml({ style: 'Caption', jc: 'center' })}${textRunXml(block.runs[0].alt)}</w:p>`;
                 return imgP + capP;
@@ -774,7 +790,7 @@ function blockXml(block, ctx) {
             if (/^(?:Table|Figure|Caption)\s*(?:\d+)?\s*:/i.test(textStr)) {
                 return `<w:p>${pPrXml({ style: 'Caption' })}${runsXml(block.runs, ctx)}</w:p>`;
             }
-            return `<w:p>${pPrXml({ style: block.inQuote ? 'BlockQuote' : 'Normal' })}${runsXml(block.runs, ctx)}</w:p>`;
+            return `<w:p>${pPrXml({ style: block.inQuote ? 'BlockQuote' : 'Normal', jc: block.jc })}${runsXml(block.runs, ctx)}</w:p>`;
         }
     }
 }
@@ -1352,23 +1368,24 @@ async function rasterizeMath(latex, isBlock, css) {
     wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     wrapper.style.display = 'inline-block';
     wrapper.style.margin = '0';
-    wrapper.style.padding = '0';
+    wrapper.style.padding = '4px';
     wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
     wrapper.innerHTML = html;
     div.appendChild(wrapper);
 
-    const rect = div.getBoundingClientRect();
+    const rect = wrapper.getBoundingClientRect();
     document.body.removeChild(div);
 
-    const w = Math.max(1, Math.ceil(rect.width) + 2);
-    const h = Math.max(1, Math.ceil(rect.height) + 2);
+    const w = Math.max(1, Math.ceil(rect.width));
+    const h = Math.max(1, Math.ceil(rect.height));
 
     // Serializing to XML guarantees standard HTML tags (like <br>) become valid <br/> closures
     const xhtml = new XMLSerializer().serializeToString(wrapper);
 
+    // Must include x="0" y="0" on foreignObject for Firefox, and wrap CSS in CDATA
     const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
-        <style>${css}</style>
-        <foreignObject width="100%" height="100%">
+        <style><![CDATA[\n${css}\n]]></style>
+        <foreignObject x="0" y="0" width="100%" height="100%">
             ${xhtml}
         </foreignObject>
     </svg>`;
