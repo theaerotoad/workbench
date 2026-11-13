@@ -82,6 +82,86 @@ function buildZip(entries) {   // entries: [{ path, data: Uint8Array | null (dir
 window.buildZip = buildZip;
 // --- AST_EXPORTS_END ---
 
+// --- readZip.js ---
+// A lightweight pure-JS ZIP parser. Uses the native DecompressionStream API for DEFLATE.
+async function readZip(blob) {
+    const buffer = await blob.arrayBuffer();
+    const dv = new DataView(buffer);
+    const u8 = new Uint8Array(buffer);
+    
+    // Find End of Central Directory (EOCD)
+    let eocdOffset = -1;
+    for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 65536 - 22); i--) {
+        if (dv.getUint32(i, true) === 0x06054b50) {
+            eocdOffset = i;
+            break;
+        }
+    }
+    if (eocdOffset === -1) throw new Error("Not a valid ZIP file");
+    
+    const cdOffset = dv.getUint32(eocdOffset + 16, true);
+    const cdCount = dv.getUint16(eocdOffset + 10, true);
+    
+    const entries = [];
+    let ptr = cdOffset;
+    for (let i = 0; i < cdCount; i++) {
+        if (dv.getUint32(ptr, true) !== 0x02014b50) break;
+        const compMethod = dv.getUint16(ptr + 10, true);
+        const compSize = dv.getUint32(ptr + 20, true);
+        const nameLen = dv.getUint16(ptr + 28, true);
+        const extraLen = dv.getUint16(ptr + 30, true);
+        const commentLen = dv.getUint16(ptr + 32, true);
+        const localHeaderOffset = dv.getUint32(ptr + 42, true);
+        
+        const nameBytes = u8.subarray(ptr + 46, ptr + 46 + nameLen);
+        const name = new TextDecoder().decode(nameBytes);
+        
+        ptr += 46 + nameLen + extraLen + commentLen;
+        if (name.endsWith('/')) continue; // Skip directories
+        
+        const lhNameLen = dv.getUint16(localHeaderOffset + 26, true);
+        const lhExtraLen = dv.getUint16(localHeaderOffset + 28, true);
+        const dataOffset = localHeaderOffset + 30 + lhNameLen + lhExtraLen;
+        const compData = u8.subarray(dataOffset, dataOffset + compSize);
+        
+        if (compMethod === 0) { // Store
+            entries.push({ path: name, data: new Uint8Array(compData) });
+        } else if (compMethod === 8) { // Deflate
+            if (typeof DecompressionStream !== 'undefined') {
+                try {
+                    const ds = new DecompressionStream('deflate-raw');
+                    const writer = ds.writable.getWriter();
+                    writer.write(compData);
+                    writer.close();
+                    
+                    const reader = ds.readable.getReader();
+                    const chunks = [];
+                    let total = 0;
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        chunks.push(value);
+                        total += value.length;
+                    }
+                    const out = new Uint8Array(total);
+                    let pos = 0;
+                    for (const c of chunks) { out.set(c, pos); pos += c.length; }
+                    entries.push({ path: name, data: out });
+                } catch (e) {
+                    console.warn(`readZip: failed to decompress ${name}`, e);
+                }
+            } else {
+                console.warn(`readZip: DecompressionStream not supported, skipping ${name}`);
+            }
+        }
+    }
+    return entries;
+}
+
+// --- AST_EXPORTS_START ---
+window.readZip = readZip;
+// --- AST_EXPORTS_END ---
+
 // --- collectDropped.js ---
 // ---- Dropped / picked files ----
 // Must be called synchronously from the drop handler (DataTransfer is invalidated after the first await).

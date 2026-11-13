@@ -168,8 +168,16 @@ contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
         } else if (action === 'download-zip') {
             downloadZip(node.path);
         } else if (action === 'export-docx') {
-            if (typeof exportMarkdownToDocx === 'function') await exportMarkdownToDocx(node.path);
-            else showToast('Word export is not available', 'error');
+            if (typeof exportMarkdownToDocx === 'function') {
+                const tplPath = '.agent/template.docx';
+                let hasTpl = !!(registry.meta && registry.meta[tplPath]);
+                if (!hasTpl && typeof window.fileExistsOnDisk === 'function') {
+                    hasTpl = await window.fileExistsOnDisk(tplPath);
+                }
+                await exportMarkdownToDocx(node.path, hasTpl ? tplPath : null);
+            } else {
+                showToast('Word export is not available', 'error');
+            }
         } else if (action === 'upload-files') {
             wsUploadTargetDir = targetDir;
             document.getElementById('ws-upload-input').click();
