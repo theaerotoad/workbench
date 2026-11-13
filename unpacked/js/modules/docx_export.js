@@ -1292,25 +1292,37 @@ async function getKaTeXInlineStyle() {
         const cssText = await (await fetch(link.href)).text();
         const baseUrl = link.href.split('/').slice(0, -1).join('/');
 
-        const urlRegex = /url\(([^)]+\.woff2[^)]*)\)/g;
         let inlinedCss = cssText;
+        const urlRegex = /url\(([^)]+)\)/g;
         const matches = [...cssText.matchAll(urlRegex)];
-        const uniqueUrls = [...new Set(matches.map(m => m[1].replace(/['"]/g, '')))];
+        const uniqueUrls = [...new Set(matches.map(m => m[1].replace(/['"]/g, '').trim()))];
 
         for (const relUrl of uniqueUrls) {
-            const fullUrl = relUrl.startsWith('data:') ? relUrl : (relUrl.startsWith('http') ? relUrl : baseUrl + '/' + relUrl);
-            if (fullUrl.startsWith('data:')) continue;
-            try {
-                const res = await fetch(fullUrl);
-                const blob = await res.blob();
-                const base64 = await new Promise(resolve => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.readAsDataURL(blob);
-                });
-                inlinedCss = inlinedCss.split(relUrl).join(base64);
-            } catch (e) {
-                console.warn('docx export: failed to inline katex font', fullUrl);
+            if (relUrl.startsWith('data:')) continue;
+            const targetStr = `url(${relUrl})`;
+            const targetStrQ1 = `url('${relUrl}')`;
+            const targetStrQ2 = `url("${relUrl}")`;
+
+            if (relUrl.includes('.woff2')) {
+                const fullUrl = relUrl.startsWith('http') ? relUrl : baseUrl + '/' + relUrl;
+                try {
+                    const res = await fetch(fullUrl, { mode: 'cors' });
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const blob = await res.blob();
+                    const base64 = await new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.readAsDataURL(blob);
+                    });
+                    const rep = `url(${base64})`;
+                    inlinedCss = inlinedCss.split(targetStr).join(rep).split(targetStrQ1).join(rep).split(targetStrQ2).join(rep);
+                } catch (e) {
+                    console.warn('docx export: failed to inline katex font', fullUrl);
+                    inlinedCss = inlinedCss.split(targetStr).join('url(data:,)').split(targetStrQ1).join('url(data:,)').split(targetStrQ2).join('url(data:,)');
+                }
+            } else {
+                // Strip out non-woff2 remote references to prevent canvas security taint
+                inlinedCss = inlinedCss.split(targetStr).join('url(data:,)').split(targetStrQ1).join('url(data:,)').split(targetStrQ2).join('url(data:,)');
             }
         }
         cachedKatexCss = inlinedCss;
@@ -1324,7 +1336,8 @@ async function getKaTeXInlineStyle() {
 async function rasterizeMath(latex, isBlock, css) {
     let html;
     try {
-        html = window.katex.renderToString(latex, { displayMode: isBlock, throwOnError: false });
+        // output: 'html' explicitly strips MathML so Canvas and XML parsers don't choke
+        html = window.katex.renderToString(latex, { displayMode: isBlock, throwOnError: false, output: 'html' });
     } catch (e) { return null; }
 
     const div = document.createElement('div');
@@ -1332,20 +1345,31 @@ async function rasterizeMath(latex, isBlock, css) {
     div.style.visibility = 'hidden';
     div.style.top = '-9999px';
     div.style.display = 'inline-block';
-    div.innerHTML = html;
     document.body.appendChild(div);
+
+    // Use an isolated wrapper for XML serialization
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    wrapper.style.display = 'inline-block';
+    wrapper.style.margin = '0';
+    wrapper.style.padding = '0';
+    wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
+    wrapper.innerHTML = html;
+    div.appendChild(wrapper);
+
     const rect = div.getBoundingClientRect();
     document.body.removeChild(div);
 
-    const w = Math.max(1, Math.ceil(rect.width) + 4);
-    const h = Math.max(1, Math.ceil(rect.height) + 4);
+    const w = Math.max(1, Math.ceil(rect.width) + 2);
+    const h = Math.max(1, Math.ceil(rect.height) + 2);
+
+    // Serializing to XML guarantees standard HTML tags (like <br>) become valid <br/> closures
+    const xhtml = new XMLSerializer().serializeToString(wrapper);
 
     const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
+        <style>${css}</style>
         <foreignObject width="100%" height="100%">
-            <div xmlns="http://www.w3.org/1999/xhtml" style="display:inline-block; margin:0; padding:2px; font-size:16px;">
-                <style>${css}</style>
-                ${html}
-            </div>
+            ${xhtml}
         </foreignObject>
     </svg>`;
 
