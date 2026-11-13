@@ -1311,13 +1311,14 @@ async function getKaTeXInlineStyle() {
         let inlinedCss = cssText;
         const urlRegex = /url\(([^)]+)\)/g;
         const matches = [...cssText.matchAll(urlRegex)];
-        const uniqueUrls = [...new Set(matches.map(m => m[1].replace(/['"]/g, '').trim()))];
+        const uniqueMatches = [...new Set(matches.map(m => m[0]))]; // exact matches e.g. "url(fonts/X.woff2)"
 
-        for (const relUrl of uniqueUrls) {
+        for (const fullMatch of uniqueMatches) {
+            const innerMatch = fullMatch.match(/url\(([^)]+)\)/);
+            if (!innerMatch) continue;
+            const relUrl = innerMatch[1].replace(/['"]/g, '').trim();
+
             if (relUrl.startsWith('data:')) continue;
-            const targetStr = `url(${relUrl})`;
-            const targetStrQ1 = `url('${relUrl}')`;
-            const targetStrQ2 = `url("${relUrl}")`;
 
             if (relUrl.includes('.woff2')) {
                 const fullUrl = relUrl.startsWith('http') ? relUrl : baseUrl + '/' + relUrl;
@@ -1330,15 +1331,14 @@ async function getKaTeXInlineStyle() {
                         reader.onload = () => resolve(reader.result);
                         reader.readAsDataURL(blob);
                     });
-                    const rep = `url(${base64})`;
-                    inlinedCss = inlinedCss.split(targetStr).join(rep).split(targetStrQ1).join(rep).split(targetStrQ2).join(rep);
+                    inlinedCss = inlinedCss.split(fullMatch).join(`url(${base64})`);
                 } catch (e) {
                     console.warn('docx export: failed to inline katex font', fullUrl);
-                    inlinedCss = inlinedCss.split(targetStr).join('url(data:,)').split(targetStrQ1).join('url(data:,)').split(targetStrQ2).join('url(data:,)');
+                    inlinedCss = inlinedCss.split(fullMatch).join(`url(data:,)`);
                 }
             } else {
                 // Strip out non-woff2 remote references to prevent canvas security taint
-                inlinedCss = inlinedCss.split(targetStr).join('url(data:,)').split(targetStrQ1).join('url(data:,)').split(targetStrQ2).join('url(data:,)');
+                inlinedCss = inlinedCss.split(fullMatch).join(`url(data:,)`);
             }
         }
         cachedKatexCss = inlinedCss;
@@ -1370,6 +1370,7 @@ async function rasterizeMath(latex, isBlock, css) {
     wrapper.style.margin = '0';
     wrapper.style.padding = '4px';
     wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
+    wrapper.style.color = '#000000'; // Force black text so equations aren't invisible (white-on-white) if the user is in Dark Mode!
     wrapper.innerHTML = html;
     div.appendChild(wrapper);
 
