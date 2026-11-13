@@ -150,6 +150,7 @@ function makePackageContext(tplCtx) {
         const path = 'word/media/image' + (ctx.media.length + 1) + '.' + ext;
         ctx.media.push({ path, data: img.data, ext });
         ctx.exts.add(ext);
+        ctx.rels.push({ id, type: 'image', target: 'media/image' + ctx.media.length + '.' + ext });
         ctx.mediaByKey.set(key, id);
         return id;
     };
