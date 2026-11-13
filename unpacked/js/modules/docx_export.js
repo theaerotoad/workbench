@@ -91,7 +91,7 @@ function xmlDecl(inner) {
 // Collects the pieces that only become known while walking the document: hyperlink
 // relationships, media parts, their content types, and ordered-list number instances.
 function parseTemplateContext(entries) {
-    let maxRelId = 0, hasStyles = false, hasNumbering = false;
+    let maxRelId = 0, hasStyles = false, hasNumbering = false, sectPr = null;
     (entries || []).forEach(e => {
         if (e.path === 'word/styles.xml') hasStyles = true;
         if (e.path === 'word/numbering.xml') hasNumbering = true;
@@ -103,8 +103,15 @@ function parseTemplateContext(entries) {
                 maxRelId = Math.max(maxRelId, parseInt(match[1], 10));
             }
         }
+        if (e.path === 'word/document.xml') {
+            const xml = new TextDecoder('utf-8', { fatal: false }).decode(e.data);
+            // A document can have multiple sections. The overall document page settings
+            // (margins, page numbers, headers/footers) are stored in the *last* sectPr.
+            const matches = [...xml.matchAll(/<w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>/g)];
+            if (matches.length) sectPr = matches[matches.length - 1][0];
+        }
     });
-    return { maxRelId, hasStyles, hasNumbering };
+    return { maxRelId, hasStyles, hasNumbering, sectPr };
 }
 
 // Collects the pieces that only become known while walking the document: hyperlink
@@ -117,7 +124,9 @@ function makePackageContext(tplCtx) {
         mediaByKey: new Map(),
         exts: new Set(),
         orderedLists: 0,     // number of w:num instances needed for ordered lists
-        drawingSeq: 1000
+        drawingSeq: 1000,
+        hasTemplate: !!(tplCtx && (tplCtx.hasStyles || tplCtx.sectPr)),
+        sectPr: tplCtx ? tplCtx.sectPr : null
     };
     if (!tplCtx || !tplCtx.hasStyles) ctx.rels.push({ id: 'rId' + (ctx.nextRelId++), type: 'styles', target: 'styles.xml' });
     if (!tplCtx || !tplCtx.hasNumbering) ctx.rels.push({ id: 'rId' + (ctx.nextRelId++), type: 'numbering', target: 'numbering.xml' });
@@ -660,9 +669,9 @@ function tableXml(block, ctx) {
 
     const cell = (runs, opts) => {
         const o = opts || {};
-        const tcPr = `<w:tcPr><w:tcW w:w="${colW}" w:type="dxa"/>` +
-            (o.shd ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>` : '') +
-            `<w:vAlign w:val="top"/></w:tcPr>`;
+        // If a template is present, omit inline cell shading to allow native styles to apply
+        const shd = (o.shd && !ctx.hasTemplate) ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>` : '';
+        const tcPr = `<w:tcPr><w:tcW w:w="${colW}" w:type="dxa"/>${shd}<w:vAlign w:val="top"/></w:tcPr>`;
         // Header cells force bold on text runs; delegating to runsXml keeps links, images
         // and inline styling intact rather than re-implementing the run writer here.
         const source = o.bold
@@ -672,7 +681,7 @@ function tableXml(block, ctx) {
         return `<w:tc>${tcPr}<w:p>${pPrXml({ style: 'TableCellText', jc: alignJc(o.align) })}${body}</w:p></w:tc>`;
     };
 
-    let xml = `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/>` +
+    const borders = ctx.hasTemplate ? '' :
         `<w:tblBorders>` +
         `<w:top w:val="single" w:sz="4" w:space="0" w:color="C6CFDB"/>` +
         `<w:left w:val="single" w:sz="4" w:space="0" w:color="C6CFDB"/>` +
@@ -681,8 +690,11 @@ function tableXml(block, ctx) {
         `<w:insideH w:val="single" w:sz="4" w:space="0" w:color="C6CFDB"/>` +
         `<w:insideV w:val="single" w:sz="4" w:space="0" w:color="C6CFDB"/>` +
         `</w:tblBorders>` +
+        `<w:tblCellMar><w:top w:w="57" w:type="dxa"/><w:left w:w="113" w:type="dxa"/><w:bottom w:w="57" w:type="dxa"/><w:right w:w="113" w:type="dxa"/></w:tblCellMar>`;
+
+    let xml = `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="5000" w:type="pct"/>` +
+        borders +
         `<w:tblLayout w:type="autofit"/>` +
-        `<w:tblCellMar><w:top w:w="57" w:type="dxa"/><w:left w:w="113" w:type="dxa"/><w:bottom w:w="57" w:type="dxa"/><w:right w:w="113" w:type="dxa"/></w:tblCellMar>` +
         `<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr>` +
         `<w:tblGrid>${grid}</w:tblGrid>`;
 
@@ -757,9 +769,12 @@ function buildDocumentXml(blocks, ctx) {
     if (!blocks.length || blocks[blocks.length - 1].type === 'table') {
         body += '<w:p/>';
     }
-    const sect = `<w:sectPr><w:pgSz w:w="${PAGE_W}" w:h="${PAGE_H}"/>` +
+    // If the template provided its own section properties (margins, page numbers, headers, footers), use them.
+    const sect = ctx.sectPr || (
+        `<w:sectPr><w:pgSz w:w="${PAGE_W}" w:h="${PAGE_H}"/>` +
         `<w:pgMar w:top="${PAGE_MARGIN}" w:right="${PAGE_MARGIN}" w:bottom="${PAGE_MARGIN}" w:left="${PAGE_MARGIN}" w:header="720" w:footer="720" w:gutter="0"/>` +
-        `<w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr>`;
+        `<w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr>`
+    );
     return xmlDecl(
         `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}" xmlns:wp="${WP_NS}" xmlns:a="${A_NS}" xmlns:pic="${PIC_NS}">` +
         `<w:body>${body}${sect}</w:body></w:document>`
