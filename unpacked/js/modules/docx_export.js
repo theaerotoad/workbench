@@ -39,6 +39,9 @@ const MAX_IMG_W_EMU = EMU_PER_INCH * 6;           // ~6in — fits inside the ma
 const MAX_IMG_H_EMU = Math.round(EMU_PER_INCH * 8);
 const IMG_RASTER_SCALE = 2;                       // supersample SVG -> PNG for crisp print
 
+// Scale factor for LaTeX math formulas so they fit better with template text (75% default)
+const MATH_ZOOM_SCALE = 0.75;
+
 // Private-use marker for placeholder tokens (code spans pulled out before emphasis scanning).
 const MARK = '\uE000';
 const RE_MARK = new RegExp(MARK, 'g');
@@ -1443,6 +1446,10 @@ async function rasterizeMath(latex, isBlock, css) {
     const maxPx = Math.floor(MAX_IMG_W_EMU / EMU_PER_PX);
     let lw = w, lh = h;
     if (lw > maxPx) { const f = maxPx / lw; lw = Math.round(lw * f); lh = Math.round(lh * f); }
+
+    // Scale down formula to fit Word document text size better
+    lw = Math.max(1, Math.round(lw * MATH_ZOOM_SCALE));
+    lh = Math.max(1, Math.round(lh * MATH_ZOOM_SCALE));
 
     const img = await loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText));
     
