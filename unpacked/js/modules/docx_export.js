@@ -47,8 +47,8 @@ const RE_MATH_PH = new RegExp('^m(\\d+)' + MARK);
 
 const RE_FENCE_OPEN = /^(\s*)(`{3,}|~{3,})[ \t]*([^\s`~]*)/;
 const RE_FENCE_CLOSE = /^\s*(`{3,}|~{3,})[ \t]*$/;
-const RE_MATH_OPEN = /^(\s*)\$\$\s*$/;
-const RE_MATH_CLOSE = /^\s*\$\$\s*$/;
+const RE_MATH_OPEN = /^(\s*)\$\$(.*)$/;
+const RE_MATH_CLOSE = /^(.*?)\$\$\s*$/;
 const RE_HEADING = /^(\s*)(#{1,6})(?:\s+(.*?))?\s*$/;
 const RE_HR = /^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const RE_QUOTE = /^\s{0,3}>?[ \t]?(.*)$/;
@@ -456,9 +456,14 @@ function parseBlockLines(lines, env) {
         if (mathOpen) {
             flushPara(); closeList();
             const body = [];
+            if (mathOpen[2].trim()) body.push(mathOpen[2].trim());
             i++;
             for (; i < lines.length; i++) {
-                if (RE_MATH_CLOSE.test(lines[i])) break;
+                const closeMatch = RE_MATH_CLOSE.exec(lines[i]);
+                if (closeMatch) {
+                    if (closeMatch[1].trim()) body.push(closeMatch[1].trim());
+                    break;
+                }
                 body.push(lines[i]);
             }
             blocks.push({ type: 'paragraph', runs: [{ math: true, text: body.join('\n'), block: true, bold: false, italic: false, strike: false, link: null }], inQuote: env.inQuote, jc: 'center' });
@@ -1377,13 +1382,40 @@ async function rasterizeMath(latex, isBlock, css) {
     wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     wrapper.style.display = 'inline-block';
     wrapper.style.margin = '0';
-    wrapper.style.padding = '4px';
+    wrapper.style.padding = '8px 4px';
+    wrapper.style.lineHeight = 'normal';
     wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
     wrapper.style.color = '#000000'; // Force black text so equations aren't invisible (white-on-white) if the user is in Dark Mode!
     wrapper.innerHTML = html;
     div.appendChild(wrapper);
 
-    const rect = wrapper.getBoundingClientRect();
+    let rect = wrapper.getBoundingClientRect();
+    // Compute true bounding box including absolutely positioned KaTeX elements
+    let minY = rect.top, maxY = rect.bottom, minX = rect.left, maxX = rect.right;
+    const children = wrapper.getElementsByTagName('*');
+    for (let i = 0; i < children.length; i++) {
+        const childRect = children[i].getBoundingClientRect();
+        if (childRect.width > 0 && childRect.height > 0) {
+            if (childRect.top < minY) minY = childRect.top;
+            if (childRect.bottom > maxY) maxY = childRect.bottom;
+            if (childRect.left < minX) minX = childRect.left;
+            if (childRect.right > maxX) maxX = childRect.right;
+        }
+    }
+
+    const overflowTop = Math.max(0, rect.top - minY);
+    const overflowBottom = Math.max(0, maxY - rect.bottom);
+    const overflowLeft = Math.max(0, rect.left - minX);
+    const overflowRight = Math.max(0, maxX - rect.right);
+
+    if (overflowTop > 0 || overflowBottom > 0 || overflowLeft > 0 || overflowRight > 0) {
+        wrapper.style.paddingTop = (8 + overflowTop) + 'px';
+        wrapper.style.paddingBottom = (8 + overflowBottom) + 'px';
+        wrapper.style.paddingLeft = (4 + overflowLeft) + 'px';
+        wrapper.style.paddingRight = (4 + overflowRight) + 'px';
+        rect = wrapper.getBoundingClientRect();
+    }
+
     document.body.removeChild(div);
 
     const w = Math.max(1, Math.ceil(rect.width));
