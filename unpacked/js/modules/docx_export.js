@@ -1689,6 +1689,17 @@ async function exportMarkdownToDocx(filepath, templateFilepath = null) {
             }
         }
 
+        if (!activeTemplate) {
+            const defaultTplPath = '.agent/template.docx';
+            let hasDefaultTpl = !!(typeof registry !== 'undefined' && registry && registry.meta && registry.meta[defaultTplPath]);
+            if (!hasDefaultTpl && typeof window.fileExistsOnDisk === 'function') {
+                hasDefaultTpl = await window.fileExistsOnDisk(defaultTplPath);
+            }
+            if (hasDefaultTpl) {
+                activeTemplate = defaultTplPath;
+            }
+        }
+
         let templateEntries = [];
         // Hook for caller to inject a template ZIP. Requires an unzipping utility in the environment.
         if (activeTemplate && typeof window.vfsReadBlob === 'function' && typeof window.readZip === 'function') {
