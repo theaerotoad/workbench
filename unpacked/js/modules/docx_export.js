@@ -309,7 +309,9 @@ function findCloserRun(str, ch, from, len) {
 function decodeSrc(src) {
     let s = String(src || '').trim();
     if (/^<.*>$/.test(s)) s = s.slice(1, -1);
-    try { if (!/^data:/i.test(s)) s = decodeURI(s); } catch (e) {}
+    // External links must remain encoded for valid OPC Relationship Targets.
+    // Only decode local workspace paths so the VFS can locate them.
+    try { if (!/^data:/i.test(s) && !/^(?:https?:|mailto:)/i.test(s)) s = decodeURI(s); } catch (e) {}
     return s;
 }
 
@@ -507,7 +509,7 @@ function parseSeparatorRow(line) {
     const out = [];
     for (const c of cells) {
         const t = c.trim();
-        if (!/^:?-{2,}:?$/.test(t)) return null;
+        if (!/^:?-+:?$/.test(t)) return null;
         out.push(t.startsWith(':') && t.endsWith(':') ? 'center' : t.endsWith(':') ? 'right' : t.startsWith(':') ? 'left' : '');
     }
     return out;
@@ -710,17 +712,19 @@ function blockXml(block, ctx) {
 // Assigns a numId to every ordered-list run. Each contiguous list gets its own w:num
 // instance so numbering restarts per list, exactly like a rendered Markdown preview.
 function assignListNumbers(blocks, ctx) {
-    let currentNumId = null, currentOrdered = false;
+    const stack = [];
     blocks.forEach(b => {
-        if (b.type !== 'item') { currentNumId = null; currentOrdered = false; return; }
+        if (b.type !== 'item') { stack.length = 0; return; }
+        const lvl = Math.min(MAX_LIST_LEVEL, b.level | 0);
+        stack.length = lvl + 1; // Truncate deeper levels
         if (b.ordered) {
-            // A bullet item in between breaks the run, so the next ordered list restarts.
-            if (!currentOrdered || currentNumId == null) { currentNumId = ctx.nextOrderedList(); currentOrdered = true; }
-            b.numId = currentNumId;
+            if (!stack[lvl] || !stack[lvl].ordered) {
+                stack[lvl] = { ordered: true, numId: ctx.nextOrderedList() };
+            }
+            b.numId = stack[lvl].numId;
         } else {
+            stack[lvl] = { ordered: false, numId: 1 };
             b.numId = 1;
-            currentNumId = null;
-            currentOrdered = false;
         }
     });
 }
@@ -728,8 +732,11 @@ function assignListNumbers(blocks, ctx) {
 function buildDocumentXml(blocks, ctx) {
     assignListNumbers(blocks, ctx);
     let body = blocks.map(b => blockXml(b, ctx)).join('');
-    // Word requires a paragraph after a table before the section properties.
-    if (blocks.length && blocks[blocks.length - 1].type === 'table') body += '<w:p/>';
+    // Word requires at least one paragraph in the document, and specifically requires
+    // one after a table if a table is the last element before section properties.
+    if (!blocks.length || blocks[blocks.length - 1].type === 'table') {
+        body += '<w:p/>';
+    }
     const sect = `<w:sectPr><w:pgSz w:w="${PAGE_W}" w:h="${PAGE_H}"/>` +
         `<w:pgMar w:top="${PAGE_MARGIN}" w:right="${PAGE_MARGIN}" w:bottom="${PAGE_MARGIN}" w:left="${PAGE_MARGIN}" w:header="720" w:footer="720" w:gutter="0"/>` +
         `<w:cols w:space="720"/><w:docGrid w:linePitch="360"/></w:sectPr>`;
@@ -811,7 +818,9 @@ function numberingLevels(fmt) {
     let xml = '';
     for (let lvl = 0; lvl <= MAX_LIST_LEVEL; lvl++) {
         const left = LEVEL_INDENT * (lvl + 1);
-        const text = fmt === 'bullet' ? bullets[lvl % bullets.length] : (lvl + 1) + '.';
+        // Ordered lists must use the Word variable `%N` (where N is the 1-based level)
+        // instead of a hardcoded number, or every item will literally render as "1.".
+        const text = fmt === 'bullet' ? bullets[lvl % bullets.length] : '%' + (lvl + 1) + '.';
         xml += `<w:lvl w:ilvl="${lvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/>` +
             `<w:lvlText w:val="${xmlEscape(text)}"/><w:lvlJc w:val="left"/>` +
             `<w:pPr><w:ind w:left="${left}" w:hanging="${LEVEL_INDENT}"/></w:pPr>` +
