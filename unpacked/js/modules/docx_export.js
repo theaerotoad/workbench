@@ -570,6 +570,7 @@ function pPrXml(o) {
     if (o.style) parts.push(`<w:pStyle w:val="${o.style}"/>`);
     if (o.numId != null) parts.push(`<w:numPr><w:ilvl w:val="${o.ilvl | 0}"/><w:numId w:val="${o.numId}"/></w:numPr>`);
     if (o.bdr) parts.push(`<w:pBdr>${o.bdr}</w:pBdr>`);
+    if (o.contextualSpacing) parts.push(`<w:contextualSpacing/>`);
     if (o.ind) parts.push(`<w:ind ${o.ind}/>`);
     if (o.jc) parts.push(`<w:jc w:val="${o.jc}"/>`);
     return parts.length ? `<w:pPr>${parts.join('')}</w:pPr>` : '';
@@ -629,7 +630,8 @@ function codeBlockXml(block, ctx) {
         if (ln) inner += `<w:r><w:t xml:space="preserve">${xmlEscape(ln)}</w:t></w:r>`;
     });
     if (!inner) inner = '<w:r><w:t xml:space="preserve"> </w:t></w:r>';
-    return `<w:p>${pPrXml({ style: 'CodeBlock', ind })}${inner}</w:p>`;
+    // Map to 'BlockText' instead of 'CodeBlock' so template formatting cleanly applies
+    return `<w:p>${pPrXml({ style: 'BlockText', ind })}${inner}</w:p>`;
 }
 
 function imageRunXml(run, ctx) {
@@ -733,11 +735,24 @@ function blockXml(block, ctx) {
                 ? `w:left="${QUOTE_INDENT + LEVEL_INDENT * (ilvl + 1)}" w:hanging="${LEVEL_INDENT}"`
                 : '';
             const prefix = block.task ? textRunXml(TASK_GLYPHS[block.task] || '', {}) : '';
-            return `<w:p>${pPrXml({ style: 'ListParagraph', numId, ilvl, ind })}${prefix}${runsXml(block.runs, ctx)}</w:p>`;
+            // contextualSpacing collapses the vertical padding between items of the same list
+            return `<w:p>${pPrXml({ style: 'ListParagraph', numId, ilvl, ind, contextualSpacing: true })}${prefix}${runsXml(block.runs, ctx)}</w:p>`;
         }
 
-        default:
+        default: {
+            // Detect block-level images that have alt text and emit a caption paragraph
+            if (block.runs && block.runs.length === 1 && block.runs[0].image && block.runs[0].alt) {
+                const imgP = `<w:p>${pPrXml({ style: 'Normal', jc: 'center' })}${runsXml(block.runs, ctx)}</w:p>`;
+                const capP = `<w:p>${pPrXml({ style: 'Caption', jc: 'center' })}${textRunXml(block.runs[0].alt)}</w:p>`;
+                return imgP + capP;
+            }
+            // Detect paragraphs that start with Table/Figure/Caption
+            const textStr = (block.runs || []).map(r => r.text || '').join('');
+            if (/^(?:Table|Figure|Caption)\s*(?:\d+)?\s*:/i.test(textStr)) {
+                return `<w:p>${pPrXml({ style: 'Caption' })}${runsXml(block.runs, ctx)}</w:p>`;
+            }
             return `<w:p>${pPrXml({ style: block.inQuote ? 'BlockQuote' : 'Normal' })}${runsXml(block.runs, ctx)}</w:p>`;
+        }
     }
 }
 
@@ -810,10 +825,13 @@ function buildStylesXml() {
         headingStyle('Heading5', 22, '404040', 240, 80, true) +
         headingStyle('Heading6', 22, '595959', 240, 60, true) +
 
-        `<w:style w:type="paragraph" w:styleId="CodeBlock"><w:name w:val="Code Block"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
+        `<w:style w:type="paragraph" w:styleId="BlockText"><w:name w:val="Block Text"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
         // CT_PPrBase order: keepLines -> pBdr -> shd -> spacing.
         `<w:pPr><w:keepLines/><w:pBdr>${border}</w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="F5F7FA"/><w:spacing w:before="120" w:after="240" w:line="240" w:lineRule="auto"/></w:pPr>` +
         `<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:eastAsia="Consolas" w:cs="Consolas"/><w:color w:val="1F2937"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>` +
+
+        `<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
+        `<w:pPr><w:spacing w:before="120" w:after="120"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="5A6A7E"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>` +
 
         `<w:style w:type="paragraph" w:styleId="BlockQuote"><w:name w:val="Block Quote"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
         // CT_PPrBase order: pBdr -> spacing -> ind.
