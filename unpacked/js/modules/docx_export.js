@@ -442,17 +442,25 @@ function parseBlockLines(lines, env) {
         // `1. a\n\n2. b` keeps counting instead of restarting at 1.
         if (!trimmed) { flushPara(); continue; }
 
-        // Block math.
+        // Block math (single line).
+        const mathSingle = /^\s*\$\$(.*?)\$\$\s*$/.exec(line);
+        if (mathSingle && mathSingle[1].trim()) {
+            flushPara(); closeList();
+            blocks.push({ type: 'paragraph', runs: [{ math: true, text: mathSingle[1].trim(), block: true, bold: false, italic: false, strike: false, link: null }], inQuote: env.inQuote, jc: 'center' });
+            continue;
+        }
+
+        // Block math (multi-line).
         const mathOpen = RE_MATH_OPEN.exec(line);
         if (mathOpen) {
             flushPara(); closeList();
             const body = [];
             i++;
             for (; i < lines.length; i++) {
-                if (RE_MATH_CLOSE.test(lines[i].trim())) break;
+                if (RE_MATH_CLOSE.test(lines[i])) break;
                 body.push(lines[i]);
             }
-            blocks.push({ type: 'paragraph', runs: [{ math: true, text: body.join('\n'), block: true, bold: false, italic: false, strike: false }], inQuote: env.inQuote, jc: 'center' });
+            blocks.push({ type: 'paragraph', runs: [{ math: true, text: body.join('\n'), block: true, bold: false, italic: false, strike: false, link: null }], inQuote: env.inQuote, jc: 'center' });
             continue;
         }
 
@@ -1381,7 +1389,10 @@ async function rasterizeMath(latex, isBlock, css) {
     const h = Math.max(1, Math.ceil(rect.height));
 
     // Serializing to XML guarantees standard HTML tags (like <br>) become valid <br/> closures
-    const xhtml = new XMLSerializer().serializeToString(wrapper);
+    // We MUST replace HTML-only entities like   or the strict SVG XML parser will fatally crash
+    const xhtml = new XMLSerializer().serializeToString(wrapper)
+        .replace(/ /g, ' ')
+        .replace(/­/g, '­');
 
     // Must include x="0" y="0" on foreignObject for Firefox, and wrap CSS in CDATA
     const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
@@ -1396,11 +1407,30 @@ async function rasterizeMath(latex, isBlock, css) {
     if (lw > maxPx) { const f = maxPx / lw; lw = Math.round(lw * f); lh = Math.round(lh * f); }
 
     const img = await loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText));
+    
+    // DEFEAT FOIT (Flash of Invisible Text):
+    // The SVG contains heavy base64 web fonts. If we draw it to the canvas immediately,
+    // the text will be fully transparent because the fonts haven't finished decoding.
+    // We temporarily attach it to the DOM to force the browser to decode and layout the fonts.
+    img.style.position = 'fixed';
+    img.style.top = '-9999px';
+    img.style.opacity = '0';
+    document.body.appendChild(img);
+    await new Promise(r => setTimeout(r, 150));
+
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(lw * IMG_RASTER_SCALE));
     canvas.height = Math.max(1, Math.round(lh * IMG_RASTER_SCALE));
     const c = canvas.getContext('2d');
+    
+    // Fill with solid white. A transparent background plus Word's rendering engine
+    // often results in invisible anti-aliased text.
+    c.fillStyle = '#ffffff';
+    c.fillRect(0, 0, canvas.width, canvas.height);
+    
     c.drawImage(img, 0, 0, canvas.width, canvas.height);
+    document.body.removeChild(img);
+    
     return { data: await canvasToPng(canvas), ext: 'png', width: lw, height: lh };
 }
 
