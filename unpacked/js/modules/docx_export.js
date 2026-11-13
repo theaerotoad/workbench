@@ -1674,10 +1674,25 @@ async function exportMarkdownToDocx(filepath, templateFilepath = null) {
             return false;
         }
 
+        let activeTemplate = templateFilepath;
+        if (!activeTemplate && markdown.startsWith('---')) {
+            const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+            if (/^---[ \t]*$/.test(lines[0])) {
+                for (let k = 1; k < lines.length && k <= 60; k++) {
+                    if (/^(?:---|\.\.\.)[ \t]*$/.test(lines[k])) break;
+                    const m = /^template:\s*(.+)$/i.exec(lines[k]);
+                    if (m) {
+                        activeTemplate = m[1].trim();
+                        break;
+                    }
+                }
+            }
+        }
+
         let templateEntries = [];
         // Hook for caller to inject a template ZIP. Requires an unzipping utility in the environment.
-        if (templateFilepath && typeof window.vfsReadBlob === 'function' && typeof window.readZip === 'function') {
-            const tplBlob = await window.vfsReadBlob(templateFilepath);
+        if (activeTemplate && typeof window.vfsReadBlob === 'function' && typeof window.readZip === 'function') {
+            const tplBlob = await window.vfsReadBlob(activeTemplate);
             if (tplBlob) templateEntries = await window.readZip(tplBlob); // Expected format: [{ path, data: Uint8Array }]
         }
 
@@ -1722,7 +1737,7 @@ function registerDocxDocumentAction() {
         icon: 'download',
         title: 'Export Markdown as Word document (.docx)',
         appliesTo: docxActionApplies,
-        onClick: (ctx) => { exportMarkdownToDocx(ctx.filepath); }
+        onClick: (ctx) => { exportMarkdownToDocx(ctx.filepath, ctx.template || ctx.templateFilepath); }
     });
     docActionRegistered = true;
     return true;
