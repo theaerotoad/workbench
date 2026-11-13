@@ -43,6 +43,7 @@ const IMG_RASTER_SCALE = 2;                       // supersample SVG -> PNG for 
 const MARK = '\uE000';
 const RE_MARK = new RegExp(MARK, 'g');
 const RE_CODE_PH = new RegExp('^c(\\d+)' + MARK);
+const RE_MATH_PH = new RegExp('^m(\\d+)' + MARK);
 
 const RE_FENCE_OPEN = /^(\s*)(`{3,}|~{3,})[ \t]*([^\s`~]*)/;
 const RE_FENCE_CLOSE = /^\s*(`{3,}|~{3,})[ \t]*$/;
@@ -164,14 +165,23 @@ function makePackageContext(tplCtx) {
 // handles images, links, autolinks, escapes and emphasis.
 function tokenizeInline(input) {
     const codes = [];
+    const maths = [];
     const text = String(input == null ? '' : input)
         .replace(RE_MARK, '')
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m, body) => {
+            maths.push({ text: body, block: true });
+            return MARK + 'm' + (maths.length - 1) + MARK;
+        })
+        .replace(/\$([^\s$][^$\n]*?[^\s$]|[^\s$])\$/g, (m, body) => {
+            maths.push({ text: body, block: false });
+            return MARK + 'm' + (maths.length - 1) + MARK;
+        })
         .replace(RE_CODE_SPAN, (m, ticks, body) => {
             codes.push(body.replace(/^ ([\s\S]*) $/, '$1'));
             return MARK + 'c' + (codes.length - 1) + MARK;
         });
     const runs = [];
-    scanInline(text, { bold: false, italic: false, strike: false, link: null }, runs, codes);
+    scanInline(text, { bold: false, italic: false, strike: false, link: null }, runs, codes, maths);
     return runs;
 }
 
@@ -187,14 +197,14 @@ function pushRun(runs, text, fmt) {
     });
 }
 
-function scanInline(str, fmt, runs, codes) {
+function scanInline(str, fmt, runs, codes, maths) {
     let buf = '', i = 0;
     const flush = () => { if (buf) { pushRun(runs, buf, fmt); buf = ''; } };
 
     while (i < str.length) {
         const ch = str[i];
 
-        // Placeholder for a previously extracted code span.
+        // Placeholder for a previously extracted code span or math span.
         if (ch === MARK) {
             const ph = RE_CODE_PH.exec(str.slice(i + 1));
             if (ph) {
@@ -205,6 +215,19 @@ function scanInline(str, fmt, runs, codes) {
                     code: true, link: fmt.link || null
                 });
                 i += 1 + ph[0].length;
+                continue;
+            }
+            const mh = RE_MATH_PH.exec(str.slice(i + 1));
+            if (mh) {
+                flush();
+                runs.push({
+                    math: true,
+                    text: maths[+mh[1]].text,
+                    block: maths[+mh[1]].block,
+                    bold: !!fmt.bold, italic: !!fmt.italic, strike: !!fmt.strike,
+                    link: fmt.link || null
+                });
+                i += 1 + mh[0].length;
                 continue;
             }
         }
@@ -230,7 +253,7 @@ function scanInline(str, fmt, runs, codes) {
             if (m) {
                 flush();
                 const href = decodeSrc(m.groups.href);
-                scanInline(m.groups.label || '', { bold: fmt.bold, italic: fmt.italic, strike: fmt.strike, link: href }, runs, codes);
+                scanInline(m.groups.label || '', { bold: fmt.bold, italic: fmt.italic, strike: fmt.strike, link: href }, runs, codes, maths);
                 i += m[0].length; continue;
             }
         }
@@ -256,7 +279,7 @@ function scanInline(str, fmt, runs, codes) {
             const close = findCloser(str, '~~', i + 2);
             if (close !== -1) {
                 flush();
-                scanInline(str.slice(i + 2, close), { bold: fmt.bold, italic: fmt.italic, strike: true, link: fmt.link }, runs, codes);
+                scanInline(str.slice(i + 2, close), { bold: fmt.bold, italic: fmt.italic, strike: true, link: fmt.link }, runs, codes, maths);
                 i = close + 2; continue;
             }
         }
@@ -271,7 +294,7 @@ function scanInline(str, fmt, runs, codes) {
                     italic: !!fmt.italic || em.italic,
                     strike: !!fmt.strike,
                     link: fmt.link
-                }, runs, codes);
+                }, runs, codes, maths);
                 i = em.end; continue;
             }
         }
@@ -1259,6 +1282,121 @@ async function convertDiagramBlocks(blocks) {
     }
 }
 
+// --- math_pass.js ---
+let cachedKatexCss = null;
+async function getKaTeXInlineStyle() {
+    if (cachedKatexCss) return cachedKatexCss;
+    try {
+        const link = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).find(l => l.href.includes('katex'));
+        if (!link) return '';
+        const cssText = await (await fetch(link.href)).text();
+        const baseUrl = link.href.split('/').slice(0, -1).join('/');
+
+        const urlRegex = /url\(([^)]+\.woff2[^)]*)\)/g;
+        let inlinedCss = cssText;
+        const matches = [...cssText.matchAll(urlRegex)];
+        const uniqueUrls = [...new Set(matches.map(m => m[1].replace(/['"]/g, '')))];
+
+        for (const relUrl of uniqueUrls) {
+            const fullUrl = relUrl.startsWith('data:') ? relUrl : (relUrl.startsWith('http') ? relUrl : baseUrl + '/' + relUrl);
+            if (fullUrl.startsWith('data:')) continue;
+            try {
+                const res = await fetch(fullUrl);
+                const blob = await res.blob();
+                const base64 = await new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.readAsDataURL(blob);
+                });
+                inlinedCss = inlinedCss.split(relUrl).join(base64);
+            } catch (e) {
+                console.warn('docx export: failed to inline katex font', fullUrl);
+            }
+        }
+        cachedKatexCss = inlinedCss;
+        return inlinedCss;
+    } catch (e) {
+        console.warn('docx export: failed to generate inline KaTeX CSS', e);
+        return '';
+    }
+}
+
+async function rasterizeMath(latex, isBlock, css) {
+    let html;
+    try {
+        html = window.katex.renderToString(latex, { displayMode: isBlock, throwOnError: false });
+    } catch (e) { return null; }
+
+    const div = document.createElement('div');
+    div.style.position = 'absolute';
+    div.style.visibility = 'hidden';
+    div.style.top = '-9999px';
+    div.style.display = 'inline-block';
+    div.innerHTML = html;
+    document.body.appendChild(div);
+    const rect = div.getBoundingClientRect();
+    document.body.removeChild(div);
+
+    const w = Math.max(1, Math.ceil(rect.width) + 4);
+    const h = Math.max(1, Math.ceil(rect.height) + 4);
+
+    const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
+        <foreignObject width="100%" height="100%">
+            <div xmlns="http://www.w3.org/1999/xhtml" style="display:inline-block; margin:0; padding:2px; font-size:16px;">
+                <style>${css}</style>
+                ${html}
+            </div>
+        </foreignObject>
+    </svg>`;
+
+    const maxPx = Math.floor(MAX_IMG_W_EMU / EMU_PER_PX);
+    let lw = w, lh = h;
+    if (lw > maxPx) { const f = maxPx / lw; lw = Math.round(lw * f); lh = Math.round(lh * f); }
+
+    const img = await loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(lw * IMG_RASTER_SCALE));
+    canvas.height = Math.max(1, Math.round(lh * IMG_RASTER_SCALE));
+    const c = canvas.getContext('2d');
+    c.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return { data: await canvasToPng(canvas), ext: 'png', width: lw, height: lh };
+}
+
+async function convertMathRuns(blocks) {
+    if (!window.katex) return;
+    let hasMath = false;
+    eachRunsBlock(blocks, runs => {
+        if (runs.some(r => r.math)) hasMath = true;
+    });
+    if (!hasMath) return;
+
+    const css = await getKaTeXInlineStyle();
+    let mathSeq = 0;
+
+    const promises = [];
+    eachRunsBlock(blocks, runs => {
+        for (let i = 0; i < runs.length; i++) {
+            const r = runs[i];
+            if (r.math) {
+                promises.push((async () => {
+                    try {
+                        const img = await rasterizeMath(r.text, r.block, css);
+                        if (img) {
+                            img.key = 'math-' + (mathSeq++);
+                            runs[i] = { image: true, alt: 'equation', src: '#' + img.key, resolved: img };
+                        } else {
+                            runs[i] = { text: (r.block ? '$$' : '$') + r.text + (r.block ? '$$' : '$'), bold: r.bold };
+                        }
+                    } catch (e) {
+                        runs[i] = { text: (r.block ? '$$' : '$') + r.text + (r.block ? '$$' : '$'), bold: r.bold };
+                    }
+                })());
+            }
+        }
+    });
+    await Promise.all(promises);
+}
+
 // --- media_pass.js ---
 function eachRunsBlock(blocks, fn) {
     blocks.forEach(b => {
@@ -1316,6 +1454,7 @@ async function buildDocxBlob(markdownText, opts) {
     const tplCtx = parseTemplateContext(tplEntries);
     const blocks = parseMarkdown(markdownText);
     await convertDiagramBlocks(blocks);
+    await convertMathRuns(blocks);
     const mediaStats = await resolveImages(blocks, baseFile);
 
     const ctx = makePackageContext(tplCtx);
