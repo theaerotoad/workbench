@@ -1384,7 +1384,7 @@ async function rasterizeMath(latex, isBlock, css) {
     wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     wrapper.style.display = 'inline-block';
     wrapper.style.margin = '0';
-    wrapper.style.padding = '12px'; // Extra uniform padding for font ink overflow
+    wrapper.style.padding = '0'; // Start with 0 padding to measure tight bounding box
     wrapper.style.lineHeight = 'normal';
     wrapper.style.fontSize = '18px'; // Establish a safe baseline for em/rem math scaling
     wrapper.style.whiteSpace = 'nowrap';
@@ -1414,18 +1414,17 @@ async function rasterizeMath(latex, isBlock, css) {
     const overflowLeft = Math.max(0, rect.left - minX);
     const overflowRight = Math.max(0, maxX - rect.right);
 
-    if (overflowTop > 0 || overflowBottom > 0 || overflowLeft > 0 || overflowRight > 0) {
-        wrapper.style.paddingTop = (12 + overflowTop) + 'px';
-        wrapper.style.paddingBottom = (12 + overflowBottom) + 'px';
-        wrapper.style.paddingLeft = (12 + overflowLeft) + 'px';
-        wrapper.style.paddingRight = (12 + overflowRight) + 'px';
-        rect = wrapper.getBoundingClientRect();
-    }
+    // Add a minimal 2px safety buffer to the exact measured overflow to trim excess whitespace
+    wrapper.style.paddingTop = Math.ceil(overflowTop + 2) + 'px';
+    wrapper.style.paddingBottom = Math.ceil(overflowBottom + 2) + 'px';
+    wrapper.style.paddingLeft = Math.ceil(overflowLeft + 2) + 'px';
+    wrapper.style.paddingRight = Math.ceil(overflowRight + 2) + 'px';
+    rect = wrapper.getBoundingClientRect();
 
     document.body.removeChild(div);
 
-    const w = Math.max(1, Math.ceil(rect.width) + 2);
-    const h = Math.max(1, Math.ceil(rect.height) + 2);
+    const w = Math.max(1, Math.ceil(rect.width));
+    const h = Math.max(1, Math.ceil(rect.height));
 
     // Serializing to XML guarantees standard HTML tags (like <br>) become valid <br/> closures
     // We MUST replace HTML-only entities like   or the strict SVG XML parser will fatally crash
