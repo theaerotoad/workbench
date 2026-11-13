@@ -41,6 +41,8 @@ const IMG_RASTER_SCALE = 2;                       // supersample SVG -> PNG for 
 
 // Private-use marker for placeholder tokens (code spans pulled out before emphasis scanning).
 const MARK = '\uE000';
+const RE_MARK = new RegExp(MARK, 'g');
+const RE_CODE_PH = new RegExp('^c(\\d+)' + MARK);
 
 const RE_FENCE_OPEN = /^(\s*)(`{3,}|~{3,})[ \t]*([^\s`~]*)/;
 const RE_FENCE_CLOSE = /^\s*(`{3,}|~{3,})[ \t]*$/;
@@ -133,10 +135,12 @@ function makePackageContext() {
 // handles images, links, autolinks, escapes and emphasis.
 function tokenizeInline(input) {
     const codes = [];
-    const text = String(input == null ? '' : input).replace(RE_CODE_SPAN, (m, ticks, body) => {
-        codes.push(body.replace(/^ ([\s\S]*) $/, '$1'));
-        return MARK + 'c' + (codes.length - 1) + MARK;
-    });
+    const text = String(input == null ? '' : input)
+        .replace(RE_MARK, '')
+        .replace(RE_CODE_SPAN, (m, ticks, body) => {
+            codes.push(body.replace(/^ ([\s\S]*) $/, '$1'));
+            return MARK + 'c' + (codes.length - 1) + MARK;
+        });
     const runs = [];
     scanInline(text, { bold: false, italic: false, strike: false, link: null }, runs, codes);
     return runs;
@@ -163,7 +167,7 @@ function scanInline(str, fmt, runs, codes) {
 
         // Placeholder for a previously extracted code span.
         if (ch === MARK) {
-            const ph = /^c(\d+)/.exec(str.slice(i + 1));
+            const ph = RE_CODE_PH.exec(str.slice(i + 1));
             if (ph) {
                 flush();
                 runs.push({
