@@ -22,7 +22,7 @@ const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
 const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
-const PIC_NS = 'http://schemas.openxmlformats.org/picture/2006/main';
+const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
 const PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const PKG_CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types';
 
