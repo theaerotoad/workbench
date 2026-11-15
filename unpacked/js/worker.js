@@ -92,6 +92,9 @@ async function runTool(runId, toolMeta, args) {
         callModel: (id, opts) => callApi(runId, 'callModel', [String(id || ''), opts || {}])
     };
     try {
+        console.log("--- DEBUG: TOOL CODE ABOUT TO COMPILE ---");
+        console.log(toolMeta.code);
+        console.log("-----------------------------------------");
         const factory = new Function('args', 'api',
             toolMeta.code + '\\nreturn (typeof handler === "function") ? handler(args, api) : (() => { throw new Error("Tool file does not define an async function handler(args, api)."); })();'
         );
