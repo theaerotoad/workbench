@@ -1,7 +1,8 @@
 // speech_to_text - tool definition for OpenAI-compatible Whisper endpoints (/v1/audio/transcriptions).
+// MOCK VERSION for diagnosing SyntaxErrors.
 const TOOL_META = {
     "name": "speech_to_text",
-    "description": "Transcribes an audio file to text using an OpenAI-compatible Whisper endpoint (/v1/audio/transcriptions). Supports common audio formats (mp3, wav, flac, m4a, ogg).",
+    "description": "Transcribes an audio file to text using an OpenAI-compatible Whisper endpoint. Supports common audio formats (mp3, wav, flac, m4a, ogg).",
     "parameters": {
         "type": "object",
         "properties": {
@@ -27,7 +28,7 @@ const TOOL_META = {
             },
             "model": {
                 "type": "string",
-                "description": "Optional model ID/alias (e.g., 'whisper-1', 'whisper-large-v3'). Overrides the configured setting."
+                "description": "Optional model ID/alias (e.g., 'whisper-1'). Overrides the configured setting."
             }
         },
         "required": [
@@ -89,7 +90,7 @@ function errorHtml(fp, msg) {
                     ${badge('Transcription Failed', 'var(--red)')}
                 </div>
             </div>
-            <div class="tool-ui-error-msg">
+            <div class="tool-ui-error-msg" style="font-family:var(--font-mono); white-space:pre-wrap;">
                 <span class="icon" style="font-size:12px;">error</span>
                 <span>${esc(msg)}</span>
             </div>
@@ -119,8 +120,7 @@ function renderWaitingCard({ fp, model, elapsedSec }) {
 
 function renderFinalCard({ fp, transcript, elapsedSec, model }) {
     const timeBadge = elapsedSec ? `${elapsedSec.toFixed(1)}s` : '';
-    // Display up to 500 chars in the UI to prevent massive cards for long podcasts
-    const truncated = transcript.length > 500 ? transcript.slice(0, 500) + '...' : transcript;
+    const truncated = transcript.length > 800 ? transcript.slice(0, 800) + '... (truncated for UI)' : transcript;
 
     return `
         <div class="tool-ui-wrap">
@@ -147,49 +147,6 @@ async function fail(api, fp, msg) {
     return { output: `ERROR: ${clean}` };
 }
 
-/**
- * Builds a valid multipart/form-data payload as a Uint8Array suitable for binary transmission.
- */
-function buildMultipartBody(fields, fileBytes, filename, mimeType) {
-    const boundary = '----IonFormBoundary' + Date.now().toString(16) + Math.random().toString(16).slice(2);
-    const encoder = new TextEncoder();
-    const chunks = [];
-
-    for (const [k, v] of Object.entries(fields)) {
-        if (v !== undefined && v !== null && v !== '') {
-            chunks.push(encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${String(v)}\r\n`));
-        }
-    }
-
-    chunks.push(encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`));
-    chunks.push(fileBytes);
-    chunks.push(encoder.encode(`\r\n--${boundary}--\r\n`));
-
-    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-    const body = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const c of chunks) {
-        body.set(c, offset);
-        offset += c.length;
-    }
-
-    return { body, boundary };
-}
-
-function inferMimeType(fp) {
-    const ext = String(fp).split('.').pop().toLowerCase();
-    const mimes = {
-        'mp3': 'audio/mpeg',
-        'wav': 'audio/wav',
-        'flac': 'audio/flac',
-        'm4a': 'audio/mp4',
-        'ogg': 'audio/ogg',
-        'webm': 'audio/webm',
-        'mp4': 'video/mp4'
-    };
-    return mimes[ext] || 'application/octet-stream';
-}
-
 // --- Handler -----------------------------------------------------------------
 
 async function handler(args, api) {
@@ -204,7 +161,12 @@ async function handler(args, api) {
         }
     };
 
-    // 1. Resolve Settings & Model
+    // 1. Diagnostics wrapper initialization
+    let diagnostics = [];
+    const logDiag = (msg) => diagnostics.push(`[${new Date().toISOString()}] ${msg}`);
+    logDiag(`Started speech_to_text for ${fp}`);
+
+    // 2. Resolve Settings & Model
     const getSetting = async (k, d) => {
         if (typeof api?.getSetting !== 'function') return d;
         const v = await api.getSetting(k);
@@ -215,176 +177,75 @@ async function handler(args, api) {
     if (!modelId) {
         return fail(api, fp, "No Audio Model selected. Pick your model in Settings > Tools > speech_to_text > Audio Model.");
     }
-    if (typeof api?.callModel !== 'function') {
-        return fail(api, fp, "This version of Ion does not support api.callModel. Update Ion.");
-    }
 
     let modelName = String(args.model || '').trim();
-    let matchedModel = null;
-    if (typeof api?.listModels === 'function') {
-        try {
-            const models = await api.listModels();
-            if (Array.isArray(models)) {
-                matchedModel = models.find(m =>
-                    (m.uuid && m.uuid.toLowerCase() === modelId.toLowerCase()) ||
-                    (m.id && String(m.id).toLowerCase() === modelId.toLowerCase()) ||
-                    (m.name && m.name.toLowerCase() === modelId.toLowerCase()) ||
-                    (m.providerName && `${m.providerName}::${m.name}`.toLowerCase() === modelId.toLowerCase())
-                ) || null;
-                if (!modelName && matchedModel && matchedModel.name) {
-                    modelName = matchedModel.name;
-                }
-            }
-        } catch (_) {}
-    }
-    if (!modelName) {
-        if (modelId.includes('::')) {
-            modelName = modelId.split('::').pop().trim();
-        } else if (!/^[0-9a-f-]{36}$/i.test(modelId)) {
-            modelName = modelId;
-        } else {
-            modelName = 'whisper-1';
-        }
-    }
+    logDiag(`Resolved model ID: ${modelId}, Name: ${modelName || 'default'}`);
 
-    const timeoutSetting = Number(await getSetting('timeoutMs', 300000));
-    const TIMEOUT_MS = Number.isFinite(timeoutSetting) && timeoutSetting > 0 ? timeoutSetting : 300000;
-
-    // 2. Read Audio Bytes
+    // 3. Read Audio Bytes
     await updateStatus(`Reading audio file: ${fp}...`);
+    logDiag(`Attempting to read file bytes...`);
     const audioBytes = await api.readFileBytes(fp);
+    
     if (typeof audioBytes === 'string') {
-        // String return implies an error (e.g., "ERROR: File not found")
+        logDiag(`Failed to read file. Return value was a string: ${audioBytes}`);
         return fail(api, fp, audioBytes);
     }
     if (!audioBytes || audioBytes.length === 0) {
+        logDiag(`Read empty byte array for file.`);
         return fail(api, fp, "The audio file is empty or could not be read.");
     }
+    logDiag(`Successfully read ${audioBytes.length} bytes.`);
 
-    // 3. Build multipart/form-data payload
-    const mimeType = inferMimeType(fp);
+    // 4. MOCK API CALL
     const filename = fp.split('/').pop() || 'audio.mp3';
+    logDiag(`ENTERING MOCK MODE. Bypassing multipart construction and network request.`);
 
-    const fields = {
-        model: modelName,
-        language: args.language,
-        prompt: args.prompt,
-        response_format: args.response_format || 'json',
-        temperature: typeof args.temperature === 'number' ? args.temperature : undefined
-    };
-
-    const { body, boundary } = buildMultipartBody(fields, audioBytes, filename, mimeType);
-
-    // Show initial live card
+    // Show initial live UI card
     if (typeof api?.showUI === 'function') {
         try {
             await api.showUI(renderWaitingCard({ fp, model: modelName, elapsedSec: 0 }), { live: true });
         } catch (_) {}
     }
 
-    await updateStatus(`Transcribing with ${modelName || 'selected model'}...`);
+    await updateStatus(`[MOCK] Transcribing with ${modelName || 'selected model'}...`);
 
     const startTime = Date.now();
-    let isFinished = false;
-
-    // Live timer
-    const progressTimer = setInterval(() => {
-        if (isFinished) return;
-        const elapsed = Math.round((Date.now() - startTime) / 1000);
-        updateStatus(`Transcribing ${filename} (${elapsed}s)...`);
+    
+    // Simulate a 3-second delay
+    for (let i = 1; i <= 3; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        logDiag(`Mock progress: ${i}s elapsed`);
         if (typeof api?.showUI === 'function') {
             try {
-                api.showUI(renderWaitingCard({ fp, model: modelName, elapsedSec: elapsed }), { live: true });
+                await api.showUI(renderWaitingCard({ fp, model: modelName, elapsedSec: i }), { live: true });
             } catch (_) {}
         }
-    }, 1000);
-
-    // 4. Call model via API gateway
-    const baseUrl = matchedModel?.url ? String(matchedModel.url).trim().replace(/\/+$/, '') : '';
-    const hasV1InBase = baseUrl.endsWith('/v1');
-    const primaryPath = hasV1InBase ? '/audio/transcriptions' : '/v1/audio/transcriptions';
-    const fallbackPath = hasV1InBase ? '/v1/audio/transcriptions' : '/audio/transcriptions';
-
-    let res;
-    try {
-        const fetchOpts = {
-            path: primaryPath,
-            body: body,
-            headers: {
-                'Content-Type': `multipart/form-data; boundary=${boundary}`
-            },
-            timeoutMs: TIMEOUT_MS
-        };
-
-        res = await api.callModel(modelId, fetchOpts);
-
-        // Fallback for 404
-        if (res && res.status === 404) {
-            fetchOpts.path = fallbackPath;
-            const retryRes = await api.callModel(modelId, fetchOpts);
-            if (retryRes && (retryRes.ok || retryRes.status !== 404)) {
-                res = retryRes;
-            }
-        }
-    } catch (e) {
-        isFinished = true;
-        clearInterval(progressTimer);
-        return fail(api, fp, `Model call threw exception: ${e.message}`);
-    } finally {
-        isFinished = true;
-        clearInterval(progressTimer);
     }
 
     const elapsedSec = (Date.now() - startTime) / 1000;
+    logDiag(`Mock processing completed in ${elapsedSec}s.`);
 
-    // 5. Validate and Parse Response
-    if (!res || res.error) {
-        const err = res && res.error;
-        if (err === 'timeout') return fail(api, fp, `Transcription timed out after ${TIMEOUT_MS / 1000}s.`);
-        if (err === 'unreachable') return fail(api, fp, "Could not reach the server. Ensure the transcription service is running.");
-        return fail(api, fp, `Transcription failed: ${err || 'unknown error'}`);
-    }
-
-    if (!res.ok) {
-        let detail = res.text || '';
-        try {
-            const errObj = JSON.parse(res.text);
-            detail = errObj.error?.message || errObj.detail || errObj.error || res.text;
-        } catch (_) {}
-        return fail(api, fp, `Server returned HTTP ${res.status}: ${detail}`);
-    }
-
-    let transcript = '';
-    try {
-        // Attempt to parse JSON (Standard OpenAI format)
-        const parsed = JSON.parse(res.text);
-        transcript = parsed.text || parsed.task || JSON.stringify(parsed);
-    } catch (e) {
-        // If it's not JSON, it might be raw text, srt, or vtt requested by the user
-        transcript = res.text;
-    }
-
-    if (!transcript || !String(transcript).trim()) {
-        return fail(api, fp, "The server returned an empty transcription.");
-    }
-
+    // 5. Mock Validate Response
+    const mockTranscript = "This is a mocked transcription. If you see this, the file parsed and executed successfully without hitting a SyntaxError during initialization. The issue likely resides in how the host handles string evaluation for network logic or multipart construction.";
+    
+    logDiag(`Mock transcript generated successfully.`);
     await updateStatus(`Transcribed ${filename} (${elapsedSec.toFixed(1)}s)`);
 
-    // 6. Render final card UI
+    // 6. Render Final UI
     if (typeof api?.showUI === 'function') {
         try {
             await api.showUI(renderFinalCard({
                 fp,
-                transcript,
+                transcript: mockTranscript,
                 elapsedSec,
                 model: modelName
             }));
         } catch (_) {}
     }
 
-    // 7. Return payload to the language model
+    // 7. Return to LLM Context
     return {
-        output: `Transcription of ${fp} (${modelName}):\n\n${transcript}`,
-        summary: `Transcribed ${fp} (${elapsedSec.toFixed(1)}s)`
+        output: `Transcription of ${fp} (${modelName}):\n\n${mockTranscript}\n\nDiagnostics:\n${diagnostics.join('\n')}`,
+        summary: `Transcribed ${fp} (MOCKED)`
     };
 }
