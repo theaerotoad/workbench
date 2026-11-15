@@ -137,7 +137,7 @@ const BINARY_MAGIC = [
     [0x66, 0x4C, 0x61, 0x43],                        // fLaC
     [0x52, 0x49, 0x46, 0x46]                         // RIFF (wav, avi, webp)
 ];
-const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill'];
+const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill', 'map'];
 const CLEARDATA_LS_KEYS = {
     models: ['models_json', 'selected_model'],
     customTools: ['tool_files_json', 'tool_lock_state', 'tool_deleted_names', 'tool_perm_state', 'tool_settings_state'],
