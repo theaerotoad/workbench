@@ -35,8 +35,17 @@ const TOOL_META = {
 };
 
 // --- UI helpers -------------------------------------------------------------
+// We construct the escaped entities using concatenation to prevent aggressive
+// HTML entity decoding by build tools or browsers when embedded in templates,
+// which causes syntax errors like "string literal contains an unescaped line break".
 function esc(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c]));
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&' + 'amp;',
+        '<': '&' + 'lt;',
+        '>': '&' + 'gt;',
+        '"': '&' + 'quot;',
+        "'": '&' + '#39;'
+    }[c]));
 }
 
 function pathHtml(fp) {
@@ -113,14 +122,14 @@ async function handler(args, api) {
         `, { live: true });
 
         try {
-            // Depending on the sandbox environment, importScripts may be available. 
-            // If not, we fallback to fetch + eval.
+            // Depending on the sandbox environment, importScripts is available in Web Workers.
             if (typeof importScripts === 'function') {
                 importScripts('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
             } else {
                 const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
                 const scriptText = await scriptRes.text();
-                eval(scriptText);
+                // Ensure it gets injected into the global scope
+                (new Function(scriptText))();
             }
 
             await globalThis.TreeSitter.init({
@@ -185,17 +194,17 @@ async function handler(args, api) {
         // Generalized AST Walker
         function walk(node, indent) {
             const type = node.type;
-            const isInteresting = /class|function|method|struct|interface|impl/i.test(type) && !/call|invocation/i.test(type);
+            const isInteresting = /class|function|method|struct|interface|impl|trait/i.test(type) && !/call|invocation|argument|parameter|comment|string/i.test(type);
             
             let nextIndent = indent;
             
             if (isInteresting) {
                 // Heuristic: Try to find a named field, or default to the first identifier
-                let nameNode = node.childForFieldName('name');
+                let nameNode = node.childForFieldName('name') || node.childForFieldName('identifier');
                 if (!nameNode) {
                     for (let i = 0; i < node.childCount; i++) {
                         const child = node.child(i);
-                        if (child.type.includes('identifier')) {
+                        if (child.type.includes('identifier') || child.type === 'name') {
                             nameNode = child;
                             break;
                         }
@@ -203,7 +212,7 @@ async function handler(args, api) {
                 }
 
                 if (nameNode) {
-                    const cleanType = type.replace(/_definition|_declaration|_item|_specifier/g, '');
+                    const cleanType = type.replace(/_definition|_declaration|_item|_specifier|_statement/g, '');
                     outlines.push(`${indent}- [${cleanType}] ${nameNode.text}`);
                     nextIndent += '  ';
                 }
