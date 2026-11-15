@@ -10,9 +10,19 @@ const CRLF = String.fromCharCode(13, 10);
 const LF = String.fromCharCode(10);
 
 function esc(s) {
-    return String(s || '').replace(/[&<>"']/g, function(c) {
-        return { '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c];
-    });
+    if (!s) return "";
+    let res = "";
+    const str = String(s);
+    for (let i = 0; i < str.length; i++) {
+        const c = str[i];
+        if (c === "&") res += "&";
+        else if (c === "<") res += "<";
+        else if (c === ">") res += ">";
+        else if (c === '"') res += """;
+        else if (c === "'") res += "'";
+        else res += c;
+    }
+    return res;
 }
 
 function pathHtml(fp) {
