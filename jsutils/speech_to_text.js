@@ -1,78 +1,18 @@
 // speech_to_text - tool definition for OpenAI-compatible Whisper endpoints.
-const TOOL_META = {
-    "name": "speech_to_text",
-    "description": "Transcribes an audio file to text using an OpenAI-compatible Whisper endpoint. Supports common audio formats (mp3, wav, flac, m4a, ogg).",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "filepath": {
-                "type": "string",
-                "description": "Workspace-relative path to the audio file (e.g. 'public/audio/sample.mp3')."
-            },
-            "language": {
-                "type": "string",
-                "description": "Optional ISO-639-1 language code (e.g., 'en', 'fr', 'es') to improve accuracy."
-            },
-            "prompt": {
-                "type": "string",
-                "description": "Optional context or previous words to guide the transcription style or spelling."
-            },
-            "response_format": {
-                "type": "string",
-                "description": "Output format: 'json', 'text', 'srt', 'verbose_json', or 'vtt'. Defaults to 'json'."
-            },
-            "temperature": {
-                "type": "number",
-                "description": "Sampling temperature between 0 and 1. Defaults to 0."
-            },
-            "model": {
-                "type": "string",
-                "description": "Optional model ID/alias (e.g., 'whisper-1'). Overrides the configured setting."
-            }
-        },
-        "required": [
-            "filepath"
-        ]
-    },
-    "modes": [
-        "plan",
-        "ask",
-        "code"
-    ],
-    "permission": "ask",
-    "toolBox": 1,
-    "expanded": true,
-    "settings": [
-        {
-            "key": "audioModel",
-            "label": "Audio Model",
-            "type": "model",
-            "default": "",
-            "description": "Pick the transcription model from your models.json (Ion resolves the server URL, model name, and key automatically)."
-        },
-        {
-            "key": "timeoutMs",
-            "label": "Request Timeout (ms)",
-            "type": "number",
-            "default": 300000,
-            "min": 10000,
-            "max": 900000,
-            "description": "Timeout in milliseconds for transcription (default: 300s / 5min)."
-        }
-    ]
-};
 
-// --- Bulletproof String Constants ---
-// We use char codes to strictly avoid \ n or \ r escape sequences inside string literals,
-// which prevents any build tool, transpiler, or minifier from accidentally converting 
-// them into unescaped physical line breaks inside single quotes (the source of the SyntaxError).
-const LF = String.fromCharCode(10);
+// We place TOOL_META at the absolute bottom of the file to bypass a known bug
+// in the host's `extractHandlerBody` parser. By placing it at the end, the parser
+// safely includes the entire handler body before it terminates. We also remove ALL 
+// template literals (backticks) and physical line breaks from string literals to 
+// guarantee it never triggers a browser SyntaxError during `new Function` eval.
+
 const CRLF = String.fromCharCode(13, 10);
-
-// --- Helpers & Utilities -----------------------------------------------------
+const LF = String.fromCharCode(10);
 
 function esc(s) {
-    return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c]));
+    return String(s || '').replace(/[&<>"']/g, function(c) {
+        return { '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c];
+    });
 }
 
 function pathHtml(fp) {
@@ -156,8 +96,11 @@ function renderFinalCard(opts) {
 }
 
 async function fail(api, fp, msg, diagnostics) {
-    const clean = String(msg).replace(/^ERROR:\s*/, '');
-    if (typeof api?.showUI === 'function') {
+    let clean = String(msg);
+    if (clean.indexOf('ERROR: ') === 0) {
+        clean = clean.slice(7);
+    }
+    if (typeof api !== 'undefined' && api && typeof api.showUI === 'function') {
         try { await api.showUI(errorHtml(fp, clean)); } catch (_) {}
     }
     const diagStr = diagnostics && diagnostics.length ? (LF + LF + 'Diagnostics:' + LF + diagnostics.join(LF)) : '';
@@ -170,7 +113,9 @@ function buildSafeMultipartBody(fields, fileBytes, filename, mimeType) {
         const encoder = new TextEncoder();
         const chunks = [];
 
-        for (const [k, v] of Object.entries(fields)) {
+        for (const k in fields) {
+            if (!Object.prototype.hasOwnProperty.call(fields, k)) continue;
+            const v = fields[k];
             if (v !== undefined && v !== null && v !== '') {
                 const fieldData = '--' + boundary + CRLF + 
                                   'Content-Disposition: form-data; name="' + k + '"' + CRLF + CRLF + 
@@ -184,18 +129,21 @@ function buildSafeMultipartBody(fields, fileBytes, filename, mimeType) {
                            'Content-Type: ' + mimeType + CRLF + CRLF;
         
         chunks.push(encoder.encode(fileHeader));
-        chunks.push(fileBytes); // Pure binary array
+        chunks.push(fileBytes);
         chunks.push(encoder.encode(CRLF + '--' + boundary + '--' + CRLF));
 
-        const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+        let totalLength = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            totalLength += chunks[i].length;
+        }
         const body = new Uint8Array(totalLength);
         let offset = 0;
-        for (const c of chunks) {
-            body.set(c, offset);
-            offset += c.length;
+        for (let i = 0; i < chunks.length; i++) {
+            body.set(chunks[i], offset);
+            offset += chunks[i].length;
         }
 
-        return { body, boundary, error: null };
+        return { body: body, boundary: boundary, error: null };
     } catch (e) {
         return { body: null, boundary: null, error: e.message };
     }
@@ -215,8 +163,6 @@ function inferMimeType(fp) {
     return mimes[ext] || 'application/octet-stream';
 }
 
-// --- Handler -----------------------------------------------------------------
-
 async function handler(args, api) {
     const fp = args.filepath;
     if (!fp || !String(fp).trim()) {
@@ -224,7 +170,7 @@ async function handler(args, api) {
     }
 
     const updateStatus = async (msg) => {
-        if (typeof api?.setHeaderMsg === 'function') {
+        if (typeof api !== 'undefined' && api && typeof api.setHeaderMsg === 'function') {
             await api.setHeaderMsg(msg);
         }
     };
@@ -234,31 +180,37 @@ async function handler(args, api) {
     logDiag('Started speech_to_text for ' + fp);
 
     const getSetting = async (k, d) => {
-        if (typeof api?.getSetting !== 'function') return d;
-        const v = await api.getSetting(k);
-        return (v === undefined || v === null || v === '') ? d : v;
+        if (typeof api !== 'undefined' && api && typeof api.getSetting === 'function') {
+            const v = await api.getSetting(k);
+            return (v === undefined || v === null || v === '') ? d : v;
+        }
+        return d;
     };
 
     const modelId = String(await getSetting('audioModel', '')).trim();
     if (!modelId) {
         return fail(api, fp, 'No Audio Model selected. Pick your model in Settings > Tools > speech_to_text > Audio Model.', diagnostics);
     }
-    if (typeof api?.callModel !== 'function') {
+    if (typeof api === 'undefined' || !api || typeof api.callModel !== 'function') {
         return fail(api, fp, 'This version of Ion does not support api.callModel. Update Ion.', diagnostics);
     }
 
     let modelName = String(args.model || '').trim();
     let matchedModel = null;
-    if (typeof api?.listModels === 'function') {
+    if (typeof api.listModels === 'function') {
         try {
             const models = await api.listModels();
             if (Array.isArray(models)) {
-                matchedModel = models.find(m =>
-                    (m.uuid && m.uuid.toLowerCase() === modelId.toLowerCase()) ||
-                    (m.id && String(m.id).toLowerCase() === modelId.toLowerCase()) ||
-                    (m.name && m.name.toLowerCase() === modelId.toLowerCase()) ||
-                    (m.providerName && (m.providerName + '::' + m.name).toLowerCase() === modelId.toLowerCase())
-                ) || null;
+                for (let i = 0; i < models.length; i++) {
+                    const m = models[i];
+                    if ((m.uuid && m.uuid.toLowerCase() === modelId.toLowerCase()) ||
+                        (m.id && String(m.id).toLowerCase() === modelId.toLowerCase()) ||
+                        (m.name && m.name.toLowerCase() === modelId.toLowerCase()) ||
+                        (m.providerName && (m.providerName + '::' + m.name).toLowerCase() === modelId.toLowerCase())) {
+                        matchedModel = m;
+                        break;
+                    }
+                }
                 if (!modelName && matchedModel && matchedModel.name) {
                     modelName = matchedModel.name;
                 }
@@ -266,12 +218,12 @@ async function handler(args, api) {
         } catch (_) {}
     }
     if (!modelName) {
-        if (modelId.includes('::')) {
+        if (modelId.indexOf('::') !== -1) {
             modelName = modelId.split('::').pop().trim();
         } else if (!/^[0-9a-f-]{36}$/i.test(modelId)) {
             modelName = modelId;
         } else {
-            modelName = 'whisper-1'; // Default fallback
+            modelName = 'whisper-1';
         }
     }
 
@@ -317,7 +269,7 @@ async function handler(args, api) {
     }
     logDiag('Payload constructed successfully. Boundary: ' + boundary + ', Size: ' + body.length + ' bytes.');
 
-    if (typeof api?.showUI === 'function') {
+    if (typeof api.showUI === 'function') {
         try {
             await api.showUI(renderWaitingCard({ fp: fp, model: modelName, elapsedSec: 0 }), { live: true });
         } catch (_) {}
@@ -328,19 +280,19 @@ async function handler(args, api) {
     const startTime = Date.now();
     let isFinished = false;
 
-    const progressTimer = setInterval(() => {
+    const progressTimer = setInterval(function() {
         if (isFinished) return;
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         updateStatus('Transcribing ' + filename + ' (' + elapsed + 's)...');
-        if (typeof api?.showUI === 'function') {
+        if (typeof api.showUI === 'function') {
             try {
                 api.showUI(renderWaitingCard({ fp: fp, model: modelName, elapsedSec: elapsed }), { live: true });
             } catch (_) {}
         }
     }, 1000);
 
-    const baseUrl = matchedModel?.url ? String(matchedModel.url).trim().replace(/\/+$/, '') : '';
-    const hasV1InBase = baseUrl.endsWith('/v1');
+    const baseUrl = matchedModel && matchedModel.url ? String(matchedModel.url).trim().replace(/\/+$/, '') : '';
+    const hasV1InBase = baseUrl.indexOf('/v1') === (baseUrl.length - 3);
     const primaryPath = hasV1InBase ? '/audio/transcriptions' : '/v1/audio/transcriptions';
     const fallbackPath = hasV1InBase ? '/v1/audio/transcriptions' : '/audio/transcriptions';
 
@@ -377,7 +329,7 @@ async function handler(args, api) {
     }
 
     const elapsedSec = (Date.now() - startTime) / 1000;
-    logDiag('API call completed in ' + elapsedSec + 's. Success: ' + res?.ok + ', Status: ' + res?.status);
+    logDiag('API call completed in ' + elapsedSec + 's. Success: ' + (res ? res.ok : false) + ', Status: ' + (res ? res.status : 'none'));
 
     if (!res || res.error) {
         const err = res && res.error;
@@ -390,7 +342,7 @@ async function handler(args, api) {
         let detail = res.text || '';
         try {
             const errObj = JSON.parse(res.text);
-            detail = errObj.error?.message || errObj.detail || errObj.error || res.text;
+            detail = (errObj.error && errObj.error.message) ? errObj.error.message : (errObj.detail || errObj.error || res.text);
         } catch (_) {}
         logDiag('Server returned error response: ' + detail);
         return fail(api, fp, 'Server returned HTTP ' + res.status + ':' + LF + detail, diagnostics);
@@ -413,7 +365,7 @@ async function handler(args, api) {
 
     await updateStatus('Transcribed ' + filename + ' (' + elapsedSec.toFixed(1) + 's)');
 
-    if (typeof api?.showUI === 'function') {
+    if (typeof api.showUI === 'function') {
         try {
             await api.showUI(renderFinalCard({
                 fp: fp,
@@ -429,3 +381,66 @@ async function handler(args, api) {
         summary: 'Transcribed ' + fp + ' (' + elapsedSec.toFixed(1) + 's)'
     };
 }
+
+const TOOL_META = {
+    "name": "speech_to_text",
+    "description": "Transcribes an audio file to text using an OpenAI-compatible Whisper endpoint. Supports common audio formats (mp3, wav, flac, m4a, ogg).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "filepath": {
+                "type": "string",
+                "description": "Workspace-relative path to the audio file (e.g. public/audio/sample.mp3)."
+            },
+            "language": {
+                "type": "string",
+                "description": "Optional ISO-639-1 language code (e.g., en, fr, es) to improve accuracy."
+            },
+            "prompt": {
+                "type": "string",
+                "description": "Optional context or previous words to guide the transcription style or spelling."
+            },
+            "response_format": {
+                "type": "string",
+                "description": "Output format: json, text, srt, verbose_json, or vtt. Defaults to json."
+            },
+            "temperature": {
+                "type": "number",
+                "description": "Sampling temperature between 0 and 1. Defaults to 0."
+            },
+            "model": {
+                "type": "string",
+                "description": "Optional model ID/alias (e.g., whisper-1). Overrides the configured setting."
+            }
+        },
+        "required": [
+            "filepath"
+        ]
+    },
+    "modes": [
+        "plan",
+        "ask",
+        "code"
+    ],
+    "permission": "ask",
+    "toolBox": 1,
+    "expanded": true,
+    "settings": [
+        {
+            "key": "audioModel",
+            "label": "Audio Model",
+            "type": "model",
+            "default": "",
+            "description": "Pick the transcription model from your models.json (Ion resolves the server URL, model name, and key automatically)."
+        },
+        {
+            "key": "timeoutMs",
+            "label": "Request Timeout (ms)",
+            "type": "number",
+            "default": 300000,
+            "min": 10000,
+            "max": 900000,
+            "description": "Timeout in milliseconds for transcription (default: 300s / 5min)."
+        }
+    ]
+};
