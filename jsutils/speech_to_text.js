@@ -1,5 +1,4 @@
-// speech_to_text - tool definition for OpenAI-compatible Whisper endpoints (/v1/audio/transcriptions).
-// MOCK VERSION for diagnosing SyntaxErrors.
+// speech_to_text - tool definition for OpenAI-compatible Whisper endpoints.
 const TOOL_META = {
     "name": "speech_to_text",
     "description": "Transcribes an audio file to text using an OpenAI-compatible Whisper endpoint. Supports common audio formats (mp3, wav, flac, m4a, ogg).",
@@ -63,6 +62,13 @@ const TOOL_META = {
     ]
 };
 
+// --- Bulletproof String Constants ---
+// We use char codes to strictly avoid \ n or \ r escape sequences inside string literals,
+// which prevents any build tool, transpiler, or minifier from accidentally converting 
+// them into unescaped physical line breaks inside single quotes (the source of the SyntaxError).
+const LF = String.fromCharCode(10);
+const CRLF = String.fromCharCode(13, 10);
+
 // --- Helpers & Utilities -----------------------------------------------------
 
 function esc(s) {
@@ -73,78 +79,140 @@ function pathHtml(fp) {
     const parts = String(fp || '').split('/');
     const name = parts.pop() || fp;
     const dir = parts.length ? parts.join('/') + '/' : '';
-    return `<div class="tool-ui-path"><span class="tool-ui-path-dir">${esc(dir)}</span><span class="tool-ui-path-name">${esc(name)}</span></div>`;
+    return '<div class="tool-ui-path"><span class="tool-ui-path-dir">' + esc(dir) + '</span><span class="tool-ui-path-name">' + esc(name) + '</span></div>';
 }
 
 function badge(text, colorVar) {
-    return `<span class="tool-ui-badge" style="color:${colorVar}; background:color-mix(in srgb, ${colorVar} 15%, transparent);">${esc(text)}</span>`;
+    return '<span class="tool-ui-badge" style="color:' + colorVar + '; background:color-mix(in srgb, ' + colorVar + ' 15%, transparent);">' + esc(text) + '</span>';
 }
 
 function errorHtml(fp, msg) {
-    return `
-        <div class="tool-ui-wrap">
-            <div class="tool-ui-error-wrap">
-                <div class="tool-ui-header-info">
-                    <span class="icon" style="font-size:13px; color:var(--red); flex-shrink:0;">warning</span>
-                    ${pathHtml(fp)}
-                    ${badge('Transcription Failed', 'var(--red)')}
-                </div>
-            </div>
-            <div class="tool-ui-error-msg" style="font-family:var(--font-mono); white-space:pre-wrap;">
-                <span class="icon" style="font-size:12px;">error</span>
-                <span>${esc(msg)}</span>
-            </div>
-        </div>`;
+    return [
+        '<div class="tool-ui-wrap">',
+        '    <div class="tool-ui-error-wrap">',
+        '        <div class="tool-ui-header-info">',
+        '            <span class="icon" style="font-size:13px; color:var(--red); flex-shrink:0;">warning</span>',
+        '            ' + pathHtml(fp),
+        '            ' + badge('Transcription Failed', 'var(--red)'),
+        '        </div>',
+        '    </div>',
+        '    <div class="tool-ui-error-msg" style="font-family:var(--font-mono); white-space:pre-wrap;">',
+        '        <span class="icon" style="font-size:12px;">error</span>',
+        '        <span>' + esc(msg) + '</span>',
+        '    </div>',
+        '</div>'
+    ].join('');
 }
 
-function renderWaitingCard({ fp, model, elapsedSec }) {
-    const timeText = elapsedSec ? `${elapsedSec}s` : 'starting...';
-    return `
-        <div class="tool-ui-wrap">
-            <div class="tool-ui-bar">
-                <div class="tool-ui-header-info">
-                    <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">graphic_eq</span>
-                    ${pathHtml(fp)}
-                    ${badge(model || 'transcribing', 'var(--primary)')}
-                </div>
-                <div class="tool-ui-header-stats">
-                    <span style="color:var(--dim); font-size:10px; margin-right:6px;">${timeText}</span>
-                </div>
-            </div>
-            <div style="height:110px; border-radius:6px; border:1px dashed var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin:4px 0; background:var(--bg-input);">
-                <span class="icon" style="font-size:24px; color:var(--primary);">graphic_eq</span>
-                <span style="font-size:11px; color:var(--dim);">Waiting for audio transcription...</span>
-            </div>
-        </div>`;
+function renderWaitingCard(opts) {
+    const fp = opts.fp;
+    const model = opts.model;
+    const elapsedSec = opts.elapsedSec;
+    const timeText = elapsedSec ? elapsedSec + 's' : 'starting...';
+    return [
+        '<div class="tool-ui-wrap">',
+        '    <div class="tool-ui-bar">',
+        '        <div class="tool-ui-header-info">',
+        '            <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">graphic_eq</span>',
+        '            ' + pathHtml(fp),
+        '            ' + badge(model || 'transcribing', 'var(--primary)'),
+        '        </div>',
+        '        <div class="tool-ui-header-stats">',
+        '            <span style="color:var(--dim); font-size:10px; margin-right:6px;">' + timeText + '</span>',
+        '        </div>',
+        '    </div>',
+        '    <div style="height:110px; border-radius:6px; border:1px dashed var(--border); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; margin:4px 0; background:var(--bg-input);">',
+        '        <span class="icon" style="font-size:24px; color:var(--primary);">graphic_eq</span>',
+        '        <span style="font-size:11px; color:var(--dim);">Waiting for audio transcription...</span>',
+        '    </div>',
+        '</div>'
+    ].join('');
 }
 
-function renderFinalCard({ fp, transcript, elapsedSec, model }) {
-    const timeBadge = elapsedSec ? `${elapsedSec.toFixed(1)}s` : '';
+function renderFinalCard(opts) {
+    const fp = opts.fp;
+    const transcript = opts.transcript;
+    const elapsedSec = opts.elapsedSec;
+    const model = opts.model;
+    const timeBadge = elapsedSec ? elapsedSec.toFixed(1) + 's' : '';
     const truncated = transcript.length > 800 ? transcript.slice(0, 800) + '... (truncated for UI)' : transcript;
 
-    return `
-        <div class="tool-ui-wrap">
-            <div class="tool-ui-bar">
-                <div class="tool-ui-header-info">
-                    <span class="icon" style="font-size:13px; color:var(--green); flex-shrink:0;">description</span>
-                    ${pathHtml(fp)}
-                    ${badge('Transcribed', 'var(--green)')}
-                </div>
-                <div class="tool-ui-header-stats">
-                    ${model ? `<span style="color:var(--dim); font-size:10px; margin-right:6px;">${esc(model)}</span>` : ''}
-                    ${timeBadge ? `<span style="color:var(--dim); font-size:10px;">${timeBadge}</span>` : ''}
-                </div>
-            </div>
-            <div style="font-family:var(--font-mono); font-size:11.5px; color:var(--fg); background:var(--bg-input); padding:10px; border-radius:6px; border:1px solid var(--border); margin:4px 0; max-height:220px; overflow-y:auto; white-space:pre-wrap; line-height:1.4;">${esc(truncated)}</div>
-        </div>`;
+    return [
+        '<div class="tool-ui-wrap">',
+        '    <div class="tool-ui-bar">',
+        '        <div class="tool-ui-header-info">',
+        '            <span class="icon" style="font-size:13px; color:var(--green); flex-shrink:0;">description</span>',
+        '            ' + pathHtml(fp),
+        '            ' + badge('Transcribed', 'var(--green)'),
+        '        </div>',
+        '        <div class="tool-ui-header-stats">',
+        '            ' + (model ? '<span style="color:var(--dim); font-size:10px; margin-right:6px;">' + esc(model) + '</span>' : ''),
+        '            ' + (timeBadge ? '<span style="color:var(--dim); font-size:10px;">' + timeBadge + '</span>' : ''),
+        '        </div>',
+        '    </div>',
+        '    <div style="font-family:var(--font-mono); font-size:11.5px; color:var(--fg); background:var(--bg-input); padding:10px; border-radius:6px; border:1px solid var(--border); margin:4px 0; max-height:220px; overflow-y:auto; white-space:pre-wrap; line-height:1.4;">' + esc(truncated) + '</div>',
+        '</div>'
+    ].join('');
 }
 
-async function fail(api, fp, msg) {
+async function fail(api, fp, msg, diagnostics) {
     const clean = String(msg).replace(/^ERROR:\s*/, '');
     if (typeof api?.showUI === 'function') {
         try { await api.showUI(errorHtml(fp, clean)); } catch (_) {}
     }
-    return { output: `ERROR: ${clean}` };
+    const diagStr = diagnostics && diagnostics.length ? (LF + LF + 'Diagnostics:' + LF + diagnostics.join(LF)) : '';
+    return { output: 'ERROR: ' + clean + diagStr };
+}
+
+function buildSafeMultipartBody(fields, fileBytes, filename, mimeType) {
+    try {
+        const boundary = '----IonFormBoundary' + Date.now().toString(16) + Math.random().toString(16).slice(2);
+        const encoder = new TextEncoder();
+        const chunks = [];
+
+        for (const [k, v] of Object.entries(fields)) {
+            if (v !== undefined && v !== null && v !== '') {
+                const fieldData = '--' + boundary + CRLF + 
+                                  'Content-Disposition: form-data; name="' + k + '"' + CRLF + CRLF + 
+                                  String(v) + CRLF;
+                chunks.push(encoder.encode(fieldData));
+            }
+        }
+
+        const fileHeader = '--' + boundary + CRLF + 
+                           'Content-Disposition: form-data; name="file"; filename="' + filename + '"' + CRLF + 
+                           'Content-Type: ' + mimeType + CRLF + CRLF;
+        
+        chunks.push(encoder.encode(fileHeader));
+        chunks.push(fileBytes); // Pure binary array
+        chunks.push(encoder.encode(CRLF + '--' + boundary + '--' + CRLF));
+
+        const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+        const body = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const c of chunks) {
+            body.set(c, offset);
+            offset += c.length;
+        }
+
+        return { body, boundary, error: null };
+    } catch (e) {
+        return { body: null, boundary: null, error: e.message };
+    }
+}
+
+function inferMimeType(fp) {
+    const ext = String(fp).split('.').pop().toLowerCase();
+    const mimes = {
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'flac': 'audio/flac',
+        'm4a': 'audio/mp4',
+        'ogg': 'audio/ogg',
+        'webm': 'audio/webm',
+        'mp4': 'video/mp4'
+    };
+    return mimes[ext] || 'application/octet-stream';
 }
 
 // --- Handler -----------------------------------------------------------------
@@ -161,12 +229,10 @@ async function handler(args, api) {
         }
     };
 
-    // 1. Diagnostics wrapper initialization
     let diagnostics = [];
-    const logDiag = (msg) => diagnostics.push(`[${new Date().toISOString()}] ${msg}`);
-    logDiag(`Started speech_to_text for ${fp}`);
+    const logDiag = (msg) => diagnostics.push('[' + new Date().toISOString() + '] ' + msg);
+    logDiag('Started speech_to_text for ' + fp);
 
-    // 2. Resolve Settings & Model
     const getSetting = async (k, d) => {
         if (typeof api?.getSetting !== 'function') return d;
         const v = await api.getSetting(k);
@@ -175,77 +241,191 @@ async function handler(args, api) {
 
     const modelId = String(await getSetting('audioModel', '')).trim();
     if (!modelId) {
-        return fail(api, fp, "No Audio Model selected. Pick your model in Settings > Tools > speech_to_text > Audio Model.");
+        return fail(api, fp, 'No Audio Model selected. Pick your model in Settings > Tools > speech_to_text > Audio Model.', diagnostics);
+    }
+    if (typeof api?.callModel !== 'function') {
+        return fail(api, fp, 'This version of Ion does not support api.callModel. Update Ion.', diagnostics);
     }
 
     let modelName = String(args.model || '').trim();
-    logDiag(`Resolved model ID: ${modelId}, Name: ${modelName || 'default'}`);
-
-    // 3. Read Audio Bytes
-    await updateStatus(`Reading audio file: ${fp}...`);
-    logDiag(`Attempting to read file bytes...`);
-    const audioBytes = await api.readFileBytes(fp);
-    
-    if (typeof audioBytes === 'string') {
-        logDiag(`Failed to read file. Return value was a string: ${audioBytes}`);
-        return fail(api, fp, audioBytes);
-    }
-    if (!audioBytes || audioBytes.length === 0) {
-        logDiag(`Read empty byte array for file.`);
-        return fail(api, fp, "The audio file is empty or could not be read.");
-    }
-    logDiag(`Successfully read ${audioBytes.length} bytes.`);
-
-    // 4. MOCK API CALL
-    const filename = fp.split('/').pop() || 'audio.mp3';
-    logDiag(`ENTERING MOCK MODE. Bypassing multipart construction and network request.`);
-
-    // Show initial live UI card
-    if (typeof api?.showUI === 'function') {
+    let matchedModel = null;
+    if (typeof api?.listModels === 'function') {
         try {
-            await api.showUI(renderWaitingCard({ fp, model: modelName, elapsedSec: 0 }), { live: true });
+            const models = await api.listModels();
+            if (Array.isArray(models)) {
+                matchedModel = models.find(m =>
+                    (m.uuid && m.uuid.toLowerCase() === modelId.toLowerCase()) ||
+                    (m.id && String(m.id).toLowerCase() === modelId.toLowerCase()) ||
+                    (m.name && m.name.toLowerCase() === modelId.toLowerCase()) ||
+                    (m.providerName && (m.providerName + '::' + m.name).toLowerCase() === modelId.toLowerCase())
+                ) || null;
+                if (!modelName && matchedModel && matchedModel.name) {
+                    modelName = matchedModel.name;
+                }
+            }
         } catch (_) {}
     }
-
-    await updateStatus(`[MOCK] Transcribing with ${modelName || 'selected model'}...`);
-
-    const startTime = Date.now();
-    
-    // Simulate a 3-second delay
-    for (let i = 1; i <= 3; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        logDiag(`Mock progress: ${i}s elapsed`);
-        if (typeof api?.showUI === 'function') {
-            try {
-                await api.showUI(renderWaitingCard({ fp, model: modelName, elapsedSec: i }), { live: true });
-            } catch (_) {}
+    if (!modelName) {
+        if (modelId.includes('::')) {
+            modelName = modelId.split('::').pop().trim();
+        } else if (!/^[0-9a-f-]{36}$/i.test(modelId)) {
+            modelName = modelId;
+        } else {
+            modelName = 'whisper-1'; // Default fallback
         }
     }
 
-    const elapsedSec = (Date.now() - startTime) / 1000;
-    logDiag(`Mock processing completed in ${elapsedSec}s.`);
+    logDiag('Resolved model ID: ' + modelId + ', Name: ' + modelName);
 
-    // 5. Mock Validate Response
-    const mockTranscript = "This is a mocked transcription. If you see this, the file parsed and executed successfully without hitting a SyntaxError during initialization. The issue likely resides in how the host handles string evaluation for network logic or multipart construction.";
+    const timeoutSetting = Number(await getSetting('timeoutMs', 300000));
+    const TIMEOUT_MS = Number.isFinite(timeoutSetting) && timeoutSetting > 0 ? timeoutSetting : 300000;
+
+    await updateStatus('Reading audio file: ' + fp + '...');
+    logDiag('Attempting to read file bytes...');
+    const audioBytes = await api.readFileBytes(fp);
     
-    logDiag(`Mock transcript generated successfully.`);
-    await updateStatus(`Transcribed ${filename} (${elapsedSec.toFixed(1)}s)`);
+    if (typeof audioBytes === 'string') {
+        logDiag('Failed to read file. Return value was a string: ' + audioBytes);
+        return fail(api, fp, audioBytes, diagnostics);
+    }
+    if (!audioBytes || audioBytes.length === 0) {
+        logDiag('Read empty byte array for file.');
+        return fail(api, fp, 'The audio file is empty or could not be read.', diagnostics);
+    }
+    logDiag('Successfully read ' + audioBytes.length + ' bytes.');
 
-    // 6. Render Final UI
+    const mimeType = inferMimeType(fp);
+    const filename = fp.split('/').pop() || 'audio.mp3';
+
+    const fields = {
+        model: modelName,
+        language: args.language,
+        prompt: args.prompt,
+        response_format: args.response_format || 'json',
+        temperature: typeof args.temperature === 'number' ? args.temperature : undefined
+    };
+
+    logDiag('Building multipart payload...');
+    const buildRes = buildSafeMultipartBody(fields, audioBytes, filename, mimeType);
+    const body = buildRes.body;
+    const boundary = buildRes.boundary;
+    const multipartError = buildRes.error;
+    
+    if (multipartError) {
+        logDiag('Multipart construction failed: ' + multipartError);
+        return fail(api, fp, 'Failed to build multipart payload:' + LF + multipartError, diagnostics);
+    }
+    logDiag('Payload constructed successfully. Boundary: ' + boundary + ', Size: ' + body.length + ' bytes.');
+
+    if (typeof api?.showUI === 'function') {
+        try {
+            await api.showUI(renderWaitingCard({ fp: fp, model: modelName, elapsedSec: 0 }), { live: true });
+        } catch (_) {}
+    }
+
+    await updateStatus('Transcribing with ' + (modelName || 'selected model') + '...');
+
+    const startTime = Date.now();
+    let isFinished = false;
+
+    const progressTimer = setInterval(() => {
+        if (isFinished) return;
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        updateStatus('Transcribing ' + filename + ' (' + elapsed + 's)...');
+        if (typeof api?.showUI === 'function') {
+            try {
+                api.showUI(renderWaitingCard({ fp: fp, model: modelName, elapsedSec: elapsed }), { live: true });
+            } catch (_) {}
+        }
+    }, 1000);
+
+    const baseUrl = matchedModel?.url ? String(matchedModel.url).trim().replace(/\/+$/, '') : '';
+    const hasV1InBase = baseUrl.endsWith('/v1');
+    const primaryPath = hasV1InBase ? '/audio/transcriptions' : '/v1/audio/transcriptions';
+    const fallbackPath = hasV1InBase ? '/v1/audio/transcriptions' : '/audio/transcriptions';
+
+    let res;
+    try {
+        logDiag('Making API call to primary path: ' + primaryPath);
+        const fetchOpts = {
+            path: primaryPath,
+            body: body,
+            headers: {
+                'Content-Type': 'multipart/form-data; boundary=' + boundary
+            },
+            timeoutMs: TIMEOUT_MS
+        };
+
+        res = await api.callModel(modelId, fetchOpts);
+
+        if (res && res.status === 404) {
+            logDiag('Primary path returned 404. Retrying alternate path: ' + fallbackPath);
+            fetchOpts.path = fallbackPath;
+            const retryRes = await api.callModel(modelId, fetchOpts);
+            if (retryRes && (retryRes.ok || retryRes.status !== 404)) {
+                res = retryRes;
+            }
+        }
+    } catch (e) {
+        isFinished = true;
+        clearInterval(progressTimer);
+        logDiag('API call threw exception: ' + e.message);
+        return fail(api, fp, 'Model call threw exception:' + LF + e.message, diagnostics);
+    } finally {
+        isFinished = true;
+        clearInterval(progressTimer);
+    }
+
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    logDiag('API call completed in ' + elapsedSec + 's. Success: ' + res?.ok + ', Status: ' + res?.status);
+
+    if (!res || res.error) {
+        const err = res && res.error;
+        if (err === 'timeout') return fail(api, fp, 'Transcription timed out after ' + (TIMEOUT_MS / 1000) + 's.', diagnostics);
+        if (err === 'unreachable') return fail(api, fp, 'Could not reach the server. Ensure the transcription service is running.', diagnostics);
+        return fail(api, fp, 'Transcription failed: ' + (err || 'unknown error'), diagnostics);
+    }
+
+    if (!res.ok) {
+        let detail = res.text || '';
+        try {
+            const errObj = JSON.parse(res.text);
+            detail = errObj.error?.message || errObj.detail || errObj.error || res.text;
+        } catch (_) {}
+        logDiag('Server returned error response: ' + detail);
+        return fail(api, fp, 'Server returned HTTP ' + res.status + ':' + LF + detail, diagnostics);
+    }
+
+    let transcript = '';
+    try {
+        logDiag('Attempting to parse response text as JSON...');
+        const parsed = JSON.parse(res.text);
+        transcript = parsed.text || parsed.task || JSON.stringify(parsed);
+    } catch (e) {
+        logDiag('Response was not JSON (likely plain text, vtt, or srt format fallback).');
+        transcript = res.text;
+    }
+
+    if (!transcript || !String(transcript).trim()) {
+        logDiag('Final transcript string is empty.');
+        return fail(api, fp, 'The server returned an empty transcription.', diagnostics);
+    }
+
+    await updateStatus('Transcribed ' + filename + ' (' + elapsedSec.toFixed(1) + 's)');
+
     if (typeof api?.showUI === 'function') {
         try {
             await api.showUI(renderFinalCard({
-                fp,
-                transcript: mockTranscript,
-                elapsedSec,
+                fp: fp,
+                transcript: transcript,
+                elapsedSec: elapsedSec,
                 model: modelName
             }));
         } catch (_) {}
     }
 
-    // 7. Return to LLM Context
     return {
-        output: `Transcription of ${fp} (${modelName}):\n\n${mockTranscript}\n\nDiagnostics:\n${diagnostics.join('\n')}`,
-        summary: `Transcribed ${fp} (MOCKED)`
+        output: 'Transcription of ' + fp + ' (' + modelName + '):' + LF + LF + transcript,
+        summary: 'Transcribed ' + fp + ' (' + elapsedSec.toFixed(1) + 's)'
     };
 }
