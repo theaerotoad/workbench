@@ -392,14 +392,27 @@ const TOOL_API_METHODS = {
         let target;
         try { target = new URL(base + p); } catch (e) { return { error: 'invalid path' }; }
         if (target.origin !== baseUrl.origin) return { error: 'invalid path' };
-        let bodyStr = typeof opts.body === 'string' ? opts.body : (opts.body != null ? JSON.stringify(opts.body) : undefined);
-        if (bodyStr) {
-            try {
-                const o = JSON.parse(bodyStr);
-                if (o && typeof o === 'object' && !Array.isArray(o)) { o.model = entry.name; bodyStr = JSON.stringify(o); }
-            } catch (e) { /* not JSON: send as-is */ }
+        let requestBody = opts.body;
+        const headers = {};
+        if (opts.multipart && requestBody && typeof requestBody === 'object' && !Array.isArray(requestBody)) {
+            const fd = new FormData();
+            for (const [key, val] of Object.entries(requestBody)) {
+                if (val instanceof Uint8Array) fd.append(key, new Blob([val]));
+                else fd.append(key, val);
+            }
+            fd.append('model', entry.name);
+            requestBody = fd;
+        } else {
+            let bodyStr = typeof requestBody === 'string' ? requestBody : (requestBody != null ? JSON.stringify(requestBody) : undefined);
+            if (bodyStr) {
+                try {
+                    const o = JSON.parse(bodyStr);
+                    if (o && typeof o === 'object' && !Array.isArray(o)) { o.model = entry.name; bodyStr = JSON.stringify(o); }
+                } catch (e) {}
+                requestBody = bodyStr;
+            }
+            headers['Content-Type'] = 'application/json';
         }
-        const headers = { 'Content-Type': 'application/json' };
         if (entry.key) headers['Authorization'] = `Bearer ${entry.key}`;
         const ms = Number(opts.timeoutMs);
         const timeoutMs = Number.isFinite(ms) && ms > 0 ? Math.min(ms, 120000) : 15000;
@@ -410,7 +423,7 @@ const TOOL_API_METHODS = {
             const res = await fetch(target.href, {
                 method: 'POST',
                 headers,
-                body: bodyStr,
+                body: requestBody,
                 signal: ctrl.signal,
                 redirect: 'error',
                 credentials: 'omit'
