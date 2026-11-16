@@ -236,7 +236,18 @@ async function handler(args, api) {
         // Pass 1: Extract imports and explicit window.X exports
         for (let i = 0; i < tree.rootNode.childCount; i++) {
             const child = tree.rootNode.child(i);
-            if (child.type.includes('import') || child.type.includes('use_declaration') || (child.type === 'expression_statement' && child.text.includes('require('))) {
+            if (child.type === 'import_statement') {
+                child.children.forEach(c => {
+                    if (c.type === 'dotted_name') imports.add(c.text);
+                    else if (c.type === 'aliased_import') {
+                        let dn = c.children.find(cc => cc.type === 'dotted_name');
+                        if (dn) imports.add(dn.text);
+                    }
+                });
+            } else if (child.type === 'import_from_statement') {
+                let nameNode = child.childForFieldName('module_name');
+                if (nameNode) imports.add(nameNode.text);
+            } else if (child.type.includes('import') || child.type.includes('use_declaration') || (child.type === 'expression_statement' && child.text.includes('require('))) {
                 let match = child.text.match(/['"]([^'"]+)['"]/);
                 if (match) imports.add(match[1]);
             }
@@ -366,6 +377,7 @@ async function handler(args, api) {
             try {
                 const query = languageCache[langName].query(queryStr);
                 const matches = query.matches(tree.rootNode);
+                const rawSymbols = [];
                 
                 for (const match of matches) {
                     let kind = 'unknown';
@@ -375,16 +387,19 @@ async function handler(args, api) {
                     let isAsync = false;
                     let tag = '';
                     let idVal = '';
+                    let mainNode = null;
 
                     for (const capture of match.captures) {
                         if (capture.name === 'class.name') {
                             kind = 'class';
                             name = capture.node.text;
                             ln = capture.node.startPosition.row + 1;
+                            mainNode = capture.node.parent || capture.node;
                         } else if (capture.name === 'fn.name') {
                             kind = 'fn';
                             name = capture.node.text;
                             ln = capture.node.startPosition.row + 1;
+                            mainNode = capture.node.parent || capture.node;
                         } else if (capture.name === 'fn.params') {
                             params = capture.node.text.replace(/\s+/g, ' ');
                             if (params.length > 50) params = params.slice(0, 49) + '…';
@@ -397,14 +412,17 @@ async function handler(args, api) {
                             name = capture.node.text.replace(/\s+/g, ' ').replace(/\n/g, '');
                             if (name.length > 50) name = name.slice(0, 49) + '…';
                             ln = capture.node.startPosition.row + 1;
+                            mainNode = capture.node.parent || capture.node;
                         } else if (capture.name === 'css.media') {
                             kind = 'media';
                             name = capture.node.text.replace(/\s+/g, ' ').replace(/\n/g, '');
                             if (name.length > 50) name = name.slice(0, 49) + '…';
                             ln = capture.node.startPosition.row + 1;
+                            mainNode = capture.node.parent || capture.node;
                         } else if (capture.name === 'html.element') {
                             kind = 'tag';
                             ln = capture.node.startPosition.row + 1;
+                            mainNode = capture.node;
                         } else if (capture.name === 'html.tag') {
                             tag = capture.node.text;
                         } else if (capture.name === 'attr.value') {
@@ -417,13 +435,44 @@ async function handler(args, api) {
                     }
 
                     if (kind !== 'unknown') {
-                        let sym = { kind, name, ln };
+                        if (langName === 'python' && params) {
+                            params = params.replace(/^\(\s*(?:self|cls)\b[^,)]*(?:,\s*)?/, '(');
+                        }
+                        
+                        let sym = { kind, name, ln, _node: mainNode };
                         if (params) sym.params = params;
                         if (isAsync) sym.async = true;
                         
-                        if (!symbols.some(s => s.kind === sym.kind && s.name === sym.name && s.ln === sym.ln)) {
-                            symbols.push(sym);
+                        if (!rawSymbols.some(s => s.kind === sym.kind && s.name === sym.name && s.ln === sym.ln)) {
+                            rawSymbols.push(sym);
                         }
+                    }
+                }
+
+                // Reconstruct AST nesting
+                const nodeToSym = new Map();
+                rawSymbols.forEach(s => {
+                    if (s._node) nodeToSym.set(s._node, s);
+                });
+
+                for (const sym of rawSymbols) {
+                    let parentNode = sym._node ? sym._node.parent : null;
+                    let parentSym = null;
+                    while (parentNode) {
+                        if (nodeToSym.has(parentNode)) {
+                            parentSym = nodeToSym.get(parentNode);
+                            break;
+                        }
+                        parentNode = parentNode.parent;
+                    }
+
+                    delete sym._node; // cleanup
+
+                    if (parentSym) {
+                        if (!parentSym.members) parentSym.members = [];
+                        parentSym.members.push(sym);
+                    } else {
+                        symbols.push(sym);
                     }
                 }
             } catch (e) {
