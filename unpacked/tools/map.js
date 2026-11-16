@@ -1,7 +1,7 @@
 // map - tool definition.
 const TOOL_META = {
     name: "map",
-    description: "Map the structure of the codebase using Tree-sitter AST parsing. Extracts function and class definitions for specified directories to give the model a high-level overview of the code architecture.",
+    description: "Map the structure of the codebase using Tree-sitter AST parsing. Extracts accurate function signatures, classes, async/export markers, and line numbers to build a precise navigation index.",
     parameters: {
         type: "object",
         properties: {
@@ -14,6 +14,11 @@ const TOOL_META = {
                 type: "array",
                 items: { type: "string" },
                 description: "File extensions to include (e.g., ['.js', '.py']). Defaults to all supported languages."
+            },
+            format: {
+                type: "string",
+                enum: ["json", "text"],
+                description: "Output format for the LLM. JSON is strictly preferred for programmatic consumption; text is human-readable."
             }
         },
         required: ["path"]
@@ -35,9 +40,6 @@ const TOOL_META = {
 };
 
 // --- UI helpers -------------------------------------------------------------
-// We construct the escaped entities using concatenation to prevent aggressive
-// HTML entity decoding by build tools or browsers when embedded in templates,
-// which causes syntax errors like "string literal contains an unescaped line break".
 function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({
         '&': '&' + 'amp;',
@@ -82,6 +84,7 @@ const languageCache = {};
 // --- Handler -----------------------------------------------------------------
 async function handler(args, api) {
     const targetPath = (args.path || '').replace(/^\/+/, '');
+    const outFormat = args.format || 'json';
     
     let allowedExts = Array.isArray(args.extensions) && args.extensions.length > 0 
         ? args.extensions.map(e => e.toLowerCase())
@@ -99,7 +102,7 @@ async function handler(args, api) {
 
     if (filesToMap.length === 0) {
         await api.showUI(`<div class="tool-ui-wrap"><div class="tool-ui-empty" style="padding:12px; color:var(--dim);">No supported files found in ${esc(targetPath || 'root')}.</div></div>`);
-        return { output: "No files found matching the criteria.", summary: `Map: ${targetPath || 'root'} (0 files)` };
+        return { output: outFormat === 'json' ? "[]" : "No files found matching the criteria.", summary: `Map: ${targetPath || 'root'} (0 files)` };
     }
 
     let maxFiles = Number(await api.getSetting('maxFiles'));
@@ -122,13 +125,11 @@ async function handler(args, api) {
         `, { live: true });
 
         try {
-            // Depending on the sandbox environment, importScripts is available in Web Workers.
             if (typeof importScripts === 'function') {
                 importScripts('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
             } else {
                 const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
                 const scriptText = await scriptRes.text();
-                // Ensure it gets injected into the global scope
                 (new Function(scriptText))();
             }
 
@@ -141,14 +142,14 @@ async function handler(args, api) {
                 }
             });
         } catch (err) {
-            return { output: `Failed to initialize Tree-sitter: ${err.message}` };
+            return { output: outFormat === 'json' ? `{"error": "Failed to initialize Tree-sitter: ${err.message}"}` : `Failed to initialize Tree-sitter: ${err.message}` };
         }
     }
 
     const TreeSitter = globalThis.TreeSitter;
     const parser = new TreeSitter();
 
-    const outputLines = [];
+    const results = [];
     const uiHtmlRows = [];
     let parsedCount = 0;
 
@@ -188,73 +189,209 @@ async function handler(args, api) {
             continue;
         }
 
-        const tree = parser.parse(content);
-        const outlines = [];
+        const linesCount = content.split('\n').length;
+        const sizeBytes = content.length;
         
-        // Generalized AST Walker
-        function walk(node, indent) {
-            const type = node.type;
-            const isInteresting = /class|function|method|struct|interface|impl|trait/i.test(type) && !/call|invocation|argument|parameter|comment|string/i.test(type);
+        const tree = parser.parse(content);
+        
+        let fileRole = null;
+        const imports = new Set();
+
+        // Pass 1: Extract Role and Imports from top-level nodes
+        for (let i = 0; i < tree.rootNode.childCount; i++) {
+            const child = tree.rootNode.child(i);
             
-            let nextIndent = indent;
+            // Extract role from the very first comment or docstring
+            if (!fileRole && (child.type.includes('comment') || child.type.includes('string'))) {
+                let text = child.text.replace(/^[\/\\*#]+/, '').replace(/[\*\/]+$/, '').trim();
+                let firstLine = text.split('\n')[0].trim();
+                if (firstLine.length > 85) firstLine = firstLine.slice(0, 82) + '...';
+                if (firstLine) fileRole = firstLine;
+            }
+
+            // Simple heuristic to grab import literals
+            if (child.type.includes('import') || child.type.includes('use_declaration') || (child.type === 'expression_statement' && child.text.includes('require('))) {
+                let match = child.text.match(/['"]([^'"]+)['"]/);
+                if (match) imports.add(match[1]);
+            }
+        }
+
+        // Pass 2: Extract structured symbols without drilling into inner function bodies
+        function extractSymbol(node) {
+            if (node.type.includes('comment') || node.type.includes('string')) return null;
+
+            let isExp = node.parent && node.parent.type.includes('export');
             
-            if (isInteresting) {
-                // Heuristic: Try to find a named field, or default to the first identifier
-                let nameNode = node.childForFieldName('name') || node.childForFieldName('identifier');
-                if (!nameNode) {
-                    for (let i = 0; i < node.childCount; i++) {
-                        const child = node.child(i);
-                        if (child.type.includes('identifier') || child.type === 'name') {
-                            nameNode = child;
-                            break;
+            if (node.type.includes('class') || node.type.includes('struct') || node.type.includes('interface') || node.type.includes('trait')) {
+                let nameNode = node.childForFieldName('name') || node.children.find(c => c.type === 'identifier' || c.type === 'type_identifier');
+                if (nameNode) {
+                    return { kind: 'class', name: nameNode.text, ln: nameNode.startPosition.row + 1, export: !!isExp };
+                }
+            }
+
+            let isFunc = node.type.includes('function') || node.type.includes('method');
+            let assignedName = null;
+            
+            // Catch assigned arrow functions or variable assignments
+            if (!isFunc && node.type === 'variable_declaration') {
+                 let decl = node.children.find(c => c.type === 'variable_declarator');
+                 if (decl) {
+                     let val = decl.childForFieldName('value');
+                     if (val && (val.type.includes('function') || val.type === 'arrow_function')) {
+                         isFunc = true;
+                         node = val; 
+                         let nameNode = decl.childForFieldName('name') || decl.children.find(c => c.type === 'identifier');
+                         if (nameNode) assignedName = nameNode.text;
+                         isExp = node.parent && node.parent.parent && node.parent.parent.type.includes('export'); 
+                     }
+                 }
+            }
+
+            if (isFunc) {
+                let name = assignedName;
+                let kind = 'fn';
+                if (!name) {
+                    let nameNode = node.childForFieldName('name') || node.children.find(c => c.type === 'identifier' || c.type === 'property_identifier');
+                    if (nameNode) name = nameNode.text;
+                }
+                
+                // Drop anonymous functions / callbacks
+                if (!name) return null;
+
+                if (name === 'constructor' || name === '__init__') kind = 'ctor';
+
+                let isAsync = node.children.some(c => c.type === 'async' || c.text === 'async');
+                
+                let params = null;
+                let paramNode = node.children.find(c => c.type.includes('parameters') || c.type === 'formal_parameters');
+                if (paramNode) {
+                    params = paramNode.text.replace(/\s+/g, ' ');
+                    if (params.length > 50) params = params.slice(0, 47) + '...';
+                }
+
+                let res = { kind, name, ln: node.startPosition.row + 1 };
+                if (params) res.params = params;
+                if (isAsync) res.async = true;
+                if (isExp) res.export = true;
+                return res;
+            }
+
+            return null;
+        }
+
+        function extractSymbols(node) {
+            const syms = [];
+            for (let i = 0; i < node.childCount; i++) {
+                const child = node.child(i);
+                let sym = extractSymbol(child);
+                if (sym) {
+                    if (sym.kind === 'class') {
+                        let bodyNode = child.children.find(c => c.type.includes('body') || c.type === 'declaration_list' || c.type === 'block');
+                        if (bodyNode) {
+                            let members = extractSymbols(bodyNode);
+                            if (members.length > 0) sym.members = members;
                         }
                     }
-                }
-
-                if (nameNode) {
-                    const cleanType = type.replace(/_definition|_declaration|_item|_specifier|_statement/g, '');
-                    outlines.push(`${indent}- [${cleanType}] ${nameNode.text}`);
-                    nextIndent += '  ';
+                    syms.push(sym);
+                } else {
+                    // Recurse into containers like exports, namespaces, blocks. Do NOT recurse into function bodies.
+                    if (!child.type.includes('function') && !child.type.includes('method') && !child.type.includes('class') && !child.type.includes('string')) {
+                        syms.push(...extractSymbols(child));
+                    }
                 }
             }
-
-            for (let i = 0; i < node.childCount; i++) {
-                walk(node.child(i), nextIndent);
-            }
+            return syms;
         }
 
-        walk(tree.rootNode, '  ');
+        const symbols = extractSymbols(tree.rootNode);
         tree.delete(); // Free WASM memory
 
-        outputLines.push(`${fp}:`);
-        if (outlines.length > 0) {
-            outputLines.push(outlines.join('\n'));
-        } else {
-            outputLines.push('  (No top-level functions/classes found)');
-        }
-        outputLines.push(''); // Blank line padding
+        const fileData = {
+            file: fp,
+            lines: linesCount,
+            size: sizeBytes
+        };
+        if (fileRole) fileData.role = fileRole;
+        if (imports.size > 0) fileData.imports = Array.from(imports);
+        if (symbols.length > 0) fileData.symbols = symbols;
 
-        // Build UI row
-        let badgeColor = outlines.length > 0 ? 'var(--green)' : 'var(--dim)';
+        results.push(fileData);
+
+        // --- Build UI Representation ---
+        function renderTextTree(fd) {
+            let out = [];
+            if (fd.role) out.push(`  Role: ${fd.role}`);
+            if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
+            if (out.length > 0) out.push('');
+            
+            function renderSym(s, indent) {
+                let line = `${indent}`;
+                if (s.kind === 'class') {
+                    line += `class ${s.name} :${s.ln}`;
+                } else {
+                    let p = s.params || '()';
+                    line += `${s.name}${p} :${s.ln}`;
+                    if (s.async) line += `  async`;
+                }
+                if (s.export) line += `  (export)`;
+                out.push(line);
+                if (s.members) {
+                    for (let child of s.members) renderSym(child, indent + '  ');
+                }
+            }
+
+            if (fd.symbols && fd.symbols.length) {
+                fd.symbols.forEach(s => renderSym(s, '  '));
+            } else {
+                out.push('  (No structures found)');
+            }
+            return out.join('\n');
+        }
+
+        const uiText = renderTextTree(fileData);
+        let badgeColor = symbols.length > 0 ? 'var(--green)' : 'var(--dim)';
+        let nodeCount = symbols.length + symbols.reduce((acc, s) => acc + (s.members ? s.members.length : 0), 0);
         
         uiHtmlRows.push(`
             <div style="border-bottom: 1px solid var(--border); padding: 8px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-family:var(--font-mono); font-size:12px;">${pathHtml(fp)}</div>
+                    <div style="font-family:var(--font-mono); font-size:12px;">${pathHtml(fp)} <span class="dim" style="margin-left:6px; font-size:10px;">(${linesCount} lines, ${(sizeBytes/1024).toFixed(1)}kb)</span></div>
                     <span style="font-size:10px; padding:2px 6px; border-radius:10px; background:var(--bg-input); color:${badgeColor}; border:1px solid var(--border);">
-                        ${outlines.length} nodes
+                        ${nodeCount} nodes
                     </span>
                 </div>
-                ${outlines.length > 0 ? `<pre style="margin:8px 0 0 0; padding:8px; background:var(--bg-input); border-radius:4px; font-size:11px; color:var(--dim); white-space:pre-wrap; line-height:1.4; overflow-x:auto;">${esc(outlines.join('\n'))}</pre>` : ''}
+                ${uiText.trim() ? `<pre style="margin:8px 0 0 0; padding:8px; background:var(--bg-input); border-radius:4px; font-size:11px; color:var(--dim); white-space:pre-wrap; line-height:1.4; overflow-x:auto;">${esc(uiText)}</pre>` : ''}
             </div>
         `);
 
         parsedCount++;
     }
 
-    parser.delete(); // Cleanup parser memory
+    parser.delete();
 
-    const finalOutput = outputLines.join('\n');
+    // Generate output for LLM
+    let finalOutput = '';
+    if (outFormat === 'json') {
+        finalOutput = JSON.stringify(results);
+    } else {
+        const textBlocks = results.map(fd => {
+            let out = [];
+            out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb)`);
+            if (fd.role) out.push(`  Role: ${fd.role}`);
+            if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
+            out.push('');
+            function recurseText(s, indent) {
+                let p = s.params || (s.kind === 'class' ? '' : '()');
+                let line = `${indent}${s.kind === 'class' ? 'class ' : ''}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
+                out.push(line);
+                if (s.members) s.members.forEach(c => recurseText(c, indent + '  '));
+            }
+            if (fd.symbols && fd.symbols.length) fd.symbols.forEach(s => recurseText(s, '  '));
+            else out.push('  (No structures found)');
+            return out.join('\n');
+        });
+        finalOutput = textBlocks.join('\n\n');
+    }
     
     let hiddenNotice = '';
     if (hiddenCount > 0) {
