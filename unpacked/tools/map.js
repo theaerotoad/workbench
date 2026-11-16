@@ -76,7 +76,40 @@ const EXT_TO_LANG = {
     '.cs': 'c_sharp',
     '.rb': 'ruby',
     '.php': 'php',
-    '.swift': 'swift'
+    '.swift': 'swift',
+    '.css': 'css',
+    '.html': 'html',
+    '.f': 'fortran',
+    '.f90': 'fortran',
+    '.m': 'matlab'
+};
+
+const LANGUAGE_QUERIES = {
+    python: `
+        (class_definition name: (identifier) @class.name)
+        (function_definition name: (identifier) @fn.name parameters: (parameters)? @fn.params) @fn.def
+    `,
+    css: `
+        (rule_set selectors: (selectors) @css.selector)
+        (media_statement (media_query) @css.media)
+    `,
+    html: `
+        (element 
+            (start_tag 
+                (tag_name) @html.tag
+                (attribute 
+                    (attribute_name) @attr.name (#eq? @attr.name "id")
+                    (quoted_attribute_value) @attr.value))) @html.element
+    `,
+    fortran: `
+        (module_statement name: (identifier) @class.name)
+        (subroutine_statement name: (identifier) @fn.name)
+        (function_statement name: (identifier) @fn.name)
+    `,
+    matlab: `
+        (classdef_statement name: (identifier) @class.name)
+        (function_definition name: (identifier) @fn.name parameters: (parameters)? @fn.params)
+    `
 };
 
 const languageCache = {};
@@ -174,7 +207,10 @@ async function handler(args, api) {
         // Load Grammar
         if (!languageCache[langName]) {
             try {
-                const url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
+                let url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
+                if (langName === 'matlab') {
+                    url = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
+                }
                 languageCache[langName] = await TreeSitter.Language.load(url);
             } catch (e) {
                 console.error(`Failed to load grammar ${langName}: `, e);
@@ -323,7 +359,80 @@ async function handler(args, api) {
             return syms;
         }
 
-        const symbols = extractSymbols(tree.rootNode);
+        let symbols = [];
+        const queryStr = LANGUAGE_QUERIES[langName];
+
+        if (queryStr) {
+            try {
+                const query = languageCache[langName].query(queryStr);
+                const matches = query.matches(tree.rootNode);
+                
+                for (const match of matches) {
+                    let kind = 'unknown';
+                    let name = 'unknown';
+                    let ln = 1;
+                    let params = null;
+                    let isAsync = false;
+                    let tag = '';
+                    let idVal = '';
+
+                    for (const capture of match.captures) {
+                        if (capture.name === 'class.name') {
+                            kind = 'class';
+                            name = capture.node.text;
+                            ln = capture.node.startPosition.row + 1;
+                        } else if (capture.name === 'fn.name') {
+                            kind = 'fn';
+                            name = capture.node.text;
+                            ln = capture.node.startPosition.row + 1;
+                        } else if (capture.name === 'fn.params') {
+                            params = capture.node.text.replace(/\s+/g, ' ');
+                            if (params.length > 50) params = params.slice(0, 49) + '…';
+                        } else if (capture.name === 'fn.def') {
+                            if (capture.node.text.startsWith('async ')) {
+                                isAsync = true;
+                            }
+                        } else if (capture.name === 'css.selector') {
+                            kind = 'rule';
+                            name = capture.node.text.replace(/\s+/g, ' ').replace(/\n/g, '');
+                            if (name.length > 50) name = name.slice(0, 49) + '…';
+                            ln = capture.node.startPosition.row + 1;
+                        } else if (capture.name === 'css.media') {
+                            kind = 'media';
+                            name = capture.node.text.replace(/\s+/g, ' ').replace(/\n/g, '');
+                            if (name.length > 50) name = name.slice(0, 49) + '…';
+                            ln = capture.node.startPosition.row + 1;
+                        } else if (capture.name === 'html.element') {
+                            kind = 'tag';
+                            ln = capture.node.startPosition.row + 1;
+                        } else if (capture.name === 'html.tag') {
+                            tag = capture.node.text;
+                        } else if (capture.name === 'attr.value') {
+                            idVal = capture.node.text.replace(/['"]/g, '');
+                        }
+                    }
+                    
+                    if (kind === 'tag') {
+                        name = (tag || 'element') + (idVal ? '#' + idVal : '');
+                    }
+
+                    if (kind !== 'unknown') {
+                        let sym = { kind, name, ln };
+                        if (params) sym.params = params;
+                        if (isAsync) sym.async = true;
+                        
+                        if (!symbols.some(s => s.kind === sym.kind && s.name === sym.name && s.ln === sym.ln)) {
+                            symbols.push(sym);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(`Query error for ${langName}:`, e);
+            }
+        } else {
+            symbols = extractSymbols(tree.rootNode);
+        }
+
         tree.delete(); // Free WASM memory
 
         let fns = 0, vars = 0, classes = 0, asyncs = 0;
@@ -358,8 +467,8 @@ async function handler(args, api) {
             function renderSym(s, indent) {
                 let line = `${indent}`;
                 const isVarKind = s.kind === 'const' || s.kind === 'let' || s.kind === 'var';
-                if (s.kind === 'class') {
-                    line += `class ${s.name} :${s.ln}`;
+                if (s.kind === 'class' || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media') {
+                    line += `${s.kind} ${s.name} :${s.ln}`;
                 } else if (isVarKind) {
                     line += `${s.kind} ${s.name} :${s.ln}`;
                 } else {
@@ -416,8 +525,9 @@ async function handler(args, api) {
             if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
             function recurseText(s, indent) {
                 const isVarKind = s.kind === 'const' || s.kind === 'let' || s.kind === 'var';
-                let p = s.params || (s.kind === 'class' || isVarKind ? '' : '()');
-                let kindStr = s.kind === 'class' ? 'class ' : (isVarKind ? `${s.kind} ` : '');
+                const isNoParens = s.kind === 'class' || isVarKind || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media';
+                let p = s.params || (isNoParens ? '' : '()');
+                let kindStr = (s.kind === 'class' || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media') ? `${s.kind} ` : (isVarKind ? `${s.kind} ` : '');
                 let line = `${indent}${kindStr}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
                 out.push(line);
                 if (s.members) s.members.forEach(c => recurseText(c, indent + '  '));
