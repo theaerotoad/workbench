@@ -194,7 +194,32 @@ async function handler(args, api) {
         
         const tree = parser.parse(content);
         
-        // Extract structured symbols without drilling into inner function bodies
+        const imports = new Set();
+        const exportedNames = new Set();
+
+        // Pass 1: Extract imports and explicit window.X exports
+        for (let i = 0; i < tree.rootNode.childCount; i++) {
+            const child = tree.rootNode.child(i);
+            if (child.type.includes('import') || child.type.includes('use_declaration') || (child.type === 'expression_statement' && child.text.includes('require('))) {
+                let match = child.text.match(/['"]([^'"]+)['"]/);
+                if (match) imports.add(match[1]);
+            }
+            if (child.type === 'expression_statement') {
+                const expr = child.child(0);
+                if (expr && expr.type === 'assignment_expression') {
+                    const left = expr.childForFieldName('left');
+                    if (left && left.type === 'member_expression') {
+                        const obj = left.childForFieldName('object');
+                        const prop = left.childForFieldName('property');
+                        if (obj && obj.text === 'window' && prop) {
+                            exportedNames.add(prop.text);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 2: Extract structured symbols without drilling into inner function bodies
         function extractSymbol(node) {
             if (node.type.includes('comment') || node.type.includes('string')) return null;
 
@@ -203,6 +228,7 @@ async function handler(args, api) {
             if (node.type.includes('class') || node.type.includes('struct') || node.type.includes('interface') || node.type.includes('trait')) {
                 let nameNode = node.childForFieldName('name') || node.children.find(c => c.type === 'identifier' || c.type === 'type_identifier');
                 if (nameNode) {
+                    if (exportedNames.has(nameNode.text)) isExp = true;
                     return { kind: 'class', name: nameNode.text, ln: nameNode.startPosition.row + 1, export: !!isExp };
                 }
             }
@@ -210,9 +236,13 @@ async function handler(args, api) {
             let isFunc = (node.type.includes('function') && node.type !== 'arrow_function') || node.type.includes('method');
             let assignedName = null;
             let isVar = false;
+            let declToken = 'var';
             
             // Catch assigned arrow functions or variable assignments
             if (!isFunc && (node.type === 'variable_declaration' || node.type === 'lexical_declaration')) {
+                 declToken = node.child(0) ? node.child(0).text : 'var';
+                 if (!['const', 'let', 'var'].includes(declToken)) declToken = 'var';
+
                  let decl = node.children.find(c => c.type === 'variable_declarator');
                  if (decl) {
                      let nameNode = decl.childForFieldName('name') || decl.children.find(c => c.type === 'identifier');
@@ -241,6 +271,7 @@ async function handler(args, api) {
                 if (!name) return null;
 
                 if (name === 'constructor' || name === '__init__') kind = 'ctor';
+                if (exportedNames.has(name)) isExp = true;
 
                 let isAsync = node.children.some(c => c.type === 'async' || c.text === 'async');
                 
@@ -259,7 +290,8 @@ async function handler(args, api) {
             }
 
             if (isVar) {
-                let res = { kind: 'var', name: assignedName, ln: node.startPosition.row + 1 };
+                if (exportedNames.has(assignedName)) isExp = true;
+                let res = { kind: declToken, name: assignedName, ln: node.startPosition.row + 1 };
                 if (isExp) res.export = true;
                 return res;
             }
@@ -294,12 +326,28 @@ async function handler(args, api) {
         const symbols = extractSymbols(tree.rootNode);
         tree.delete(); // Free WASM memory
 
+        let fns = 0, vars = 0, classes = 0, asyncs = 0;
+        function tally(syms) {
+            for (let s of syms) {
+                if (s.kind === 'class') classes++;
+                else if (s.kind === 'fn' || s.kind === 'ctor') { fns++; if (s.async) asyncs++; }
+                else if (s.kind === 'const' || s.kind === 'let' || s.kind === 'var') vars++;
+                if (s.members) tally(s.members);
+            }
+        }
+        tally(symbols);
+        const stats = { fns, vars, classes, asyncs };
+
         const fileData = {
             file: fp,
             lines: linesCount,
             size: sizeBytes
         };
-        if (symbols.length > 0) fileData.symbols = symbols;
+        if (imports.size > 0) fileData.imports = Array.from(imports);
+        if (symbols.length > 0) {
+            fileData.symbols = symbols;
+            fileData.stats = stats;
+        }
 
         results.push(fileData);
 
@@ -309,10 +357,11 @@ async function handler(args, api) {
             
             function renderSym(s, indent) {
                 let line = `${indent}`;
+                const isVarKind = s.kind === 'const' || s.kind === 'let' || s.kind === 'var';
                 if (s.kind === 'class') {
                     line += `class ${s.name} :${s.ln}`;
-                } else if (s.kind === 'var') {
-                    line += `var ${s.name} :${s.ln}`;
+                } else if (isVarKind) {
+                    line += `${s.kind} ${s.name} :${s.ln}`;
                 } else {
                     let p = s.params || '()';
                     line += `${s.name}${p} :${s.ln}`;
@@ -336,11 +385,12 @@ async function handler(args, api) {
         const uiText = renderTextTree(fileData);
         let badgeColor = symbols.length > 0 ? 'var(--green)' : 'var(--dim)';
         let nodeCount = symbols.length + symbols.reduce((acc, s) => acc + (s.members ? s.members.length : 0), 0);
+        let statsStr = `fns: ${fns}, vars: ${vars}, classes: ${classes}, async: ${asyncs}`;
         
         uiHtmlRows.push(`
             <div style="border-bottom: 1px solid var(--border); padding: 8px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-family:var(--font-mono); font-size:12px;">${pathHtml(fp)} <span class="dim" style="margin-left:6px; font-size:10px;">(${linesCount} lines, ${(sizeBytes/1024).toFixed(1)}kb)</span></div>
+                    <div style="font-family:var(--font-mono); font-size:12px;">${pathHtml(fp)} <span class="dim" style="margin-left:6px; font-size:10px;">(${linesCount} lines, ${(sizeBytes/1024).toFixed(1)}kb) [${statsStr}]</span></div>
                     <span style="font-size:10px; padding:2px 6px; border-radius:10px; background:var(--bg-input); color:${badgeColor}; border:1px solid var(--border);">
                         ${nodeCount} nodes
                     </span>
@@ -352,7 +402,7 @@ async function handler(args, api) {
         parsedCount++;
     }
 
-    parser.delete();
+    parser.delete(); // Cleanup parser memory
 
     // Generate output for LLM
     let finalOutput = '';
@@ -361,10 +411,13 @@ async function handler(args, api) {
     } else {
         const textBlocks = results.map(fd => {
             let out = [];
-            out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb)`);
+            let st = fd.stats || { fns: 0, vars: 0, classes: 0, asyncs: 0 };
+            out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb) [fns: ${st.fns}, vars: ${st.vars}, classes: ${st.classes}, async: ${st.asyncs}]`);
+            if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
             function recurseText(s, indent) {
-                let p = s.params || (s.kind === 'class' || s.kind === 'var' ? '' : '()');
-                let kindStr = s.kind === 'class' ? 'class ' : (s.kind === 'var' ? 'var ' : '');
+                const isVarKind = s.kind === 'const' || s.kind === 'let' || s.kind === 'var';
+                let p = s.params || (s.kind === 'class' || isVarKind ? '' : '()');
+                let kindStr = s.kind === 'class' ? 'class ' : (isVarKind ? `${s.kind} ` : '');
                 let line = `${indent}${kindStr}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
                 out.push(line);
                 if (s.members) s.members.forEach(c => recurseText(c, indent + '  '));
