@@ -57,6 +57,78 @@ function pathHtml(fp) {
     return `<span class="tool-ui-path-dir">${esc(dir)}</span><span class="tool-ui-path-name" style="color:var(--primary); font-weight:600;">${esc(name)}</span>`;
 }
 
+// --- Non-AST Summarizers ----------------------------------------------------
+function truncateLines(lines, limit = 20) {
+    if (lines.length <= limit) return lines.join('\n');
+    return lines.slice(0, limit).join('\n') + `\n... (${lines.length - limit} more lines)`;
+}
+
+function summarizeText(content) {
+    return truncateLines(content.split('\n'));
+}
+
+function summarizeMarkdown(content) {
+    const lines = content.split('\n').filter(line => line.trim().startsWith('#'));
+    if (!lines.length) return summarizeText(content);
+    return truncateLines(lines);
+}
+
+function summarizeStructuredData(data) {
+    const lines = [];
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+        for (const [k, v] of Object.entries(data)) {
+            if (v && typeof v === 'object') {
+                const typeName = Array.isArray(v) ? 'List' : 'Dict';
+                const len = Array.isArray(v) ? v.length : Object.keys(v).length;
+                lines.push(`"${k}": <${typeName} len=${len}>`);
+            } else {
+                let valStr = String(v);
+                if (valStr.length > 50) valStr = valStr.slice(0, 47) + "...";
+                lines.push(`"${k}": ${valStr}`);
+            }
+        }
+    } else if (Array.isArray(data)) {
+        lines.push(`List with ${data.length} items:`);
+        for (let i = 0; i < Math.min(data.length, 20); i++) {
+            const item = data[i];
+            const typeName = Array.isArray(item) ? 'Array' : (item === null ? 'null' : typeof item);
+            lines.push(`  [${i}]: ${typeName}`);
+        }
+    } else {
+        return "(Unknown structure)";
+    }
+    return truncateLines(lines);
+}
+
+function summarizeJson(content) {
+    try {
+        const data = JSON.parse(content);
+        if (!data || typeof data !== 'object') return summarizeText(content);
+        return summarizeStructuredData(data);
+    } catch (e) {
+        return "(Invalid JSON) " + summarizeText(content);
+    }
+}
+
+async function summarizeYaml(content) {
+    try {
+        if (typeof globalThis.jsyaml === 'undefined') {
+            if (typeof importScripts === 'function') {
+                importScripts('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
+            } else {
+                const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
+                const scriptText = await scriptRes.text();
+                (new Function(scriptText))();
+            }
+        }
+        const data = globalThis.jsyaml.load(content);
+        if (!data || typeof data !== 'object') return summarizeText(content);
+        return summarizeStructuredData(data);
+    } catch (e) {
+        return "(YAML Error) " + summarizeText(content);
+    }
+}
+
 // --- Grammar Mappings --------------------------------------------------------
 const EXT_TO_LANG = {
     '.py': 'python',
@@ -81,7 +153,16 @@ const EXT_TO_LANG = {
     '.html': 'html',
     '.f': 'fortran',
     '.f90': 'fortran',
-    '.m': 'matlab'
+    '.m': 'matlab',
+    '.jl': 'julia'
+};
+
+const NON_AST_EXTS = {
+    '.json': 'json',
+    '.yaml': 'yaml',
+    '.yml': 'yaml',
+    '.md': 'markdown',
+    '.txt': 'text'
 };
 
 const LANGUAGE_QUERIES = {
@@ -109,6 +190,12 @@ const LANGUAGE_QUERIES = {
     matlab: `
         (classdef_statement name: (identifier) @class.name)
         (function_definition name: (identifier) @fn.name parameters: (parameters)? @fn.params)
+    `,
+    julia: `
+        (module_definition name: (identifier) @class.name)
+        (struct_definition name: (identifier) @class.name)
+        (function_definition name: (identifier) @fn.name)
+        (macro_definition name: (identifier) @fn.name)
     `
 };
 
@@ -121,7 +208,7 @@ async function handler(args, api) {
     
     let allowedExts = Array.isArray(args.extensions) && args.extensions.length > 0 
         ? args.extensions.map(e => e.toLowerCase())
-        : Object.keys(EXT_TO_LANG);
+        : [...Object.keys(EXT_TO_LANG), ...Object.keys(NON_AST_EXTS)];
 
     await api.setHeaderMsg("Scanning workspace...");
     
@@ -130,7 +217,7 @@ async function handler(args, api) {
         if (targetPath && !fp.startsWith(targetPath + '/') && fp !== targetPath) return false;
         const extMatch = fp.match(/\.[0-9a-z_]+$/i);
         const ext = extMatch ? extMatch[0].toLowerCase() : '';
-        return allowedExts.includes(ext) && !!EXT_TO_LANG[ext];
+        return allowedExts.includes(ext) && (!!EXT_TO_LANG[ext] || !!NON_AST_EXTS[ext]);
     });
 
     if (filesToMap.length === 0) {
@@ -147,8 +234,13 @@ async function handler(args, api) {
         filesToMap = filesToMap.slice(0, maxFiles);
     }
 
+    const hasAstFiles = filesToMap.some(fp => {
+        const extMatch = fp.match(/\.[0-9a-z_]+$/i);
+        return extMatch && EXT_TO_LANG[extMatch[0].toLowerCase()];
+    });
+
     // --- Initialize Tree-sitter ---
-    if (typeof globalThis.TreeSitter === 'undefined') {
+    if (hasAstFiles && typeof globalThis.TreeSitter === 'undefined') {
         await api.setHeaderMsg("Downloading Tree-sitter runtime...");
         await api.showUI(`
             <div class="tool-ui-wrap" style="padding: 12px; display:flex; align-items:center; gap:8px;">
@@ -179,8 +271,11 @@ async function handler(args, api) {
         }
     }
 
-    const TreeSitter = globalThis.TreeSitter;
-    const parser = new TreeSitter();
+    let TreeSitter, parser;
+    if (hasAstFiles) {
+        TreeSitter = globalThis.TreeSitter;
+        parser = new TreeSitter();
+    }
 
     const results = [];
     const uiHtmlRows = [];
@@ -191,7 +286,8 @@ async function handler(args, api) {
         const extMatch = fp.match(/\.[0-9a-z_]+$/i);
         const ext = extMatch ? extMatch[0].toLowerCase() : '';
         const langName = EXT_TO_LANG[ext];
-        if (!langName) continue;
+        const nonAstLang = NON_AST_EXTS[ext];
+        if (!langName && !nonAstLang) continue;
 
         await api.setHeaderMsg(`Parsing ${fp}...`);
         await api.showUI(`
@@ -228,6 +324,28 @@ async function handler(args, api) {
         const linesCount = content.split('\n').length;
         const sizeBytes = content.length;
         
+        if (nonAstLang) {
+            let rawSummary = "";
+            if (nonAstLang === 'json') rawSummary = summarizeJson(content);
+            else if (nonAstLang === 'yaml') rawSummary = await summarizeYaml(content);
+            else if (nonAstLang === 'markdown') rawSummary = summarizeMarkdown(content);
+            else rawSummary = summarizeText(content);
+            
+            const fileData = { file: fp, lines: linesCount, size: sizeBytes, rawSummary };
+            results.push(fileData);
+            
+            uiHtmlRows.push(`
+            <div style="border-bottom: 1px solid var(--border); padding: 8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-family:var(--font-mono); font-size:12px;">${pathHtml(fp)} <span class="dim" style="margin-left:6px; font-size:10px;">(${linesCount} lines, ${(sizeBytes/1024).toFixed(1)}kb) [${nonAstLang}]</span></div>
+                </div>
+                <pre style="margin:8px 0 0 0; padding:8px; background:var(--bg-input); border-radius:4px; font-size:11px; color:var(--dim); white-space:pre-wrap; line-height:1.4; overflow-x:auto;">${esc(rawSummary)}</pre>
+            </div>
+        `);
+            parsedCount++;
+            continue;
+        }
+
         const tree = parser.parse(content);
         
         const imports = new Set();
@@ -560,7 +678,7 @@ async function handler(args, api) {
         parsedCount++;
     }
 
-    parser.delete(); // Cleanup parser memory
+    if (parser) parser.delete(); // Cleanup parser memory
 
     // Generate output for LLM
     let finalOutput = '';
@@ -569,6 +687,11 @@ async function handler(args, api) {
     } else {
         const textBlocks = results.map(fd => {
             let out = [];
+            if (fd.rawSummary !== undefined) {
+                out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb) [data/text]`);
+                out.push(fd.rawSummary.split('\n').map(l => `  ${l}`).join('\n'));
+                return out.join('\n');
+            }
             let st = fd.stats || { fns: 0, vars: 0, classes: 0, asyncs: 0 };
             out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb) [fns: ${st.fns}, vars: ${st.vars}, classes: ${st.classes}, async: ${st.asyncs}]`);
             if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
