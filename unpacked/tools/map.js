@@ -194,29 +194,7 @@ async function handler(args, api) {
         
         const tree = parser.parse(content);
         
-        let fileRole = null;
-        const imports = new Set();
-
-        // Pass 1: Extract Role and Imports from top-level nodes
-        for (let i = 0; i < tree.rootNode.childCount; i++) {
-            const child = tree.rootNode.child(i);
-            
-            // Extract role from the very first comment or docstring
-            if (!fileRole && (child.type.includes('comment') || child.type.includes('string'))) {
-                let text = child.text.replace(/^[\/\\*#]+/, '').replace(/[\*\/]+$/, '').trim();
-                let firstLine = text.split('\n')[0].trim();
-                if (firstLine.length > 85) firstLine = firstLine.slice(0, 82) + '...';
-                if (firstLine) fileRole = firstLine;
-            }
-
-            // Simple heuristic to grab import literals
-            if (child.type.includes('import') || child.type.includes('use_declaration') || (child.type === 'expression_statement' && child.text.includes('require('))) {
-                let match = child.text.match(/['"]([^'"]+)['"]/);
-                if (match) imports.add(match[1]);
-            }
-        }
-
-        // Pass 2: Extract structured symbols without drilling into inner function bodies
+        // Extract structured symbols without drilling into inner function bodies
         function extractSymbol(node) {
             if (node.type.includes('comment') || node.type.includes('string')) return null;
 
@@ -229,20 +207,24 @@ async function handler(args, api) {
                 }
             }
 
-            let isFunc = node.type.includes('function') || node.type.includes('method');
+            let isFunc = (node.type.includes('function') && node.type !== 'arrow_function') || node.type.includes('method');
             let assignedName = null;
+            let isVar = false;
             
             // Catch assigned arrow functions or variable assignments
-            if (!isFunc && node.type === 'variable_declaration') {
+            if (!isFunc && (node.type === 'variable_declaration' || node.type === 'lexical_declaration')) {
                  let decl = node.children.find(c => c.type === 'variable_declarator');
                  if (decl) {
+                     let nameNode = decl.childForFieldName('name') || decl.children.find(c => c.type === 'identifier');
+                     if (nameNode) assignedName = nameNode.text;
+                     
                      let val = decl.childForFieldName('value');
                      if (val && (val.type.includes('function') || val.type === 'arrow_function')) {
                          isFunc = true;
                          node = val; 
-                         let nameNode = decl.childForFieldName('name') || decl.children.find(c => c.type === 'identifier');
-                         if (nameNode) assignedName = nameNode.text;
                          isExp = node.parent && node.parent.parent && node.parent.parent.type.includes('export'); 
+                     } else if (assignedName) {
+                         isVar = true;
                      }
                  }
             }
@@ -266,12 +248,18 @@ async function handler(args, api) {
                 let paramNode = node.children.find(c => c.type.includes('parameters') || c.type === 'formal_parameters');
                 if (paramNode) {
                     params = paramNode.text.replace(/\s+/g, ' ');
-                    if (params.length > 50) params = params.slice(0, 47) + '...';
+                    if (params.length > 50) params = params.slice(0, 49) + '…';
                 }
 
                 let res = { kind, name, ln: node.startPosition.row + 1 };
                 if (params) res.params = params;
                 if (isAsync) res.async = true;
+                if (isExp) res.export = true;
+                return res;
+            }
+
+            if (isVar) {
+                let res = { kind: 'var', name: assignedName, ln: node.startPosition.row + 1 };
                 if (isExp) res.export = true;
                 return res;
             }
@@ -311,8 +299,6 @@ async function handler(args, api) {
             lines: linesCount,
             size: sizeBytes
         };
-        if (fileRole) fileData.role = fileRole;
-        if (imports.size > 0) fileData.imports = Array.from(imports);
         if (symbols.length > 0) fileData.symbols = symbols;
 
         results.push(fileData);
@@ -320,14 +306,13 @@ async function handler(args, api) {
         // --- Build UI Representation ---
         function renderTextTree(fd) {
             let out = [];
-            if (fd.role) out.push(`  Role: ${fd.role}`);
-            if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
-            if (out.length > 0) out.push('');
             
             function renderSym(s, indent) {
                 let line = `${indent}`;
                 if (s.kind === 'class') {
                     line += `class ${s.name} :${s.ln}`;
+                } else if (s.kind === 'var') {
+                    line += `var ${s.name} :${s.ln}`;
                 } else {
                     let p = s.params || '()';
                     line += `${s.name}${p} :${s.ln}`;
@@ -377,12 +362,10 @@ async function handler(args, api) {
         const textBlocks = results.map(fd => {
             let out = [];
             out.push(`[${results.indexOf(fd) + 1}] ${fd.file}  (${fd.lines} lines, ${(fd.size/1024).toFixed(1)}kb)`);
-            if (fd.role) out.push(`  Role: ${fd.role}`);
-            if (fd.imports && fd.imports.length) out.push(`  Imports: ${fd.imports.join(', ')}`);
-            out.push('');
             function recurseText(s, indent) {
-                let p = s.params || (s.kind === 'class' ? '' : '()');
-                let line = `${indent}${s.kind === 'class' ? 'class ' : ''}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
+                let p = s.params || (s.kind === 'class' || s.kind === 'var' ? '' : '()');
+                let kindStr = s.kind === 'class' ? 'class ' : (s.kind === 'var' ? 'var ' : '');
+                let line = `${indent}${kindStr}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
                 out.push(line);
                 if (s.members) s.members.forEach(c => recurseText(c, indent + '  '));
             }
