@@ -452,15 +452,15 @@ async function handler(args, api) {
                 // Reconstruct AST nesting
                 const nodeToSym = new Map();
                 rawSymbols.forEach(s => {
-                    if (s._node) nodeToSym.set(s._node, s);
+                    if (s._node && s._node.id !== undefined) nodeToSym.set(s._node.id, s);
                 });
 
                 for (const sym of rawSymbols) {
                     let parentNode = sym._node ? sym._node.parent : null;
                     let parentSym = null;
                     while (parentNode) {
-                        if (nodeToSym.has(parentNode)) {
-                            parentSym = nodeToSym.get(parentNode);
+                        if (parentNode.id !== undefined && nodeToSym.has(parentNode.id)) {
+                            parentSym = nodeToSym.get(parentNode.id);
                             break;
                         }
                         parentNode = parentNode.parent;
