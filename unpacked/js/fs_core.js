@@ -15,10 +15,11 @@ export function vfsCheckName(name) {
 export function vfsErr(name, msg) { return new DOMException(msg, name); }
 
 export function vfsFlushIfDirty() {
-    if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n._dirty) vfsFlush(window.rootHandle);
+    if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n._dirty) return vfsFlush(window.rootHandle);
 }
 
 export async function vfsFlush(h) {
+    if (window.isWorkspaceReadOnly?.()) return;
     const r = h instanceof window.VFSNode ? h : h._n;
     if (!r._ws) return;
     clearTimeout(r._t);
@@ -75,6 +76,7 @@ export function vfsRoot(n) { while (n.parent) n = n.parent; return n; }
 export function vfsWrap(n) { return n._h || (n._h = n.kind === 'file' ? new window.VFSFileHandle(n) : new window.VFSDirHandle(n)); }
 
 export async function rawRename(oldPath, newPath) {
+    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     window.wsMutationEpoch++;
     const newName = newPath.split('/').filter(Boolean).pop();
     if (!newName) return { error: `ERROR: Invalid new file name.` };
@@ -141,6 +143,7 @@ export async function rawRename(oldPath, newPath) {
 }
 
 export async function writeAgentFileToDisk(filePath, content) {
+ if (window.isWorkspaceReadOnly?.()) return;
  if (!window.rootHandle) return;
  if (window.rootHandle.isWebDAV && window.AppConfig.get('webdav-sync-agent') !== 'true') return;
  try {

@@ -41,6 +41,7 @@ async function loadBaselineFromDB(wsName, sessionId) {
 }
 
 async function saveBaselineToDB(wsName, sessionId, originalFiles, modifiedFilesSet, opsLog, compressionHistory) {
+    if (window.isWorkspaceReadOnly?.()) return;
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_BASELINES, 'readwrite');
@@ -63,6 +64,7 @@ async function saveBaselineToDB(wsName, sessionId, originalFiles, modifiedFilesS
 }
 
 async function deleteBaselineFromDB(wsName, sessionId) {
+    if (window.isWorkspaceReadOnly?.()) return;
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_BASELINES, 'readwrite');
@@ -110,6 +112,7 @@ async function loadSessionIndexFromDB(wsKey) {
 }
 
 async function saveSessionIndexToDB(wsKey, index) {
+    if (window.isWorkspaceReadOnly?.()) return;
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_SESSIONS, 'readwrite');
@@ -137,6 +140,7 @@ async function loadSessionRecordFromDB(wsKey, sessionId) {
 }
 
 async function patchSessionRecordInDB(wsKey, sessionId, patch) {
+    if (window.isWorkspaceReadOnly?.()) return null;
     if (!sessionId || deletedSessionIds.has(sessionId)) return null;
     try {
         const db = await getDB();
@@ -160,6 +164,7 @@ async function patchSessionRecordInDB(wsKey, sessionId, patch) {
 }
 
 async function deleteSessionRecordFromDB(wsKey, sessionId) {
+    if (window.isWorkspaceReadOnly?.()) return;
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_SESSIONS, 'readwrite');

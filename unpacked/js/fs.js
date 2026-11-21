@@ -82,6 +82,7 @@ async function readFileContentForTool(filepath) {
 
 // Disk-only write. Does not touch opsLog or modifiedFiles.
 async function rawWrite(path, content) {
+    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     wsMutationEpoch++;
     if (!rootHandle) {
         registry.files[path] = content;
@@ -118,6 +119,7 @@ async function rawWrite(path, content) {
 
 // Disk-only delete. Does not touch opsLog or modifiedFiles.
 async function rawDelete(path) {
+    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     wsMutationEpoch++;
     if (!rootHandle) {
         delete registry.meta[path];
@@ -142,6 +144,7 @@ async function rawDelete(path) {
 }
 
 async function rawMkdir(path) {
+    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     wsMutationEpoch++;
     await getDirectoryHandleByPath(path, true);
     registry.meta[path] = { kind: 'directory' };
