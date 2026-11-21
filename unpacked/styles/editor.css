@@ -9,30 +9,35 @@
 body.split-view-active #main-pane {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto auto 1fr auto;
+}
+body.split-view-active #workspace-lease-banner {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%; min-width: 0; box-sizing: border-box;
 }
 body.split-view-active #chat-view {
     grid-column: 1;
-    grid-row: 1 / 3;
+    grid-row: 2 / 4;
     display: flex !important;
     border-right: 1px solid var(--border);
     width: 100%; height: 100%; min-width: 0; min-height: 0;
 }
 body.split-view-active #bottom-dock-area {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 4;
     border-right: 1px solid var(--border);
     width: 100%; min-width: 0;
 }
 body.split-view-active #tabs-bar {
     grid-column: 2;
-    grid-row: 1;
+    grid-row: 2;
     width: 100%; min-width: 0;
 }
 body.split-view-active #diff-view,
 body.split-view-active #editor-view {
     grid-column: 2;
-    grid-row: 2 / 4;
+    grid-row: 3 / 5;
     width: 100%; height: 100%; min-width: 0; min-height: 0;
 }
 body.split-view-active .editor-tab[data-tab-id="chat"] {
@@ -458,3 +463,89 @@ body.split-view-active .editor-tab[data-tab-id="chat"] {
 .pill-btn:hover { background: var(--border); border-color: var(--magenta); color: var(--magenta); }
 .pill-btn.danger:hover { border-color: var(--red); color: var(--red); }
 .pill-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(var(--primary-rgb), 0.12); }
+
+/* Workspace Lease / Read-Only Banner */
+#workspace-lease-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 6px 12px; flex-shrink: 0;
+    background: rgba(255, 194, 107, 0.1);
+    border-bottom: 1px solid rgba(255, 194, 107, 0.3);
+    color: var(--fg); font-size: 12px; line-height: 1.35;
+    user-select: none; box-sizing: border-box;
+}
+#workspace-lease-banner.is-busy {
+    background: rgba(255, 107, 122, 0.1);
+    border-bottom-color: rgba(255, 107, 122, 0.32);
+}
+#workspace-lease-banner.is-free {
+    background: rgba(62, 207, 142, 0.1);
+    border-bottom-color: rgba(62, 207, 142, 0.32);
+}
+#workspace-lease-banner.is-revoking {
+    background: rgba(var(--primary-rgb), 0.1);
+    border-bottom-color: rgba(var(--primary-rgb), 0.32);
+}
+.lease-banner-info {
+    display: flex; align-items: center; gap: 7px;
+    min-width: 0; flex: 1 1 auto;
+}
+.lease-banner-icon {
+    font-size: 15px; color: var(--yellow); flex-shrink: 0;
+}
+#workspace-lease-banner.is-busy .lease-banner-icon { color: var(--red); }
+#workspace-lease-banner.is-free .lease-banner-icon { color: var(--green); }
+#workspace-lease-banner.is-revoking .lease-banner-icon { color: var(--primary); }
+#workspace-lease-msg {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; font-weight: 500;
+}
+.lease-banner-actions {
+    display: flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
+}
+#workspace-lease-banner .pill-btn:disabled {
+    opacity: 0.5; cursor: not-allowed; pointer-events: none;
+}
+.lease-btn-takeover {
+    background: rgba(var(--primary-rgb), 0.16);
+    border-color: rgba(var(--primary-rgb), 0.5);
+    color: var(--primary);
+}
+.lease-btn-takeover:hover {
+    background: rgba(var(--primary-rgb), 0.26);
+    border-color: var(--primary);
+    color: var(--fg);
+}
+@media (max-width: 640px) {
+    #workspace-lease-banner {
+        flex-wrap: wrap; padding: 6px 10px; gap: 6px;
+    }
+    #workspace-lease-msg {
+        white-space: normal;
+    }
+}
+
+/* Read-Only Mode (Cosmetic UI Disablement) */
+body.workspace-readonly #btn-new-file,
+body.workspace-readonly #btn-new-folder,
+body.workspace-readonly #btn-upload-files,
+body.workspace-readonly #btn-discard-all,
+body.workspace-readonly #btn-doc-save,
+body.workspace-readonly #btn-diff-save,
+body.workspace-readonly #btn-diff-discard,
+body.workspace-readonly #btn-create-session,
+body.workspace-readonly #btn-clear-all-sessions,
+body.workspace-readonly .btn-del-session,
+body.workspace-readonly .btn-prompt-action.edit,
+body.workspace-readonly .btn-prompt-action.del,
+body.workspace-readonly #prompt-attach,
+body.workspace-readonly #prompt-symbol {
+    opacity: 0.45;
+    pointer-events: none;
+}
+body.workspace-readonly #prompt-input-row {
+    opacity: 0.65;
+}
+body.workspace-readonly #cmd:disabled {
+    cursor: not-allowed;
+}

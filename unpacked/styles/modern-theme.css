@@ -154,6 +154,10 @@ body.has-custom-bg #doc-control-bar {
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
 }
+body.has-custom-bg #workspace-lease-banner {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
 body.has-custom-bg .doc-bar-btn {
     background: rgba(24, 26, 34, 0.65) !important;
     backdrop-filter: blur(8px);
@@ -504,6 +508,10 @@ html.theme-light body.has-custom-bg #doc-control-bar {
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
 }
+html.theme-light body.has-custom-bg #workspace-lease-banner {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
 html.theme-light body.has-custom-bg .doc-bar-btn {
     background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: blur(8px);
@@ -596,6 +604,16 @@ html.theme-light #model-select-dropdown, html.theme-light #model-picker-dropdown
 html.theme-light .btn-tabs-overflow.has-overflow { background: rgba(0, 0, 0, 0.045); border-color: rgba(0, 0, 0, 0.12); }
 html.theme-light .tabs-overflow-item:hover { background: rgba(0, 0, 0, 0.05); }
 html.theme-light #tabs-bar { border-bottom: 1px solid var(--border); }
+html.theme-light #workspace-lease-banner { background: rgba(217, 119, 6, 0.09); border-bottom-color: rgba(217, 119, 6, 0.28); color: var(--fg); }
+html.theme-light #workspace-lease-banner.is-busy { background: rgba(220, 38, 38, 0.08); border-bottom-color: rgba(220, 38, 38, 0.26); }
+html.theme-light #workspace-lease-banner.is-free { background: rgba(22, 163, 74, 0.08); border-bottom-color: rgba(22, 163, 74, 0.26); }
+html.theme-light #workspace-lease-banner.is-revoking { background: rgba(var(--primary-rgb), 0.09); border-bottom-color: rgba(var(--primary-rgb), 0.28); }
+html.theme-light #workspace-lease-banner .lease-banner-icon { color: #b45309; }
+html.theme-light #workspace-lease-banner.is-busy .lease-banner-icon { color: #dc2626; }
+html.theme-light #workspace-lease-banner.is-free .lease-banner-icon { color: #16a34a; }
+html.theme-light #workspace-lease-banner.is-revoking .lease-banner-icon { color: var(--primary); }
+html.theme-light .lease-btn-takeover { background: rgba(var(--primary-rgb), 0.12); border-color: rgba(var(--primary-rgb), 0.45); color: var(--primary-2); }
+html.theme-light .lease-btn-takeover:hover { background: rgba(var(--primary-rgb), 0.2); border-color: var(--primary); color: var(--fg); }
 html.theme-light #doc-control-bar { background: #f7f7f9; border-bottom: 1px solid var(--border); }
 html.theme-light .doc-bar-badge { background: rgba(0, 0, 0, 0.045); border-color: rgba(0, 0, 0, 0.09); color: var(--dim); }
 html.theme-light .doc-bar-dirty { background: rgba(217, 119, 6, 0.1); border-color: rgba(217, 119, 6, 0.35); color: #b45309; }
