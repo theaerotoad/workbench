@@ -81,6 +81,9 @@ function closeWorkspace() {
     // Auto-collapse the sidebar when leaving a workspace; restore it on the next open.
     if (!window.innerWidth <= 768) setSidebarCollapsed(true);
 
+    if (typeof disposeWorkspaceModels === 'function') {
+        disposeWorkspaceModels({ keepDirty: false });
+    }
     registry.files = {};
     registry.originalFiles = {};
     registry.meta = {};
@@ -344,6 +347,15 @@ function mergeWorkspaceMeta(scanned, allowRemoval) {
             structChanged = true;
         } else {
             cur.handle = fresh.handle;   // refresh the handle, keep everything we have learned about the file
+            if (fresh.mtime !== undefined) {
+                const changed = (cur.mtime !== undefined && cur.mtime !== fresh.mtime) ||
+                                (cur.size !== undefined && cur.size !== fresh.size);
+                cur.mtime = fresh.mtime;
+                cur.size = fresh.size;
+                if (changed && (typeof isFileDirty !== 'function' || !isFileDirty(p))) {
+                    delete registry.files[p];
+                }
+            }
         }
     }
     if (allowRemoval) {
@@ -759,16 +771,16 @@ async function runSyncWorkspace(silent = true) {
 
         await saveWorkspaceCacheToDB(wsStorageName(rootHandle), registry.meta);
 
-        if (state.activeTab && state.activeTab !== 'chat' && !state.activeTab.startsWith('filediff:')) {
+        if (state.activeTab && state.activeTab !== 'chat' && !state.activeTab.startsWith('filediff:') && !state.activeTab.startsWith('attachment:')) {
             const fp = state.activeTab;
             const meta = registry.meta[fp];
             if (meta && meta.kind === 'file' && !meta.isBinary) {
-                // Avoid redundant re-reading if size and mtime have not changed
+                // Avoid redundant re-reading on WebDAV if server-reported size and mtime have not changed
                 const contentAlreadyLoaded = registry.files[fp] !== undefined;
-                const mtimeUnchanged = meta.mtime !== undefined && meta._syncedMtime === meta.mtime;
-                const sizeUnchanged = meta.size !== undefined && meta._syncedSize === meta.size;
+                const mtimeUnchanged = rootHandle.isWebDAV && meta.mtime !== undefined && meta._syncedMtime === meta.mtime;
+                const sizeUnchanged = rootHandle.isWebDAV && meta.size !== undefined && meta._syncedSize === meta.size;
                 if (!contentAlreadyLoaded || !mtimeUnchanged || !sizeUnchanged) {
-                    const freshContent = await readFileContent(fp);
+                    const freshContent = await readFileContent(fp, { force: true });
                     meta._syncedMtime = meta.mtime;
                     meta._syncedSize = meta.size;
                     if (monacoEditor && !isFileDirty(fp)) {
@@ -871,6 +883,9 @@ async function setWorkspace(handle, opts = {}) {
     }
 
     if (isReopen) {
+        if (typeof disposeWorkspaceModels === 'function') {
+            disposeWorkspaceModels({ keepDirty: true });
+        }
         state.sessions = {};
         state.sessionIds = null;
         state.sessionMeta = null;

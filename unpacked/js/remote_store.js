@@ -2300,15 +2300,13 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
                 await window.saveActiveSession(true);
             }
 
-            // 4. Flush virtual workspace snapshot if dirty.
-            if (
-                window.rootHandle &&
-                window.rootHandle.isVirtual &&
-                window.rootHandle._n &&
-                window.rootHandle._n._dirty &&
-                typeof window.vfsFlush === 'function'
-            ) {
-                await window.vfsFlush(window.rootHandle);
+            // 4. Flush virtual workspace snapshot if dirty or already flushing.
+            if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n) {
+                if (window.rootHandle._n._dirty && typeof window.vfsFlush === 'function') {
+                    await window.vfsFlush(window.rootHandle);
+                } else if (window.rootHandle._n._flushPromise) {
+                    await window.rootHandle._n._flushPromise.catch(() => {});
+                }
             }
 
             // 4b. Snapshot WebDAV per-workspace settings if changed so the incoming tab receives them.

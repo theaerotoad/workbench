@@ -572,8 +572,34 @@ function closeTabNoConfirm(tabId) {
     }
 }
 
+function disposeWorkspaceModels({ keepDirty = false } = {}) {
+    if (typeof monacoModels === 'undefined' || !monacoModels) return;
+    const activeModel = (typeof monacoEditor !== 'undefined' && monacoEditor) ? monacoEditor.getModel() : null;
+    for (const [fp, model] of Array.from(monacoModels.entries())) {
+        if (keepDirty && isFileDirty(fp)) continue;
+        if (activeModel && model === activeModel) {
+            try { monacoEditor.setModel(null); } catch (e) {}
+        }
+        try { model.dispose(); } catch (e) {}
+        monacoModels.delete(fp);
+    }
+    if (!keepDirty && typeof state !== 'undefined' && state && state.dirtyFiles) {
+        state.dirtyFiles.clear();
+        state.isEditorDirty = false;
+    }
+    if (typeof monacoDiffEditor !== 'undefined' && monacoDiffEditor) {
+        try {
+            const dm = monacoDiffEditor.getModel();
+            if (dm && (!keepDirty || !state.currentDiffFilepath || !isFileDirty(state.currentDiffFilepath))) {
+                monacoDiffEditor.setModel(null);
+            }
+        } catch (e) {}
+    }
+}
+
 // --- AST_EXPORTS_START ---
 window.closeTabNoConfirm = closeTabNoConfirm;
+window.disposeWorkspaceModels = disposeWorkspaceModels;
 // --- AST_EXPORTS_END ---
 
 // --- currentAccent.js ---
@@ -1750,8 +1776,8 @@ async function switchTab(tabId, opts = {}) {
             persistTabState();
         };
 
-        // Fast path: if Monaco model already exists, activate it immediately with 0 network calls
-        if (typeof monacoModels !== 'undefined' && monacoModels.has(tabId)) {
+        // Fast path: if Monaco model already exists and its backing cache is still valid, activate immediately
+        if (typeof monacoModels !== 'undefined' && monacoModels.has(tabId) && (isFileDirty(tabId) || registry.files[tabId] !== undefined)) {
             if (monacoEditor) {
                 const model = monacoModels.get(tabId);
                 withDirtyTrackingSuppressed(() => monacoEditor.setModel(model));

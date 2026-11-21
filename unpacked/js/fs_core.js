@@ -23,28 +23,35 @@ export async function vfsFlush(h) {
     const r = h instanceof window.VFSNode ? h : h._n;
     if (!r._ws) return;
     clearTimeout(r._t);
-    r._dirty = false;
-    const entries = [];
-    const walk = (node, p) => {
-        for (const [k, c] of node.children) {
-            const path = p ? p + '/' + k : k;
-            if (c.kind === 'file') entries.push({ path, kind: 'file', blob: c.blob });
-            else { entries.push({ path, kind: 'directory' }); walk(c, path); }
-        }
-    };
-    walk(r, '');
-    try {
-        const db = await window.getDB();
-        const key = 'vws_' + r._ws.vid;
-        const tx = db.transaction(window.STORE_HANDLES, 'readwrite');
-        tx.objectStore(window.STORE_HANDLES).put({ vid: r._ws.vid, name: r.name, entries, updated: Date.now() }, key);
-        const ok = await new Promise(res => {
-            tx.oncomplete = () => res(true);
-            tx.onerror = () => res(false);
-            tx.onabort = () => res(false);
-        });
-        if (ok) window.remoteMarkDirty?.('vws', key);
-    } catch (e) {}
+    const prev = r._flushPromise || Promise.resolve();
+    const run = prev.catch(() => {}).then(async () => {
+        if (window.isWorkspaceReadOnly?.() || !r._ws) return;
+        r._dirty = false;
+        const entries = [];
+        const walk = (node, p) => {
+            for (const [k, c] of node.children) {
+                const path = p ? p + '/' + k : k;
+                if (c.kind === 'file') entries.push({ path, kind: 'file', blob: c.blob });
+                else { entries.push({ path, kind: 'directory' }); walk(c, path); }
+            }
+        };
+        walk(r, '');
+        try {
+            const db = await window.getDB();
+            const key = 'vws_' + r._ws.vid;
+            const tx = db.transaction(window.STORE_HANDLES, 'readwrite');
+            tx.objectStore(window.STORE_HANDLES).put({ vid: r._ws.vid, name: r.name, entries, updated: Date.now() }, key);
+            const ok = await new Promise(res => {
+                tx.oncomplete = () => res(true);
+                tx.onerror = () => res(false);
+                tx.onabort = () => res(false);
+            });
+            if (ok) window.remoteMarkDirty?.('vws', key);
+        } catch (e) {}
+    });
+    r._flushPromise = run;
+    await run;
+    if (r._flushPromise === run) r._flushPromise = null;
 }
 
 export function vfsPutDir(root, path) {
