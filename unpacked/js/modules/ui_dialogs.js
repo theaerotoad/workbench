@@ -472,15 +472,22 @@ function showToast(message, kind = 'info', durationMs = 2600) {
     if (!toastContainer) return;
     const el = document.createElement('div');
     el.className = `toast toast-${kind}`;
+    el.title = 'Click to dismiss';
     el.innerHTML = `<span class="icon">${TOAST_ICONS[kind] || TOAST_ICONS.info}</span><span>${escapeHTML(message)}</span>`;
     toastContainer.appendChild(el);
 
     requestAnimationFrame(() => el.classList.add('toast-visible'));
 
-    setTimeout(() => {
+    let dismissed = false;
+    const dismiss = () => {
+        if (dismissed) return;
+        dismissed = true;
+        clearTimeout(timer);
         el.classList.remove('toast-visible');
-        setTimeout(() => el.remove(), 220);
-    }, durationMs);
+        setTimeout(() => el.remove(), 180);
+    };
+    const timer = setTimeout(dismiss, durationMs);
+    el.addEventListener('click', dismiss);
 }
 
 // --- AST_EXPORTS_START ---

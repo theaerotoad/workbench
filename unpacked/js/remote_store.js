@@ -2341,7 +2341,7 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
                 window.showToast(
                     `You have ${n} unsaved editor change${n === 1 ? '' : 's'}. They are kept here; Take Over to save them.`,
                     'info',
-                    6000
+                    4000
                 );
             }
         } finally {
@@ -2488,12 +2488,12 @@ async function remoteTakeOverWorkspace() {
         const cleanly = !res.data.displacedTabId || !!res.data.handedOffCleanly;
         if (typeof window.showToast === 'function') {
             if (cleanly) {
-                window.showToast('Control transferred to this window', 'success', 3000);
+                window.showToast('Control transferred to this window', 'success', 2400);
             } else {
                 window.showToast(
                     'Control transferred to this window. The other window did not confirm; any of its unsynced changes will appear as conflict copies.',
                     'info',
-                    6000
+                    3500
                 );
             }
         }

@@ -38,7 +38,15 @@ To take a live backup while the server is running:
 
 ```bash
 sqlite3 <data-dir>/workbench_state.sqlite3 ".backup workbench_backup.sqlite3"
+
 ```
+
+### Multi-Tab / Multi-Device Leasing
+
+When `--data-dir` is enabled, each workspace allows one active writer at a time. Opening the same workspace in another tab or browser opens it in read-only mode with a banner to **Refresh** or **Take Over** control cleanly (with confirmation if the active window is mid-generation).
+
+Each active writer tab keeps one SSE stream open for lease revocation (and WebDAV workspaces keep an additional SSE stream for file-change events). Read-only tabs poll instead of holding a lease stream. Over plain HTTP/1.1, browsers limit concurrent connections to 6 per origin—if you regularly keep many tabs open at once, serve Workbench behind an HTTPS/HTTP/2 reverse proxy to lift that limit.
+
 
 ## License
 
