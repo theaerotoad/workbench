@@ -588,6 +588,7 @@ const _REFRESH_THROTTLE_MS = 10000;
 let _clientId = null;
 let _flushInFlight = null;
 let _flushRequested = false;
+let _lastFlushHadTransientError = false;
 let _flushDebounceTimer = null;
 let _flushMaxTimer = null;
 let _retryTimer = null;
@@ -598,6 +599,7 @@ let _lastRefreshAt = 0;
 let _listenersBound = false;
 const _toastedTooLargeKeys = new Set();
 const _metaLocks = new Map();
+const _markInFlight = new Set();
 let _catalogSnapshot = new Map(); // id -> JSON string
 
 function _syncMetaKey(store, key) {
@@ -1244,26 +1246,34 @@ function _scheduleFlush() {
 function remoteMarkDirty(store, key) {
     if (!RemoteStore.enabled || !store || !key) return;
     try {
-        _withSyncMeta(store, key, (cur) => ({
+        const p = _withSyncMeta(store, key, (cur) => ({
             ...cur,
             store,
             key,
             pending: 'put',
             dirtyGen: (cur.dirtyGen || 0) + 1
-        })).then(() => _scheduleFlush()).catch(() => {});
+        }));
+        _markInFlight.add(p);
+        p.finally(() => _markInFlight.delete(p))
+            .then(() => _scheduleFlush())
+            .catch(() => {});
     } catch (e) {}
 }
 
 function remoteMarkDeleted(store, key) {
     if (!RemoteStore.enabled || !store || !key) return;
     try {
-        _withSyncMeta(store, key, (cur) => ({
+        const p = _withSyncMeta(store, key, (cur) => ({
             ...cur,
             store,
             key,
             pending: 'delete',
             dirtyGen: (cur.dirtyGen || 0) + 1
-        })).then(() => _scheduleFlush()).catch(() => {});
+        }));
+        _markInFlight.add(p);
+        p.finally(() => _markInFlight.delete(p))
+            .then(() => _scheduleFlush())
+            .catch(() => {});
     } catch (e) {}
 }
 
@@ -1384,6 +1394,17 @@ async function _uploadOneEntry(meta) {
     return { transientError: false };
 }
 
+async function _hasPendingEntries() {
+    try {
+        const keys = await idbKeysRaw(STORE_SYNC);
+        for (const mk of keys) {
+            const meta = await idbGetRaw(STORE_SYNC, mk);
+            if (meta && meta.pending !== null) return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
 async function _runFlush() {
     if (!RemoteStore.enabled) return;
     if (_flushInFlight) {
@@ -1423,6 +1444,7 @@ async function _runFlush() {
             console.error('[remote_store] flush error:', err);
             hadTransientError = true;
         } finally {
+            _lastFlushHadTransientError = hadTransientError;
             _flushInFlight = null;
         }
 
@@ -1438,16 +1460,7 @@ async function _runFlush() {
             let morePending = _flushRequested;
             _flushRequested = false;
             if (!morePending) {
-                try {
-                    const keys = await idbKeysRaw(STORE_SYNC);
-                    for (const mk of keys) {
-                        const meta = await idbGetRaw(STORE_SYNC, mk);
-                        if (meta && meta.pending !== null) {
-                            morePending = true;
-                            break;
-                        }
-                    }
-                } catch (e) {}
+                morePending = await _hasPendingEntries();
             }
             if (morePending) {
                 _scheduleFlush();
@@ -1463,9 +1476,17 @@ async function _runFlush() {
     return _flushInFlight;
 }
 
-async function remoteFlushNow() {
+async function remoteFlushNow({ drain = false, deadlineMs = 4500 } = {}) {
     if (!RemoteStore.enabled) return;
-    await _runFlush();
+    const deadline = Date.now() + deadlineMs;
+    do {
+        if (_markInFlight.size > 0) {
+            await Promise.allSettled([..._markInFlight]);
+        }
+        await _runFlush();
+        if (_flushInFlight) await _flushInFlight;
+        if (!drain) return;
+    } while (await _hasPendingEntries() && !_lastFlushHadTransientError && Date.now() < deadline);
 }
 
 // --- Hydration (§7.5) ---
@@ -1896,11 +1917,26 @@ async function remoteInit() {
             if (document.visibilityState === 'hidden') {
                 remoteFlushNow();
             } else if (document.visibilityState === 'visible') {
+                if (_lease.mode === 'writer') {
+                    _sendLeaseHeartbeat();
+                } else if (_lease.mode === 'readonly') {
+                    _pollLeaseStatus(true);
+                }
                 remoteRefreshCurrentWorkspace();
             }
         });
         window.addEventListener('pagehide', () => {
+            remoteReleaseWorkspaceLease({ beacon: true });
             remoteFlushNow();
+        });
+        window.addEventListener('pageshow', (ev) => {
+            if (ev.persisted && window.rootHandle && typeof window.currentWsName === 'function') {
+                remoteAcquireWorkspaceLease(window.currentWsName()).then(() => {
+                    if (typeof window.setWorkspaceReadOnly === 'function') {
+                        window.setWorkspaceReadOnly(isWorkspaceReadOnly());
+                    }
+                }).catch(() => {});
+            }
         });
     }
 
@@ -1908,6 +1944,570 @@ async function remoteInit() {
 
     // Kick off initial upload pass for any seeded or pending entries (non-blocking)
     _scheduleFlush();
+}
+
+// =========================================================================
+// Single-Active-Workspace Lease & Read-Only Handoff
+// =========================================================================
+
+function _detectClientLabel() {
+    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+    let browser = 'Browser';
+    if (/Edg\//i.test(ua)) browser = 'Edge';
+    else if (/OPR\//i.test(ua) || /Opera/i.test(ua)) browser = 'Opera';
+    else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+    else if (/Chrome\//i.test(ua) || /CriOS\//i.test(ua)) browser = 'Chrome';
+    else if (/Safari\//i.test(ua)) browser = 'Safari';
+
+    let os = '';
+    if (/Android/i.test(ua)) os = 'Android';
+    else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
+    else if (/Windows/i.test(ua)) os = 'Windows';
+    else if (/Mac OS X|Macintosh/i.test(ua)) os = 'macOS';
+    else if (/CrOS/i.test(ua)) os = 'ChromeOS';
+    else if (/Linux/i.test(ua)) os = 'Linux';
+
+    return os ? `${browser} on ${os}` : browser;
+}
+
+const _tabId = makeSyncId();
+const _tabLabel = _detectClientLabel();
+let _lease = {
+    wsKey: null,
+    mode: 'none',          // 'none' | 'writer' | 'readonly'
+    epoch: 0,
+    holder: null,          // serialized holder when readonly (or null = free)
+    revoked: false,        // we held it and lost it
+    takingOver: false,
+    revoking: null,        // Promise while _handleLeaseRevoked runs (idempotency)
+    heartbeatTimer: null,
+    pollTimer: null,
+    eventSource: null,
+    lastBusySent: false
+};
+
+function isWorkspaceReadOnly() {
+    return _lease.mode === 'readonly';
+}
+
+function getWorkspaceLeaseState() {
+    return {
+        wsKey: _lease.wsKey,
+        mode: _lease.mode,
+        epoch: _lease.epoch,
+        holder: _lease.holder,
+        revoked: _lease.revoked,
+        takingOver: _lease.takingOver,
+        revoking: !!_lease.revoking,
+        tabId: _tabId,
+        myClientId: _clientId
+    };
+}
+
+function _computeBusy() {
+    if (!window.state || !window.state.sessions || typeof window.isSessionRunning !== 'function') {
+        return false;
+    }
+    return Object.keys(window.state.sessions).some((id) => window.isSessionRunning(id));
+}
+
+function _stopLeaseHeartbeat() {
+    if (_lease.heartbeatTimer) {
+        clearInterval(_lease.heartbeatTimer);
+        _lease.heartbeatTimer = null;
+    }
+}
+
+function _stopLeasePoll() {
+    if (_lease.pollTimer) {
+        clearInterval(_lease.pollTimer);
+        _lease.pollTimer = null;
+    }
+}
+
+function _closeLeaseStream() {
+    if (_lease.eventSource) {
+        try { _lease.eventSource.close(); } catch (e) {}
+        _lease.eventSource = null;
+    }
+}
+
+function _openLeaseStream(wsKey) {
+    _closeLeaseStream();
+    if (!RemoteStore.enabled || !RemoteStore.caps?.leases || !wsKey) return;
+    if (typeof EventSource === 'undefined') return;
+    try {
+        const url = `/api/v1/leases/events?wsKey=${encodeURIComponent(wsKey)}&tabId=${encodeURIComponent(_tabId)}`;
+        const es = new EventSource(url);
+        _lease.eventSource = es;
+        es.addEventListener('revoke', (ev) => {
+            if (_lease.eventSource !== es || _lease.wsKey !== wsKey) return;
+            let payload = {};
+            try { payload = JSON.parse(ev.data || '{}'); } catch (e) {}
+            _handleLeaseRevoked(payload);
+        });
+        es.onerror = () => {
+            // Do not close on error; EventSource reconnects automatically.
+        };
+    } catch (e) {}
+}
+
+async function _sendLeaseHeartbeat() {
+    if (!RemoteStore.enabled || !RemoteStore.caps?.leases) return;
+    if (_lease.mode !== 'writer' || !_lease.wsKey || _lease.revoking) return;
+    const wsKey = _lease.wsKey;
+    const busy = _computeBusy();
+    _lease.lastBusySent = busy;
+    try {
+        const resp = await fetch('/api/v1/leases', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                wsKey,
+                tabId: _tabId,
+                clientId: _clientId || '',
+                label: _tabLabel,
+                busy,
+                force: false,
+                abortBusy: false
+            }),
+            cache: 'no-store'
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (e) {}
+        if (_lease.wsKey !== wsKey || _lease.mode !== 'writer' || _lease.revoking) return;
+        if (resp.status === 200 && data && data.granted) {
+            if (data.lease && typeof data.lease.epoch === 'number') {
+                _lease.epoch = data.lease.epoch;
+            }
+            if (!_lease.eventSource) {
+                _openLeaseStream(wsKey);
+            }
+        } else if (resp.status === 409) {
+            _handleLeaseRevoked({
+                handoffId: null,
+                newLabel: data?.holder?.label || null,
+                abortBusy: false
+            });
+        }
+    } catch (e) {
+        // Network error: remain writer, next heartbeat will retry.
+    }
+}
+
+function _startLeaseHeartbeat() {
+    _stopLeaseHeartbeat();
+    const intervalMs = (RemoteStore.caps && RemoteStore.caps.leaseHeartbeatMs) || 10000;
+    _lease.heartbeatTimer = setInterval(() => {
+        _sendLeaseHeartbeat();
+    }, intervalMs);
+}
+
+async function _pollLeaseStatus(force = false) {
+    if (!RemoteStore.enabled || !RemoteStore.caps?.leases) return;
+    if (_lease.mode !== 'readonly' || !_lease.wsKey) return;
+    if (!force && document.visibilityState !== 'visible') return;
+    const wsKey = _lease.wsKey;
+    try {
+        const resp = await fetch(`/api/v1/leases?wsKey=${encodeURIComponent(wsKey)}`, {
+            cache: 'no-store'
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (_lease.wsKey !== wsKey || _lease.mode !== 'readonly') return;
+        _lease.holder = data.holder || null;
+        if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+            window.updateWorkspaceLeaseBanner();
+        }
+    } catch (e) {}
+}
+
+function _startLeasePoll() {
+    _stopLeasePoll();
+    const intervalMs = (RemoteStore.caps && RemoteStore.caps.leasePollMs) || 5000;
+    _lease.pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            _pollLeaseStatus(false);
+        }
+    }, intervalMs);
+}
+
+function remoteLeaseBusyMaybeChanged() {
+    if (!RemoteStore.enabled || !RemoteStore.caps?.leases) return;
+    if (_lease.mode !== 'writer' || !_lease.wsKey || _lease.revoking) return;
+    const busy = _computeBusy();
+    if (busy !== _lease.lastBusySent) {
+        _sendLeaseHeartbeat();
+    }
+}
+
+async function remoteAcquireWorkspaceLease(wsKey) {
+    _stopLeaseHeartbeat();
+    _stopLeasePoll();
+    _closeLeaseStream();
+    _lease.revoking = null;
+    _lease.takingOver = false;
+    _lease.revoked = false;
+    _lease.holder = null;
+    _lease.epoch = 0;
+    _lease.wsKey = wsKey || null;
+
+    if (!wsKey || !RemoteStore.enabled || !RemoteStore.caps?.leases) {
+        _lease.mode = wsKey ? 'writer' : 'none';
+        return { mode: _lease.mode, granted: true };
+    }
+
+    const busy = _computeBusy();
+    _lease.lastBusySent = busy;
+
+    try {
+        const resp = await fetch('/api/v1/leases', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                wsKey,
+                tabId: _tabId,
+                clientId: _clientId || '',
+                label: _tabLabel,
+                busy,
+                force: false,
+                abortBusy: false
+            }),
+            cache: 'no-store'
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (e) {}
+
+        if (_lease.wsKey !== wsKey) {
+            return { mode: _lease.mode, granted: _lease.mode === 'writer' };
+        }
+
+        if (resp.status === 200 && data && data.granted) {
+            _lease.mode = 'writer';
+            _lease.epoch = data.lease?.epoch || 1;
+            _lease.holder = null;
+            _openLeaseStream(wsKey);
+            _startLeaseHeartbeat();
+            return { mode: 'writer', granted: true, lease: data.lease };
+        }
+
+        if (resp.status === 409) {
+            _lease.mode = 'readonly';
+            _lease.holder = data?.holder || null;
+            _startLeasePoll();
+            if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+                window.updateWorkspaceLeaseBanner();
+            }
+            return { mode: 'readonly', granted: false, holder: _lease.holder };
+        }
+
+        // 5xx or unexpected status: fail open, still start heartbeat
+        _lease.mode = 'writer';
+        _startLeaseHeartbeat();
+        return { mode: 'writer', granted: true, failOpen: true };
+    } catch (e) {
+        // Network error: fail open, still start heartbeat
+        if (_lease.wsKey === wsKey) {
+            _lease.mode = 'writer';
+            _startLeaseHeartbeat();
+        }
+        return { mode: 'writer', granted: true, failOpen: true };
+    }
+}
+
+function remoteReleaseWorkspaceLease({ beacon = false } = {}) {
+    const wsKey = _lease.wsKey;
+    const wasWriter = _lease.mode === 'writer' && !!wsKey;
+
+    _stopLeaseHeartbeat();
+    _stopLeasePoll();
+    _closeLeaseStream();
+
+    _lease.wsKey = null;
+    _lease.mode = 'none';
+    _lease.epoch = 0;
+    _lease.holder = null;
+    _lease.revoked = false;
+    _lease.takingOver = false;
+    _lease.revoking = null;
+    _lease.lastBusySent = false;
+
+    if (!beacon && typeof window.setWorkspaceReadOnly === 'function') {
+        window.setWorkspaceReadOnly(false);
+    }
+
+    if (wasWriter && RemoteStore.enabled && RemoteStore.caps?.leases) {
+        const payload = JSON.stringify({ wsKey, tabId: _tabId });
+        if (beacon && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+            try {
+                navigator.sendBeacon('/api/v1/leases/release', new Blob([payload], { type: 'application/json' }));
+                return;
+            } catch (e) {}
+        }
+        try {
+            fetch('/api/v1/leases/release', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                keepalive: true
+            }).catch(() => {});
+        } catch (e) {}
+    }
+}
+
+async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBusy = false } = {}) {
+    if (_lease.revoking) return _lease.revoking;
+    if (_lease.mode !== 'writer' || !_lease.wsKey) return;
+
+    const wsKey = _lease.wsKey;
+    const run = (async () => {
+        try {
+            // 1. Stop heartbeat; lock UI only while storage remains in 'writer' mode.
+            _stopLeaseHeartbeat();
+            if (typeof window.setWorkspaceReadOnly === 'function') {
+                window.setWorkspaceReadOnly(true);
+            }
+
+            // 2. Abort any running generation and explicitly save partial turns.
+            if (window.state && window.state.sessions && typeof window.isSessionRunning === 'function') {
+                for (const id of Object.keys(window.state.sessions)) {
+                    if (window.isSessionRunning(id)) {
+                        if (typeof window.abortGeneration === 'function') {
+                            window.abortGeneration({ showResumeUI: false, sessionId: id });
+                        }
+                        if (typeof window.getGenState === 'function') {
+                            window.getGenState(id).hasNewContent = true;
+                        }
+                        if (typeof window.saveSession === 'function') {
+                            await window.saveSession(id, true);
+                        }
+                    }
+                }
+            }
+
+            // 3. Persist active session state.
+            if (
+                window.state &&
+                window.state.sessions &&
+                window.state.sessions[window.state.activeSessionId] &&
+                typeof window.saveActiveSession === 'function'
+            ) {
+                await window.saveActiveSession(true);
+            }
+
+            // 4. Flush virtual workspace snapshot if dirty.
+            if (
+                window.rootHandle &&
+                window.rootHandle.isVirtual &&
+                window.rootHandle._n &&
+                window.rootHandle._n._dirty &&
+                typeof window.vfsFlush === 'function'
+            ) {
+                await window.vfsFlush(window.rootHandle);
+            }
+
+            // 5. Drain outbox to server within handoff deadline.
+            await remoteFlushNow({ drain: true, deadlineMs: 4500 });
+
+            // 6. Switch storage to read-only, close SSE, start polling.
+            if (_lease.wsKey === wsKey) {
+                _lease.mode = 'readonly';
+                _lease.revoked = true;
+                _lease.holder = { label: newLabel || 'another window', busy: false };
+                _closeLeaseStream();
+                _startLeasePoll();
+            }
+
+            // 7. Ack handoff if requested.
+            if (handoffId) {
+                try {
+                    await fetch('/api/v1/leases/ack', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ wsKey, tabId: _tabId, handoffId }),
+                        cache: 'no-store'
+                    });
+                } catch (e) {}
+            }
+
+            // 8. Warn if unsaved editor buffers remain.
+            if (
+                window.state &&
+                window.state.dirtyFiles &&
+                window.state.dirtyFiles.size > 0 &&
+                typeof window.showToast === 'function'
+            ) {
+                const n = window.state.dirtyFiles.size;
+                window.showToast(
+                    `You have ${n} unsaved editor change${n === 1 ? '' : 's'}. They are kept here; Take Over to save them.`,
+                    'info',
+                    6000
+                );
+            }
+        } finally {
+            _lease.revoking = null;
+            if (_lease.wsKey === wsKey && typeof window.updateWorkspaceLeaseBanner === 'function') {
+                window.updateWorkspaceLeaseBanner();
+            }
+        }
+    })();
+
+    _lease.revoking = run;
+    if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+        window.updateWorkspaceLeaseBanner();
+    }
+    return run;
+}
+
+async function remoteReopenWorkspace() {
+    const h = window.rootHandle;
+    if (!h) return;
+    if (h.isVirtual) {
+        const n = h._n;
+        const vid = n && n._ws && n._ws.vid;
+        if (n) {
+            clearTimeout(n._t);
+            n._dirty = false;
+            n._ws = null; // Detach old VFS tree before hydrating (Pitfall 3)
+        }
+        const snap = await window.loadVirtualSnapshot(vid);
+        if (!snap) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Virtual workspace data not found', 'error');
+            }
+            if (typeof window.closeWorkspace === 'function') {
+                window.closeWorkspace();
+            }
+            return;
+        }
+        await window.setWorkspace(window.buildVirtualHandle(vid, snap), { reopen: true });
+    } else {
+        await window.setWorkspace(h, { reopen: true });
+    }
+}
+
+async function remoteRefreshReadOnlyWorkspace() {
+    if (!window.rootHandle) return;
+    await remoteReopenWorkspace();
+    await _pollLeaseStatus(true);
+    if (typeof window.showToast === 'function') {
+        window.showToast('Workspace refreshed', 'info', 2000);
+    }
+}
+
+async function remoteTakeOverWorkspace() {
+    if (_lease.takingOver || _lease.mode !== 'readonly' || !_lease.wsKey) return;
+    const wsKey = _lease.wsKey;
+
+    const confirmBusy = async (holder) => {
+        const lbl = (holder && holder.label) ? holder.label : 'Another window';
+        if (typeof window.confirmDialog === 'function') {
+            return await window.confirmDialog(
+                `${lbl} is generating a response. Taking over stops it. Continue?`,
+                { confirmLabel: 'Stop & Take Over', danger: true }
+            );
+        }
+        return true;
+    };
+
+    let abortBusy = false;
+    if (_lease.holder && _lease.holder.busy) {
+        const ok = await confirmBusy(_lease.holder);
+        if (!ok) return;
+        abortBusy = true;
+    }
+
+    _lease.takingOver = true;
+    if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+        window.updateWorkspaceLeaseBanner();
+    }
+
+    const postTakeover = async (withAbortBusy) => {
+        const resp = await fetch('/api/v1/leases', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                wsKey,
+                tabId: _tabId,
+                clientId: _clientId || '',
+                label: _tabLabel,
+                busy: false,
+                force: true,
+                abortBusy: !!withAbortBusy
+            }),
+            cache: 'no-store'
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (e) {}
+        return { status: resp.status, data };
+    };
+
+    try {
+        let res = await postTakeover(abortBusy);
+        if (res.status === 409 && res.data && res.data.busyConflict && !abortBusy) {
+            _lease.holder = res.data.holder || _lease.holder;
+            if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+                window.updateWorkspaceLeaseBanner();
+            }
+            const ok = await confirmBusy(_lease.holder);
+            if (!ok) return;
+            abortBusy = true;
+            res = await postTakeover(true);
+        }
+
+        if (res.status === 409 && res.data && res.data.handoffInProgress) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Another window is taking over', 'info', 3000);
+            }
+            await _pollLeaseStatus(true);
+            return;
+        }
+
+        if (res.status !== 200 || !res.data || !res.data.granted) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Could not take over workspace', 'error', 3000);
+            }
+            await _pollLeaseStatus(true);
+            return;
+        }
+
+        _stopLeasePoll();
+        _lease.mode = 'writer';
+        _lease.revoked = false;
+        _lease.holder = null;
+        _lease.epoch = res.data.lease?.epoch || (_lease.epoch + 1);
+        _lease.lastBusySent = _computeBusy();
+        _openLeaseStream(wsKey);
+        _startLeaseHeartbeat();
+
+        await remoteReopenWorkspace();
+        if (typeof window.setWorkspaceReadOnly === 'function') {
+            window.setWorkspaceReadOnly(false);
+        }
+
+        const cleanly = !res.data.displacedTabId || !!res.data.handedOffCleanly;
+        if (typeof window.showToast === 'function') {
+            if (cleanly) {
+                window.showToast('Control transferred to this window', 'success', 3000);
+            } else {
+                window.showToast(
+                    'Control transferred to this window. The other window did not confirm; any of its unsynced changes will appear as conflict copies.',
+                    'info',
+                    6000
+                );
+            }
+        }
+    } catch (err) {
+        console.warn('[remote_store] takeover failed:', err);
+        if (typeof window.showToast === 'function') {
+            window.showToast('Failed to take over workspace: ' + (err?.message || 'network error'), 'error', 4000);
+        }
+    } finally {
+        _lease.takingOver = false;
+        if (typeof window.updateWorkspaceLeaseBanner === 'function') {
+            window.updateWorkspaceLeaseBanner();
+        }
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -1941,4 +2541,12 @@ window.remoteFlushNow = remoteFlushNow;
 window.remoteReloadSessions = remoteReloadSessions;
 window.remoteRefreshCurrentWorkspace = remoteRefreshCurrentWorkspace;
 window.remoteSyncCatalogDiff = remoteSyncCatalogDiff;
+window.isWorkspaceReadOnly = isWorkspaceReadOnly;
+window.getWorkspaceLeaseState = getWorkspaceLeaseState;
+window.remoteAcquireWorkspaceLease = remoteAcquireWorkspaceLease;
+window.remoteReleaseWorkspaceLease = remoteReleaseWorkspaceLease;
+window.remoteTakeOverWorkspace = remoteTakeOverWorkspace;
+window.remoteRefreshReadOnlyWorkspace = remoteRefreshReadOnlyWorkspace;
+window.remoteReopenWorkspace = remoteReopenWorkspace;
+window.remoteLeaseBusyMaybeChanged = remoteLeaseBusyMaybeChanged;
 // --- AST_EXPORTS_END ---

@@ -35,6 +35,7 @@ window.addToRecentFolders = addToRecentFolders;
 // --- closeWorkspace.js ---
 function closeWorkspace() {
     if (!rootHandle) return;
+    const wasReadOnly = !!window.isWorkspaceReadOnly?.();
 
     if (isAnySessionRunning()) {
         for (const s of Object.values(state.sessions)) {
@@ -46,7 +47,7 @@ function closeWorkspace() {
 
     if (typeof closeWebDAVEvents === 'function') closeWebDAVEvents();
     if (rootHandle.isVirtual) vfsFlush(rootHandle);
-    if (rootHandle.isWebDAV && typeof AppConfig !== 'undefined' && AppConfig.get('webdav-sync-agent') !== 'true') {
+    if (!wasReadOnly && rootHandle.isWebDAV && typeof AppConfig !== 'undefined' && AppConfig.get('webdav-sync-agent') !== 'true') {
         const wsKey = wsStorageName(rootHandle);
         try {
             if (AppConfig._data) localStorage.setItem(`app_config_${wsKey}`, JSON.stringify(AppConfig._data));
@@ -57,6 +58,12 @@ function closeWorkspace() {
                 if (cfg) localStorage.setItem(`tools_config_${wsKey}`, JSON.stringify(cfg));
             }
         } catch(e) {}
+    }
+    if (typeof window.remoteReleaseWorkspaceLease === 'function') {
+        window.remoteReleaseWorkspaceLease();
+    }
+    if (typeof window.setWorkspaceReadOnly === 'function') {
+        window.setWorkspaceReadOnly(false);
     }
     rootHandle = null;
     document.body.classList.add('no-workspace');
@@ -584,6 +591,16 @@ function renderRecentFoldersList() {
                 if (!newName) { showToast('Name cannot be empty', 'error'); return; }
                 if (newName === origName) { renderRecentFoldersList(); return; }
 
+                if (
+                    rootHandle && rootHandle.isVirtual &&
+                    rootHandle._n && rootHandle._n._ws && rootHandle._n._ws.vid === vid &&
+                    window.isWorkspaceReadOnly?.()
+                ) {
+                    showToast('Workspace is read-only', 'error');
+                    renderRecentFoldersList();
+                    return;
+                }
+
                 // Update recent-folders entry in localStorage (by vid, not name).
                 const folders = getRecentFolders();
                 const f = folders.find(x => x.vid === vid);
@@ -819,8 +836,9 @@ window.saveRecentHandleToDB = saveRecentHandleToDB;
 // --- AST_EXPORTS_END ---
 
 // --- setWorkspace.js ---
-async function setWorkspace(handle) {
-    if (rootHandle && rootHandle !== handle) {
+async function setWorkspace(handle, opts = {}) {
+    const isReopen = !!(opts && opts.reopen);
+    if (!isReopen && rootHandle && rootHandle !== handle) {
         await closeWorkspaceNoConfirm();
     }
     if (typeof resetToolRegistry === 'function') {
@@ -828,6 +846,12 @@ async function setWorkspace(handle) {
     }
     ensureCatalogEntry(handle);
     rootHandle = handle;
+    if (!isReopen && typeof window.remoteAcquireWorkspaceLease === 'function') {
+        await window.remoteAcquireWorkspaceLease(currentWsName());
+    }
+    if (typeof window.setWorkspaceReadOnly === 'function') {
+        window.setWorkspaceReadOnly(!!window.isWorkspaceReadOnly?.());
+    }
     document.body.classList.remove('no-workspace');
     document.body.classList.add('has-workspace');
     updateWorkspaceTitle();
@@ -846,6 +870,12 @@ async function setWorkspace(handle) {
         brandBtnSet.classList.add('can-exit');
     }
 
+    if (isReopen) {
+        state.sessions = {};
+        state.sessionIds = null;
+        state.sessionMeta = null;
+        registry.meta = {};
+    }
     registry.files = {};
     registry.originalFiles = {};
     registry.opsLog = {};
