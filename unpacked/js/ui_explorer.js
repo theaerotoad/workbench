@@ -500,8 +500,19 @@ window.promptDialog = promptDialog;
                 }
                 if (rootHandle) await closeWorkspaceNoConfirm();
                 const handle = await createVirtualWorkspace(name, list);
-                const folders = getRecentFolders().filter(f => f.vid !== handle.vid);
-                folders.unshift({ name, virtual: true, vid: handle.vid, lastAccessed: Date.now() });
+                const existingFolders = getRecentFolders();
+                const prevVws = existingFolders.find(f => f.vid === handle.vid);
+                const folders = existingFolders.filter(f => f.vid !== handle.vid);
+                const vwsEntry = {
+                    name,
+                    virtual: true,
+                    vid: handle.vid,
+                    storageKey: (prevVws && prevVws.storageKey) || wsStorageName(handle),
+                    lastAccessed: Date.now()
+                };
+                if (prevVws && prevVws.id) vwsEntry.id = prevVws.id;
+                handle._storageKey = vwsEntry.storageKey;
+                folders.unshift(vwsEntry);
                 saveRecentFolders(folders);
                 await setWorkspace(handle);
                 renderRecentFoldersList();
@@ -592,12 +603,26 @@ window.promptDialog = promptDialog;
 
             let folders = getRecentFolders();
             const originalEditing = editingWebDAVFolder;
+            let prevEntry = null;
             if (originalEditing) {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true)));
+                prevEntry = folders.find(f =>
+                    (originalEditing.id && f.id === originalEditing.id) ||
+                    (f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true))
+                ) || originalEditing;
+                folders = folders.filter(f =>
+                    f !== prevEntry &&
+                    !(originalEditing.id && f.id === originalEditing.id) &&
+                    !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true))
+                );
             } else {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === normPath));
+                prevEntry = folders.find(f => f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === normPath) || null;
+                folders = folders.filter(f => f !== prevEntry && !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === normPath));
             }
-            folders.unshift({ name, type: 'webdav', url: urlObj.origin, webdavPath: normPath, auth, lastAccessed: Date.now() });
+            const savedEntry = { name, type: 'webdav', url: urlObj.origin, webdavPath: normPath, auth, lastAccessed: Date.now() };
+            if (prevEntry && prevEntry.id) savedEntry.id = prevEntry.id;
+            if (prevEntry && prevEntry.storageKey) savedEntry.storageKey = prevEntry.storageKey;
+            if (urlObj.origin === window.location.origin) savedEntry.sameOrigin = true;
+            folders.unshift(savedEntry);
             saveRecentFolders(folders);
 
             if (rootHandle && rootHandle.isWebDAV && originalEditing && rootHandle.url === originalEditing.url && rootHandle.path === originalEditing.webdavPath) {
@@ -663,12 +688,29 @@ window.promptDialog = promptDialog;
             }
             if (rootHandle) await closeWorkspaceNoConfirm();
             let folders = getRecentFolders();
+            let prevEntry = null;
             if (originalEditing) {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true)));
+                prevEntry = folders.find(f =>
+                    (originalEditing.id && f.id === originalEditing.id) ||
+                    (f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true))
+                ) || originalEditing;
+                folders = folders.filter(f =>
+                    f !== prevEntry &&
+                    !(originalEditing.id && f.id === originalEditing.id) &&
+                    !(f.type === 'webdav' && f.url === originalEditing.url && (f.webdavPath || '') === (originalEditing.webdavPath || '') && (originalEditing.name ? f.name === originalEditing.name : true))
+                );
             } else {
-                folders = folders.filter(f => !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === (handle.path || '')));
+                prevEntry = folders.find(f => f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === (handle.path || '')) || null;
+                folders = folders.filter(f => f !== prevEntry && !(f.type === 'webdav' && f.url === urlObj.origin && (f.webdavPath || '') === (handle.path || '')));
             }
-            folders.unshift({ name: handle.name, type: 'webdav', url: urlObj.origin, webdavPath: handle.path, auth, lastAccessed: Date.now() });
+            const connectedEntry = { name: handle.name, type: 'webdav', url: urlObj.origin, webdavPath: handle.path, auth, lastAccessed: Date.now() };
+            if (prevEntry && prevEntry.id) connectedEntry.id = prevEntry.id;
+            if (prevEntry && prevEntry.storageKey) {
+                connectedEntry.storageKey = prevEntry.storageKey;
+                handle._storageKey = prevEntry.storageKey;
+            }
+            if (urlObj.origin === window.location.origin) connectedEntry.sameOrigin = true;
+            folders.unshift(connectedEntry);
             saveRecentFolders(folders);
             await setWorkspace(handle);
             renderRecentFoldersList();

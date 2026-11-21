@@ -1,8 +1,9 @@
 // --- addToRecentFolders.js ---
 async function addToRecentFolders(handle) {
     const folders = getRecentFolders();
+    const existingIdx = folders.findIndex(f => entryMatchesHandle(f, handle));
+    const prev = existingIdx !== -1 ? folders[existingIdx] : null;
     let entry;
-    let existingIdx;
     if (handle.isWebDAV) {
         entry = {
             name: handle.name,
@@ -12,11 +13,12 @@ async function addToRecentFolders(handle) {
             auth: handle.auth,
             lastAccessed: Date.now()
         };
-        existingIdx = folders.findIndex(f => f.type === 'webdav' && f.url === handle.url && (f.webdavPath || '') === (handle.path || ''));
     } else {
         entry = { name: handle.name, lastAccessed: Date.now() };
-        existingIdx = folders.findIndex(f => f.name === handle.name && !f.virtual && f.type !== 'webdav');
     }
+    if (prev && prev.id) entry.id = prev.id;
+    const storageKey = handle._storageKey || (prev && prev.storageKey);
+    if (storageKey) entry.storageKey = storageKey;
     if (existingIdx !== -1) folders.splice(existingIdx, 1);
     folders.unshift(entry);
     saveRecentFolders(folders);
@@ -305,9 +307,12 @@ window.markNoFsApi = markNoFsApi;
 // --- markRecentFolderAccessed.js ---
 function markRecentFolderAccessed(folderName, matchObj = null) {
     const folders = getRecentFolders();
-    const folder = matchObj && matchObj.type === 'webdav'
-        ? folders.find(f => f.type === 'webdav' && f.name === folderName && (f.url || '') === (matchObj.url || '') && (f.webdavPath || '') === (matchObj.webdavPath || ''))
-        : folders.find(f => f.name === folderName);
+    let folder = (matchObj && matchObj.id) ? folders.find(f => f.id === matchObj.id) : null;
+    if (!folder) {
+        folder = matchObj && matchObj.type === 'webdav'
+            ? folders.find(f => f.type === 'webdav' && f.name === folderName && (f.url || '') === (matchObj.url || '') && (f.webdavPath || '') === (matchObj.webdavPath || ''))
+            : folders.find(f => f.name === folderName);
+    }
     if (folder) {
         folder.lastAccessed = Date.now();
         saveRecentFolders(folders);
@@ -491,7 +496,9 @@ function renderRecentFoldersList() {
                     || folders.find(x => x.name === folderName && x.type === 'webdav');
                 if (f) {
                     try {
-                        const handle = new WebDAVDirHandle(f.url, f.webdavPath || '/', f.auth, f.name);
+                        const targetUrl = f.sameOrigin ? window.location.origin : f.url;
+                        const handle = new WebDAVDirHandle(targetUrl, f.webdavPath || '/', f.auth, f.name);
+                        if (f.storageKey) handle._storageKey = f.storageKey;
                         await handle._checkExists('');
                         await setWorkspace(handle);
                         markRecentFolderAccessed(folderName, f);
@@ -770,7 +777,27 @@ window.runSyncWorkspace = runSyncWorkspace;
 function saveRecentFolders(folders) {
     let realCount = 0;   // virtual & webdav workspaces are never evicted
     const keep = folders.filter(f => f.virtual || f.type === 'webdav' || (realCount++ < MAX_RECENT_FOLDERS));
+    const genId = typeof window.makeSyncId === 'function'
+        ? window.makeSyncId
+        : () => 'cat_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+    for (const entry of keep) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (!entry.id) entry.id = genId();
+        if (entry.type === 'webdav') {
+            const normUrl = (entry.url || '').replace(/\/+$/, '');
+            if (normUrl && normUrl === window.location.origin) {
+                entry.sameOrigin = true;
+            } else if (normUrl && normUrl !== window.location.origin) {
+                delete entry.sameOrigin;
+            } else if (entry.sameOrigin && !normUrl) {
+                entry.url = window.location.origin;
+            }
+        }
+    }
     localStorage.setItem('recent_folders_json', JSON.stringify(keep));
+    if (typeof window.remoteSyncCatalogDiff === 'function') {
+        window.remoteSyncCatalogDiff(keep);
+    }
 }
 
 // --- AST_EXPORTS_START ---
@@ -799,6 +826,7 @@ async function setWorkspace(handle) {
     if (typeof resetToolRegistry === 'function') {
         resetToolRegistry();
     }
+    ensureCatalogEntry(handle);
     rootHandle = handle;
     document.body.classList.remove('no-workspace');
     document.body.classList.add('has-workspace');
@@ -841,6 +869,11 @@ async function setWorkspace(handle) {
     }
     if (typeof refreshPermBanner === 'function') {
         refreshPermBanner();
+    }
+
+    if (window.RemoteStore && window.RemoteStore.enabled && typeof window.remoteHydrate === 'function') {
+        await window.remoteHydrate('sessions', getWorkspaceSessionKey() + '::');
+        await window.remoteHydrate('baselines', currentWsName() + '::');
     }
 
     await selectInitialSession();
@@ -1295,8 +1328,48 @@ window.setupWebDAVEvents = setupWebDAVEvents;
 window.closeWebDAVEvents = closeWebDAVEvents;
 
 // --- wsStorageName.js ---
-function wsStorageName(h) { 
-    if (h && h.isVirtual) return 'virtual_' + h.vid; 
+function _normalizeWebdavDirPath(p) {
+    const s = p || '/';
+    return (s.startsWith('/') ? s : '/' + s).replace(/\/+$/, '') + '/';
+}
+
+function entryMatchesHandle(entry, handle) {
+    if (!entry || !handle) return false;
+    if (handle.isVirtual) {
+        const vid = handle.vid || handle._n?._ws?.vid;
+        return !!(entry.virtual && vid && entry.vid === vid);
+    }
+    if (handle.isWebDAV) {
+        if (entry.type !== 'webdav') return false;
+        if (_normalizeWebdavDirPath(entry.webdavPath) !== _normalizeWebdavDirPath(handle.path)) return false;
+        const hUrl = (handle.url || '').replace(/\/+$/, '');
+        if (entry.sameOrigin) return hUrl === window.location.origin;
+        return (entry.url || '').replace(/\/+$/, '') === hUrl;
+    }
+    return !!(!entry.virtual && entry.type !== 'webdav' && entry.name === handle.name);
+}
+
+function ensureCatalogEntry(handle) {
+    if (!handle) return;
+    const folders = getRecentFolders();
+    const entry = folders.find(f => entryMatchesHandle(f, handle));
+    if (entry) {
+        if (entry.storageKey) {
+            handle._storageKey = entry.storageKey;
+        } else {
+            const key = handle._storageKey || wsStorageName(handle);
+            entry.storageKey = key;
+            handle._storageKey = key;
+            saveRecentFolders(folders);
+        }
+    } else if (!handle._storageKey) {
+        handle._storageKey = wsStorageName(handle);
+    }
+}
+
+function wsStorageName(h) {
+    if (h && h._storageKey) return h._storageKey;
+    if (h && h.isVirtual) return 'virtual_' + h.vid;
     if (h && h.isWebDAV) {
         if (h.wsKey) return h.wsKey;
         const cleanName = (h.name || 'webdav').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24);
@@ -1312,10 +1385,12 @@ function wsStorageName(h) {
         const hash = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
         return `webdav_${cleanName}_${hash}`;
     }
-    return h ? h.name : ''; 
+    return h ? h.name : '';
 }
 
 // --- AST_EXPORTS_START ---
+window.entryMatchesHandle = entryMatchesHandle;
+window.ensureCatalogEntry = ensureCatalogEntry;
 window.wsStorageName = wsStorageName;
 // --- AST_EXPORTS_END ---
 
@@ -1326,18 +1401,7 @@ let _wsPopoverBound = false;
 
 function isCurrentWorkspaceEntry(entry) {
     if (!rootHandle || !entry) return false;
-    if (entry.virtual) {
-        const curVid = rootHandle._n?._ws?.vid || rootHandle.vid;
-        return !!(rootHandle.isVirtual && curVid && curVid === entry.vid);
-    }
-    if (entry.type === 'webdav') {
-        return !!(
-            rootHandle.isWebDAV &&
-            rootHandle.url === entry.url &&
-            (rootHandle.path || '/') === (entry.webdavPath || '/')
-        );
-    }
-    return !!(!rootHandle.isVirtual && !rootHandle.isWebDAV && rootHandle.name === entry.name);
+    return entryMatchesHandle(entry, rootHandle);
 }
 
 function describeWorkspaceEntry(entry) {
@@ -1523,7 +1587,9 @@ async function switchToWorkspaceEntry(entry) {
 
     if (entry.type === 'webdav') {
         try {
-            const handle = new WebDAVDirHandle(entry.url, entry.webdavPath || '/', entry.auth, entry.name);
+            const targetUrl = entry.sameOrigin ? window.location.origin : entry.url;
+            const handle = new WebDAVDirHandle(targetUrl, entry.webdavPath || '/', entry.auth, entry.name);
+            if (entry.storageKey) handle._storageKey = entry.storageKey;
             await handle._checkExists('');
             if (rootHandle) await closeWorkspaceNoConfirm();
             await setWorkspace(handle);

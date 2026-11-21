@@ -565,8 +565,8 @@ async function _gzipString(str) {
 // --- Catalog Snapshot & Identity Helpers ---
 
 function _normWebdavPath(p) {
-    const raw = (p || '/').replace(/\/+$/, '');
-    return (raw.startsWith('/') ? raw : '/' + raw) + '/';
+    const s = p || '/';
+    return (s.startsWith('/') ? s : '/' + s).replace(/\/+$/, '') + '/';
 }
 
 function _catalogEntriesSameWorkspace(a, b) {
