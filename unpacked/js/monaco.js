@@ -81,7 +81,8 @@ function initMonaco() {
                 glyphMargin: false,
                 lineDecorationsWidth: 10,
                 tabSize: 4,
-                wordWrap: wordWrapConfig
+                wordWrap: wordWrapConfig,
+                readOnly: !!window.isWorkspaceReadOnly?.()
             });
 
             monacoEditor.addCommand(MONACO.KeyMod.CtrlCmd | MONACO.KeyCode.KeyS, () => {
@@ -157,12 +158,13 @@ function initMonaco() {
             });
 
             const diffHost = document.getElementById('monaco-diff-container');
+            const initialReadOnly = !!window.isWorkspaceReadOnly?.();
             monacoDiffEditor = MONACO.editor.createDiffEditor(diffHost, {
                 theme: 'agent2-dark',
                 automaticLayout: true,
                 fontSize: 13,
                 fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-                readOnly: false,
+                readOnly: initialReadOnly,
                 originalEditable: false,
                 renderSideBySide: state.diffSideBySide,
                 renderMarginRevertIcon: true,
@@ -174,7 +176,7 @@ function initMonaco() {
                 renderIndicators: true,
                 ignoreTrimWhitespace: false
             });
-            monacoDiffEditor.getModifiedEditor().updateOptions({ wordWrap: wordWrapConfig });
+            monacoDiffEditor.getModifiedEditor().updateOptions({ wordWrap: wordWrapConfig, readOnly: initialReadOnly });
             monacoDiffEditor.getOriginalEditor().updateOptions({ wordWrap: wordWrapConfig });
 
             monacoDiffEditor.getModifiedEditor().addCommand(MONACO.KeyMod.CtrlCmd | MONACO.KeyCode.KeyS, () => {

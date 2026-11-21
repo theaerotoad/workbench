@@ -74,6 +74,10 @@ function abortGeneration({ toast = null, showResumeUI = true, sessionId, discard
             renderQueuedPromptBanner();
         }
     }
+
+    if (typeof window.remoteLeaseBusyMaybeChanged === 'function') {
+        window.remoteLeaseBusyMaybeChanged();
+    }
 }
 
 // --- AST_EXPORTS_START ---

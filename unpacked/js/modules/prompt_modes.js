@@ -391,7 +391,7 @@ function setMode(mode) {
     });
 
     const cfg = MODE_CONFIG[mode];
-    input.placeholder = cfg.placeholder;
+    input.placeholder = window.isWorkspaceReadOnly?.() ? 'Read-only, Take Over to chat' : cfg.placeholder;
     updatePromptSendButton();
 
     if (typeof statusModeBadge !== 'undefined' && statusModeBadge) {
@@ -445,6 +445,9 @@ function updatePromptSendButton() {
         promptSymbol.className = cfg.symbolClass;
         promptSymbol.innerText = '>';
         promptSymbol.title = 'Send prompt';
+    }
+    if (typeof window.remoteLeaseBusyMaybeChanged === 'function') {
+        window.remoteLeaseBusyMaybeChanged();
     }
 }
 
