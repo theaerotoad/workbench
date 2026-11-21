@@ -983,6 +983,27 @@
             </div>
             <div id="tabs-overflow-menu" role="menu" aria-label="Open tabs" style="display:none;"></div>
 
+            <div id="workspace-lease-banner" role="status" aria-live="polite" style="display:none;">
+                <div class="lease-banner-info">
+                    <span class="icon lease-banner-icon">lock</span>
+                    <span id="workspace-lease-msg">This workspace is read-only.</span>
+                </div>
+                <div class="lease-banner-actions">
+                    <button type="button" id="btn-lease-refresh" class="pill-btn" title="Reload latest state from server">
+                        <span class="icon" style="font-size: 13px;">refresh</span>
+                        <span>Refresh</span>
+                    </button>
+                    <button type="button" id="btn-lease-takeover" class="pill-btn lease-btn-takeover" title="Take active write control in this window">
+                        <span class="icon" style="font-size: 13px;">swap_horiz</span>
+                        <span>Take Over</span>
+                    </button>
+                    <button type="button" id="btn-lease-close" class="pill-btn" title="Close workspace">
+                        <span class="icon" style="font-size: 13px;">close</span>
+                        <span>Close</span>
+                    </button>
+                </div>
+            </div>
+
             <div id="chat-view">
                 <div id="chat-container">
                     <div id="chat"></div>

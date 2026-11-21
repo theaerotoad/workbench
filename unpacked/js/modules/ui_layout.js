@@ -2038,6 +2038,152 @@ function withStorageShim(html) {
 window.withStorageShim = withStorageShim;
 // --- AST_EXPORTS_END ---
 
+// --- workspaceLeaseUI.js ---
+function _formatLeaseAge(ageMs) {
+    const sec = Math.max(0, Math.floor((ageMs || 0) / 1000));
+    if (sec < 60) return `${Math.max(1, sec)}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h`;
+}
+
+function _ensureLeaseBannerBound(banner) {
+    if (!banner || banner._leaseBound) return;
+    banner._leaseBound = true;
+
+    const refreshBtn = document.getElementById('btn-lease-refresh');
+    const takeoverBtn = document.getElementById('btn-lease-takeover');
+    const closeBtn = document.getElementById('btn-lease-close');
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async () => {
+            if (refreshBtn.disabled) return;
+            refreshBtn.disabled = true;
+            try {
+                if (typeof window.remoteRefreshReadOnlyWorkspace === 'function') {
+                    await window.remoteRefreshReadOnlyWorkspace();
+                }
+            } finally {
+                updateWorkspaceLeaseBanner();
+            }
+        });
+    }
+
+    if (takeoverBtn) {
+        takeoverBtn.addEventListener('click', () => {
+            if (takeoverBtn.disabled) return;
+            if (typeof window.remoteTakeOverWorkspace === 'function') {
+                window.remoteTakeOverWorkspace();
+            }
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            if (closeBtn.disabled) return;
+            const exitBtn = document.getElementById('btn-exit-workspace');
+            if (exitBtn) exitBtn.click();
+            else if (typeof window.closeWorkspace === 'function') window.closeWorkspace();
+        });
+    }
+}
+
+function updateWorkspaceLeaseBanner() {
+    const banner = document.getElementById('workspace-lease-banner');
+    if (!banner) return;
+    _ensureLeaseBannerBound(banner);
+
+    const lease = typeof window.getWorkspaceLeaseState === 'function'
+        ? window.getWorkspaceLeaseState()
+        : null;
+
+    const shouldShow = !!(window.rootHandle && lease && (lease.mode === 'readonly' || lease.revoking));
+    if (!shouldShow) {
+        banner.style.display = 'none';
+        banner.classList.remove('is-busy', 'is-free', 'is-revoking');
+        return;
+    }
+
+    const msgEl = document.getElementById('workspace-lease-msg');
+    const refreshBtn = document.getElementById('btn-lease-refresh');
+    const takeoverBtn = document.getElementById('btn-lease-takeover');
+    const closeBtn = document.getElementById('btn-lease-close');
+    const takeoverLabel = takeoverBtn ? takeoverBtn.querySelector('span:last-child') : null;
+
+    const holder = lease.holder || null;
+    const label = (holder && holder.label) ? holder.label : 'another window';
+
+    let text = '';
+    if (lease.revoking) {
+        text = 'Handing over…';
+    } else if (!holder) {
+        text = 'The other window closed. Take Over to edit.';
+    } else if (holder.busy) {
+        text = `${label} is generating a response. Read-only.`;
+    } else if (lease.revoked) {
+        text = `Control moved to ${label}. This window is read-only.`;
+    } else if (lease.myClientId && holder.clientId && holder.clientId === lease.myClientId) {
+        text = 'Open in another tab of this browser. This tab is read-only.';
+    } else {
+        const ageText = _formatLeaseAge(holder.ageMs);
+        text = `Open in ${label} (active ${ageText} ago). Read-only.`;
+    }
+
+    if (msgEl) msgEl.textContent = text;
+
+    const disableAll = !!lease.revoking;
+    const disableActions = disableAll || !!lease.takingOver;
+    if (refreshBtn) refreshBtn.disabled = disableActions;
+    if (takeoverBtn) takeoverBtn.disabled = disableActions;
+    if (closeBtn) closeBtn.disabled = disableAll;
+    if (takeoverLabel) {
+        takeoverLabel.textContent = lease.takingOver ? 'Taking over…' : 'Take Over';
+    }
+
+    banner.classList.toggle('is-revoking', !!lease.revoking);
+    banner.classList.toggle('is-busy', !lease.revoking && !!(holder && holder.busy));
+    banner.classList.toggle('is-free', !lease.revoking && !holder);
+    banner.style.display = 'flex';
+}
+
+function setWorkspaceReadOnly(ro) {
+    const isRO = !!ro;
+    document.body.classList.toggle('workspace-readonly', isRO);
+
+    if (typeof monacoEditor !== 'undefined' && monacoEditor) {
+        try { monacoEditor.updateOptions({ readOnly: isRO }); } catch (e) {}
+    }
+    if (typeof monacoDiffEditor !== 'undefined' && monacoDiffEditor) {
+        try {
+            monacoDiffEditor.updateOptions({ readOnly: isRO });
+            const modEd = typeof monacoDiffEditor.getModifiedEditor === 'function'
+                ? monacoDiffEditor.getModifiedEditor()
+                : null;
+            if (modEd) modEd.updateOptions({ readOnly: isRO });
+        } catch (e) {}
+    }
+
+    const cmdEl = document.getElementById('cmd');
+    if (cmdEl) {
+        cmdEl.disabled = isRO;
+        if (isRO) {
+            cmdEl.placeholder = 'Read-only, Take Over to chat';
+        } else {
+            const cfg = (typeof MODE_CONFIG !== 'undefined' && state && MODE_CONFIG[state.mode])
+                || (typeof MODE_CONFIG !== 'undefined' && MODE_CONFIG.code);
+            cmdEl.placeholder = (cfg && cfg.placeholder) || 'Ask agent or type / for commands, @ for files...';
+        }
+    }
+
+    updateWorkspaceLeaseBanner();
+}
+
+// --- AST_EXPORTS_START ---
+window.setWorkspaceReadOnly = setWorkspaceReadOnly;
+window.updateWorkspaceLeaseBanner = updateWorkspaceLeaseBanner;
+// --- AST_EXPORTS_END ---
+
 // --- keyboardShortcuts.js ---
 document.addEventListener('keydown', (e) => {
     // Ctrl+[ or Cmd+[ -> Toggle Sidebar
