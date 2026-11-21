@@ -1,0 +1,4 @@
+ I'm testing this on a Virtual example. Then glitch seems to arise if I open the file view only in a readonly in session A...edit the file in the other session B, then transfer over to session A, I lose the edits that were made and saved in B.
+
+
+I'm not serving the bundled, almost always serve directly from unpacked. Both windows were Ctrl-S-R refreshed after last update. 
