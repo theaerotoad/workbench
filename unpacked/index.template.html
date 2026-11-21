@@ -217,6 +217,10 @@
                         <span class="icon">shield</span>
                         <span>Security &amp; Tools</span>
                     </button>
+                    <button type="button" class="settings-nav-tab" data-tab="data">
+                        <span class="icon">database</span>
+                        <span>Data</span>
+                    </button>
                     <div class="settings-nav-spacer"></div>
                     <button type="button" class="settings-nav-tab" data-tab="about">
                         <span class="icon">info</span>
@@ -603,6 +607,37 @@
                                         <button type="button" class="tri-btn never active never" data-agent-val="hide">hide</button>
                                         <button type="button" class="tri-btn always" data-agent-val="show">show</button>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="settings-pane" id="settings-pane-data" data-pane="data">
+                        <div class="settings-section-label">Backup &amp; Restore</div>
+                        <div class="settings-panel-group">
+                            <div class="settings-panel-header">
+                                <span class="icon">backup</span>
+                                <span>Local Backup</span>
+                            </div>
+                            <div class="settings-panel-body">
+                                <div class="settings-field-row">
+                                    <span class="dim" style="font-size: 12px; line-height: 1.45;">Export all browser-stored workspaces, conversations, checkpoints, virtual workspaces, and settings to a single JSON file, or restore from a previous backup.</span>
+                                </div>
+                                <div class="settings-field-row" style="align-items: center;">
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--fg);">
+                                        <input type="checkbox" id="settings-backup-include-secrets" style="width:auto; flex:none; margin:0;">
+                                        <span>Include API keys and WebDAV passwords</span>
+                                    </label>
+                                </div>
+                                <div class="settings-field-row" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button type="button" id="btn-download-backup" class="pill-btn" title="Export all local Workbench state to a JSON file">
+                                        <span class="icon" style="font-size:14px;">download</span>
+                                        <span>Download backup</span>
+                                    </button>
+                                    <button type="button" id="btn-restore-backup" class="pill-btn" title="Import a previously exported Workbench backup JSON file">
+                                        <span class="icon" style="font-size:14px;">upload</span>
+                                        <span>Restore backup</span>
+                                    </button>
+                                    <input type="file" id="settings-restore-file-input" accept=".json,application/json" style="display:none;">
                                 </div>
                             </div>
                         </div>
