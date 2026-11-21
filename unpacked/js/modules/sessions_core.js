@@ -44,12 +44,16 @@ async function clearAllSessions() {
 
     try {
         const db = await getDB();
+        const idxKey = sessionIndexKey(wsKey);
         await new Promise((res) => {
             const tx = db.transaction(STORE_SESSIONS, 'readwrite');
-            tx.objectStore(STORE_SESSIONS).delete(sessionIndexKey(wsKey));
+            tx.objectStore(STORE_SESSIONS).delete(idxKey);
             tx.oncomplete = res;
             tx.onerror = res;
         });
+        if (typeof window.remoteMarkDeleted === 'function') {
+            window.remoteMarkDeleted('sessions', idxKey);
+        }
     } catch(e) {}
 
     const newId = 'sess_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);

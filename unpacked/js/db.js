@@ -53,7 +53,12 @@ async function saveBaselineToDB(wsName, sessionId, originalFiles, modifiedFilesS
             opsLog: opsLog || {},
             compressionHistory: compressionHistory || []
         }, key);
-        return new Promise(res => tx.oncomplete = res);
+        return new Promise(res => {
+            tx.oncomplete = () => {
+                if (typeof window.remoteMarkDirty === 'function') window.remoteMarkDirty('baselines', key);
+                res();
+            };
+        });
     } catch(e) {}
 }
 
@@ -61,8 +66,14 @@ async function deleteBaselineFromDB(wsName, sessionId) {
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_BASELINES, 'readwrite');
-        tx.objectStore(STORE_BASELINES).delete(baselineKey(wsName, sessionId));
-        return new Promise(res => tx.oncomplete = res);
+        const key = baselineKey(wsName, sessionId);
+        tx.objectStore(STORE_BASELINES).delete(key);
+        return new Promise(res => {
+            tx.oncomplete = () => {
+                if (typeof window.remoteMarkDeleted === 'function') window.remoteMarkDeleted('baselines', key);
+                res();
+            };
+        });
     } catch(e) {}
 }
 
@@ -102,8 +113,14 @@ async function saveSessionIndexToDB(wsKey, index) {
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_SESSIONS, 'readwrite');
-        tx.objectStore(STORE_SESSIONS).put(index, sessionIndexKey(wsKey));
-        return new Promise(res => tx.oncomplete = res);
+        const key = sessionIndexKey(wsKey);
+        tx.objectStore(STORE_SESSIONS).put(index, key);
+        return new Promise(res => {
+            tx.oncomplete = () => {
+                if (typeof window.remoteMarkDirty === 'function') window.remoteMarkDirty('sessions', key);
+                res();
+            };
+        });
     } catch(e) {}
 }
 
@@ -132,7 +149,10 @@ async function patchSessionRecordInDB(wsKey, sessionId, patch) {
                 const existing = getReq.result || {};
                 const merged = { ...existing, ...patch };
                 store.put(merged, key);
-                tx.oncomplete = () => resolve(merged);
+                tx.oncomplete = () => {
+                    if (typeof window.remoteMarkDirty === 'function') window.remoteMarkDirty('sessions', key);
+                    resolve(merged);
+                };
             };
             getReq.onerror = () => resolve(null);
         });
@@ -143,8 +163,14 @@ async function deleteSessionRecordFromDB(wsKey, sessionId) {
     try {
         const db = await getDB();
         const tx = db.transaction(STORE_SESSIONS, 'readwrite');
-        tx.objectStore(STORE_SESSIONS).delete(sessionRecordKey(wsKey, sessionId));
-        return new Promise(res => tx.oncomplete = res);
+        const key = sessionRecordKey(wsKey, sessionId);
+        tx.objectStore(STORE_SESSIONS).delete(key);
+        return new Promise(res => {
+            tx.oncomplete = () => {
+                if (typeof window.remoteMarkDeleted === 'function') window.remoteMarkDeleted('sessions', key);
+                res();
+            };
+        });
     } catch(e) {}
 }
 

@@ -13,10 +13,32 @@ The main changes are:
 - Optionally pull in Network MCP-tools in
 - Use WebDAV storage backends
 - Optionally serve via simple python backend that:
-   - Lets you connect stdio-based MCP tools
-   - Serve a local directory over webdav for sharing with the agent
+  - Lets you connect stdio-based MCP tools
+  - Serve a local directory over webdav for sharing with the agent
+  - Optionally persist workspaces, conversations, checkpoints, and settings in SQLite for durability and multi-device sync
 
 I highly recommend starting from the original, though.
+
+## Optional Server Persistence
+
+Start `server.py` with `--data-dir` to store a durable copy of browser state in SQLite (`<data-dir>/workbench_state.sqlite3`):
+
+```bash
+python3 server.py --static-dir unpacked --webdav-dir <workspace-dir> --data-dir ~/.workbench-state
+
+```
+
+CLI flags:
+
+* `--data-dir PATH`: Enables server-side state persistence (directory is created if missing). Without this flag, Workbench runs strictly in browser-only mode.
+* `--sync-secrets`: By default, model provider API keys and WebDAV passwords are stripped before upload. Pass `--sync-secrets` on trusted deployments to include them.
+* `--max-record-mb N`: Maximum decompressed size of a single stored record in MB (default: `64`).
+
+To take a live backup while the server is running:
+
+```bash
+sqlite3 <data-dir>/workbench_state.sqlite3 ".backup workbench_backup.sqlite3"
+```
 
 ## License
 
