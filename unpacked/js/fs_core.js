@@ -34,9 +34,15 @@ export async function vfsFlush(h) {
     walk(r, '');
     try {
         const db = await window.getDB();
+        const key = 'vws_' + r._ws.vid;
         const tx = db.transaction(window.STORE_HANDLES, 'readwrite');
-        tx.objectStore(window.STORE_HANDLES).put({ vid: r._ws.vid, name: r.name, entries, updated: Date.now() }, 'vws_' + r._ws.vid);
-        await new Promise(res => { tx.oncomplete = res; tx.onerror = res; tx.onabort = res; });
+        tx.objectStore(window.STORE_HANDLES).put({ vid: r._ws.vid, name: r.name, entries, updated: Date.now() }, key);
+        const ok = await new Promise(res => {
+            tx.oncomplete = () => res(true);
+            tx.onerror = () => res(false);
+            tx.onabort = () => res(false);
+        });
+        if (ok) window.remoteMarkDirty?.('vws', key);
     } catch (e) {}
 }
 

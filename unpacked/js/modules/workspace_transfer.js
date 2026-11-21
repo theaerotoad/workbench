@@ -312,20 +312,36 @@ function isDownloadablePath(p) { return !isAgentPath(p) && !isVirtualAgentFile(p
 window.isDownloadablePath = isDownloadablePath;
 // --- AST_EXPORTS_END ---
 
+// --- loadVirtualSnapshot.js ---
+async function loadVirtualSnapshot(vid) {
+    const key = 'vws_' + vid;
+    if (window.RemoteStore && window.RemoteStore.enabled && typeof window.remoteHydrateKey === 'function') {
+        try {
+            await window.remoteHydrateKey('vws', key);
+        } catch (e) {}
+    }
+    const db = await getDB();
+    return await new Promise((res) => {
+        const req = db.transaction(STORE_HANDLES, 'readonly').objectStore(STORE_HANDLES).get(key);
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => res(null);
+    });
+}
+
+// --- AST_EXPORTS_START ---
+window.loadVirtualSnapshot = loadVirtualSnapshot;
+// --- AST_EXPORTS_END ---
+
 // --- openVirtualWorkspaceById.js ---
-async function openVirtualWorkspaceById(vid) {
+async function openVirtualWorkspaceById(vid, preloadedSnap = null) {
     try {
-        const db = await getDB();
-        const snap = await new Promise((res) => {
-            const req = db.transaction(STORE_HANDLES, 'readonly').objectStore(STORE_HANDLES).get('vws_' + vid);
-            req.onsuccess = () => res(req.result); req.onerror = () => res(null);
-        });
+        const snap = preloadedSnap || await loadVirtualSnapshot(vid);
         if (!snap) {
             showToast('Virtual workspace data not found', 'error'); return;
         }
         const root = new VFSNode('directory', snap.name, null);
         root._ws = { vid };
-        for (const e of snap.entries) { if (e.kind === 'directory') vfsPutDir(root, e.path); else vfsPutFile(root, e.path, e.blob); }
+        for (const e of (snap.entries || [])) { if (e.kind === 'directory') vfsPutDir(root, e.path); else vfsPutFile(root, e.path, e.blob); }
         const folders = getRecentFolders(), f = folders.find(x => x.vid === vid);
         if (f) { f.lastAccessed = Date.now(); saveRecentFolders(folders); }
         await setWorkspace(vfsWrap(root));
@@ -341,9 +357,11 @@ async function removeVirtualWorkspace(vid, name) {
     if (!await confirmDialog(`Delete virtual workspace "${name}"? Its files will be permanently removed.`, { confirmLabel: 'Delete', danger: true })) return;
     try {
         const db = await getDB();
+        const key = 'vws_' + vid;
         const tx = db.transaction(STORE_HANDLES, 'readwrite');
-        tx.objectStore(STORE_HANDLES).delete('vws_' + vid);
+        tx.objectStore(STORE_HANDLES).delete(key);
         await new Promise(res => { tx.oncomplete = res; tx.onerror = res; });
+        if (typeof window.remoteMarkDeleted === 'function') window.remoteMarkDeleted('vws', key);
     } catch (e) {}
     saveRecentFolders(getRecentFolders().filter(f => f.vid !== vid));
     renderRecentFoldersList();

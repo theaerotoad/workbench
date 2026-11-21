@@ -1567,18 +1567,13 @@ async function switchToWorkspaceEntry(entry) {
 
     if (entry.virtual) {
         try {
-            const db = await getDB();
-            const snap = await new Promise((res) => {
-                const req = db.transaction(STORE_HANDLES, 'readonly').objectStore(STORE_HANDLES).get('vws_' + entry.vid);
-                req.onsuccess = () => res(req.result);
-                req.onerror = () => res(null);
-            });
+            const snap = await loadVirtualSnapshot(entry.vid);
             if (!snap) {
                 showToast('Virtual workspace data not found', 'error');
                 return;
             }
             if (rootHandle) await closeWorkspaceNoConfirm();
-            await openVirtualWorkspaceById(entry.vid);
+            await openVirtualWorkspaceById(entry.vid, snap);
         } catch (err) {
             showToast('Could not open virtual workspace: ' + err.message, 'error');
         }

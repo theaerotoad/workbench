@@ -1160,7 +1160,47 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
         return;
     }
 
-    // 8.2 / 8.3 baselines, catalog (and future settings): server wins
+    // 8.3 vws: keep local snapshot as "(conflict copy)", then apply server version
+    if (store === 'vws') {
+        const localSnap = await idbGetRaw(STORE_HANDLES, key);
+        if (localSnap && typeof localSnap === 'object') {
+            const newVid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            const baseName = localSnap.name || 'Virtual Workspace';
+            const copyName = baseName.endsWith(' (conflict copy)') ? baseName : `${baseName} (conflict copy)`;
+            const copyKey = 'vws_' + newVid;
+            const copySnap = {
+                ...localSnap,
+                vid: newVid,
+                name: copyName,
+                updated: Date.now()
+            };
+            await idbPutRaw(STORE_HANDLES, copyKey, copySnap);
+            remoteMarkDirty('vws', copyKey);
+
+            if (typeof window.getRecentFolders === 'function' && typeof window.saveRecentFolders === 'function') {
+                const folders = window.getRecentFolders();
+                folders.unshift({
+                    name: copyName,
+                    virtual: true,
+                    vid: newVid,
+                    storageKey: 'virtual_' + newVid,
+                    lastAccessed: Date.now()
+                });
+                window.saveRecentFolders(folders);
+                if (typeof window.renderRecentFoldersList === 'function') window.renderRecentFoldersList();
+            }
+
+            if (typeof window.showToast === 'function') {
+                window.showToast(
+                    `Virtual workspace "${baseName}" was changed on another device. Your version was kept as "${copyName}".`,
+                    'info',
+                    5000
+                );
+            }
+        }
+    }
+
+    // 8.2 / 8.3 baselines, catalog, settings, vws: server wins
     const srv = await _fetchServerItem(store, key);
     const actualRev = srv.rev != null ? srv.rev : serverRev;
     if (srv.status === 200) {
@@ -1725,7 +1765,30 @@ async function _seedLocalData() {
     } catch (e) {}
 
     await _seedSettingsData();
+    await _seedVwsData();
     _rawLsSet('sync_seeded', '1');
+}
+
+async function _seedVwsData() {
+    try {
+        for (const k of await idbKeysRaw(STORE_HANDLES)) {
+            const ks = String(k);
+            if (!ks.startsWith('vws_')) continue;
+            const mk = _syncMetaKey('vws', ks);
+            const existing = await idbGetRaw(STORE_SYNC, mk);
+            if (!existing) {
+                await idbPutRaw(STORE_SYNC, mk, {
+                    store: 'vws',
+                    key: ks,
+                    baseRev: 0,
+                    pending: 'put',
+                    dirtyGen: 1,
+                    lastHash: null
+                });
+            }
+        }
+    } catch (e) {}
+    _rawLsSet('sync_seeded_vws', '1');
 }
 
 async function _seedSettingsData() {
@@ -1803,6 +1866,7 @@ async function remoteInit() {
         _rawLsSet('sync_server_id', caps.serverId || '');
         _rawLsRemove('sync_seeded');
         _rawLsRemove('sync_seeded_settings');
+        _rawLsRemove('sync_seeded_vws');
     }
 
     // 5. First-time seed of pre-existing browser data
@@ -1811,6 +1875,9 @@ async function remoteInit() {
     } else {
         if (!localStorage.getItem('sync_seeded_settings')) {
             await _seedSettingsData();
+        }
+        if (!localStorage.getItem('sync_seeded_vws')) {
+            await _seedVwsData();
         }
         _rebuildCatalogSnapshot(_readCatalogRaw());
     }
