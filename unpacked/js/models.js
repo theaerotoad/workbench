@@ -68,6 +68,27 @@ function ensureModelUuids() {
     return changed;
 }
 
+function reloadModelsFromStorage() {
+    let raw = null;
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) raw = localStorage.getItem(`models_${wsKey}`);
+    }
+    if (!raw) raw = localStorage.getItem('models_json');
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (isValidProvidersShape(parsed)) {
+                MODEL_PROVIDERS = parsed;
+                window.MODEL_PROVIDERS = parsed;
+                ensureModelUuids();
+            }
+        } catch (e) {}
+    }
+    registerModelsVirtualFile();
+    renderModelDropdown();
+}
+
 function saveModels() {
     ensureModelUuids();
     localStorage.setItem('models_json', JSON.stringify(MODEL_PROVIDERS));
@@ -478,6 +499,7 @@ window.modelsFileContent = modelsFileContent;
 window.registerModelsVirtualFile = registerModelsVirtualFile;
 window.newModelUuid = newModelUuid;
 window.ensureModelUuids = ensureModelUuids;
+window.reloadModelsFromStorage = reloadModelsFromStorage;
 window.saveModels = saveModels;
 window.isValidProvidersShape = isValidProvidersShape;
 window.normalizeVisionFlag = normalizeVisionFlag;

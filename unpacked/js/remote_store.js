@@ -1683,6 +1683,11 @@ async function remoteRefreshCurrentWorkspace() {
             }
         }
 
+        const setRes = await remoteHydrate('settings', '');
+        if (setRes.changedKeys.length > 0) {
+            _applyHydratedSettingsToRuntime();
+        }
+
         if (window.rootHandle && typeof window.getWorkspaceSessionKey === 'function' && typeof window.currentWsName === 'function') {
             const wsKey = window.getWorkspaceSessionKey();
             const ws = window.currentWsName();
@@ -2306,6 +2311,32 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
                 await window.vfsFlush(window.rootHandle);
             }
 
+            // 4b. Snapshot WebDAV per-workspace settings if changed so the incoming tab receives them.
+            if (
+                window.rootHandle &&
+                window.rootHandle.isWebDAV &&
+                window.AppConfig &&
+                window.AppConfig.get('webdav-sync-agent') !== 'true' &&
+                typeof window.wsStorageName === 'function'
+            ) {
+                const webdavWsKey = window.wsStorageName(window.rootHandle);
+                if (webdavWsKey) {
+                    const putIfChanged = (k, val) => {
+                        try {
+                            const s = JSON.stringify(val);
+                            if (localStorage.getItem(k) !== s) localStorage.setItem(k, s);
+                        } catch (e) {}
+                    };
+                    if (window.AppConfig._data) putIfChanged(`app_config_${webdavWsKey}`, window.AppConfig._data);
+                    if (typeof window.MODEL_PROVIDERS !== 'undefined') putIfChanged(`models_${webdavWsKey}`, window.MODEL_PROVIDERS);
+                    if (typeof window.MODE_PROMPTS !== 'undefined') putIfChanged(`mode_prompts_${webdavWsKey}`, window.MODE_PROMPTS);
+                    if (typeof window.getWorkspaceToolsConfig === 'function') {
+                        const cfg = window.getWorkspaceToolsConfig();
+                        if (cfg) putIfChanged(`tools_config_${webdavWsKey}`, cfg);
+                    }
+                }
+            }
+
             // 5. Drain outbox to server within handoff deadline.
             await remoteFlushNow({ drain: true, deadlineMs: 4500 });
 
@@ -2359,9 +2390,48 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
     return run;
 }
 
+function _applyHydratedSettingsToRuntime() {
+    if (window.AppConfig && typeof window.AppConfig.reload === 'function') {
+        window.AppConfig.reload();
+    }
+    if (typeof window.reloadModelsFromStorage === 'function') {
+        window.reloadModelsFromStorage();
+    }
+    try {
+        const wsKey = window.rootHandle && window.rootHandle.isWebDAV && typeof window.wsStorageName === 'function'
+            ? window.wsStorageName(window.rootHandle)
+            : null;
+        const rawPrompts = (wsKey && localStorage.getItem(`mode_prompts_${wsKey}`)) || localStorage.getItem('mode_prompts_json');
+        if (rawPrompts) {
+            const parsedPrompts = JSON.parse(rawPrompts);
+            if (parsedPrompts && typeof parsedPrompts === 'object' && !Array.isArray(parsedPrompts)) {
+                if (window.MODE_PROMPTS && typeof window.MODE_PROMPTS === 'object') {
+                    for (const k of Object.keys(window.MODE_PROMPTS)) delete window.MODE_PROMPTS[k];
+                    Object.assign(window.MODE_PROMPTS, parsedPrompts);
+                } else {
+                    window.MODE_PROMPTS = parsedPrompts;
+                }
+            }
+        }
+    } catch (e) {}
+    if (typeof window.applyConfigToUI === 'function') {
+        window.applyConfigToUI();
+    }
+    if (typeof window.registerConfigVirtualFile === 'function') {
+        window.registerConfigVirtualFile();
+    }
+    if (typeof window.renderModelDropdown === 'function') {
+        window.renderModelDropdown();
+    }
+}
+
 async function remoteReopenWorkspace() {
     const h = window.rootHandle;
     if (!h) return;
+    if (RemoteStore.enabled) {
+        await remoteHydrate('settings', '');
+    }
+    _applyHydratedSettingsToRuntime();
     if (h.isVirtual) {
         const n = h._n;
         const vid = n && n._ws && n._ws.vid;

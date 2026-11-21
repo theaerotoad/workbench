@@ -891,6 +891,9 @@ async function setWorkspace(handle, opts = {}) {
 
     applyConfigToUI();
     registerConfigVirtualFile();
+    if (typeof registerModelsVirtualFile === 'function') {
+        registerModelsVirtualFile();
+    }
     if (typeof registerToolsVirtualFile === 'function') {
         registerToolsVirtualFile();
     }
@@ -899,6 +902,9 @@ async function setWorkspace(handle, opts = {}) {
     }
     if (typeof refreshPermBanner === 'function') {
         refreshPermBanner();
+    }
+    if (typeof renderModelDropdown === 'function') {
+        renderModelDropdown();
     }
 
     if (window.RemoteStore && window.RemoteStore.enabled && typeof window.remoteHydrate === 'function') {

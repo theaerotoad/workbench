@@ -65,7 +65,7 @@ function toolsDefaults() {
 
 const AppConfig = {
     _data: {},
-    load() {
+    reload() {
         try {
             const wsKey = window.rootHandle && window.rootHandle.isWebDAV && typeof window.wsStorageName === 'function'
                 ? window.wsStorageName(window.rootHandle)
@@ -78,6 +78,9 @@ const AppConfig = {
         } catch(e) {
             this._data = { ...CONFIG_DEFAULTS };
         }
+    },
+    load() {
+        this.reload();
         localStorage.setItem('app_config_json', JSON.stringify(this._data));
     },
     save() {
