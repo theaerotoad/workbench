@@ -1,12 +1,13 @@
 function getDB() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, 5);
+        const req = indexedDB.open(DB_NAME, 6);
         req.onupgradeneeded = (e) => {
             const db = e.target.result;
             if (!db.objectStoreNames.contains(STORE_HANDLES)) db.createObjectStore(STORE_HANDLES);
             if (!db.objectStoreNames.contains(STORE_BASELINES)) db.createObjectStore(STORE_BASELINES);
             if (!db.objectStoreNames.contains(STORE_CACHE)) db.createObjectStore(STORE_CACHE);
             if (!db.objectStoreNames.contains(STORE_SESSIONS)) db.createObjectStore(STORE_SESSIONS);
+            if (!db.objectStoreNames.contains(STORE_SYNC)) db.createObjectStore(STORE_SYNC);
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
