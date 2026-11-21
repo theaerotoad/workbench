@@ -24,6 +24,7 @@ from wsgidav.wsgidav_app import WsgiDAVApp
 # Local Proxy
 from mcp_proxy import StdioToSSEProxy
 from state_store import StateStore
+from lease_manager import LeaseManager
 from state_api import make_state_routes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -426,6 +427,7 @@ def create_app(
 
     # 2.6 Persistent State KV API (registered before catch-all StaticFiles mount)
     state_store = None
+    lease_manager = None
     max_record_bytes = int(max_record_mb * 1024 * 1024)
     if data_dir:
         expanded_data_dir = os.path.abspath(os.path.expanduser(data_dir))
@@ -434,9 +436,11 @@ def create_app(
             f"(sync_secrets={bool(sync_secrets)}, max_record_mb={max_record_mb})"
         )
         state_store = StateStore(expanded_data_dir)
+        lease_manager = LeaseManager()
     routes.extend(
         make_state_routes(
             state_store,
+            lease_manager=lease_manager,
             sync_secrets=bool(sync_secrets),
             max_record_bytes=max_record_bytes,
         )
@@ -453,6 +457,7 @@ def create_app(
     # Initialize ASGI App
     app = Starlette(debug=True, routes=routes)
     app.state.state_store = state_store
+    app.state.lease_manager = lease_manager
     
     # Global CORS (Catches OPTIONS requests before they hit specific mounts)
     app.add_middleware(
