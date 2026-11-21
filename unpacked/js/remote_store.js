@@ -5,13 +5,44 @@ const RemoteStore = {
 
 const _origLsSet = Storage.prototype.setItem;
 const _origLsRemove = Storage.prototype.removeItem;
+let _applyingLs = false;
 
 function _rawLsSet(key, val) {
-    _origLsSet.call(window.localStorage, key, val);
+    const prev = _applyingLs;
+    _applyingLs = true;
+    try {
+        _origLsSet.call(window.localStorage, key, val);
+    } finally {
+        _applyingLs = prev;
+    }
 }
 
 function _rawLsRemove(key) {
-    _origLsRemove.call(window.localStorage, key);
+    const prev = _applyingLs;
+    _applyingLs = true;
+    try {
+        _origLsRemove.call(window.localStorage, key);
+    } finally {
+        _applyingLs = prev;
+    }
+}
+
+// Intercept whitelisted localStorage mutations for settings sync (§9.2).
+// Harmless when sync is disabled because remoteMarkDirty/remoteMarkDeleted are no-ops.
+if (!Storage.prototype._wbSyncWrapped) {
+    Storage.prototype._wbSyncWrapped = true;
+    Storage.prototype.setItem = function (k, v) {
+        _origLsSet.call(this, k, v);
+        if (this === window.localStorage && !_applyingLs && isSyncedLsKey(k)) {
+            remoteMarkDirty('settings', k);
+        }
+    };
+    Storage.prototype.removeItem = function (k) {
+        _origLsRemove.call(this, k);
+        if (this === window.localStorage && !_applyingLs && isSyncedLsKey(k)) {
+            remoteMarkDeleted('settings', k);
+        }
+    };
 }
 
 let _resolveRemoteReady = null;
@@ -272,6 +303,49 @@ function preserveCatalogEntrySecrets(incoming, existing) {
     return incoming;
 }
 
+const _SECRET_TOOL_SETTING_RE = /(?:^|[_-])(?:api[_-]?key|secret(?:[_-]?key)?|password|passwd|access[_-]?token|auth[_-]?token|bearer[_-]?token|private[_-]?key)(?:$|[_-])|(?:apiKey|secretKey|accessToken|authToken|bearerToken|privateKey|password)/i;
+
+function _stripToolSettingsMapSecrets(settingsMap) {
+    if (!settingsMap || typeof settingsMap !== 'object' || Array.isArray(settingsMap)) return settingsMap;
+    const out = {};
+    for (const [toolName, toolVals] of Object.entries(settingsMap)) {
+        if (toolVals && typeof toolVals === 'object' && !Array.isArray(toolVals)) {
+            const copy = { ...toolVals };
+            for (const [sk, sv] of Object.entries(copy)) {
+                if (_SECRET_TOOL_SETTING_RE.test(sk) && typeof sv === 'string' && sv) {
+                    copy[sk] = '';
+                }
+            }
+            out[toolName] = copy;
+        } else {
+            out[toolName] = toolVals;
+        }
+    }
+    return out;
+}
+
+function _preserveToolSettingsMapSecrets(incomingMap, existingMap) {
+    if (!incomingMap || typeof incomingMap !== 'object' || Array.isArray(incomingMap)) return incomingMap;
+    if (!existingMap || typeof existingMap !== 'object' || Array.isArray(existingMap)) return incomingMap;
+    const out = {};
+    for (const [toolName, toolVals] of Object.entries(incomingMap)) {
+        const extVals = existingMap[toolName];
+        if (toolVals && typeof toolVals === 'object' && !Array.isArray(toolVals) &&
+            extVals && typeof extVals === 'object' && !Array.isArray(extVals)) {
+            const copy = { ...toolVals };
+            for (const [sk, ev] of Object.entries(extVals)) {
+                if (_SECRET_TOOL_SETTING_RE.test(sk) && typeof ev === 'string' && ev && !copy[sk]) {
+                    copy[sk] = ev;
+                }
+            }
+            out[toolName] = copy;
+        } else {
+            out[toolName] = toolVals;
+        }
+    }
+    return out;
+}
+
 function stripSettingsSecrets(key, rawValue) {
     if (key === 'models_json' || key.startsWith('models_')) {
         if (typeof rawValue === 'string') {
@@ -284,17 +358,60 @@ function stripSettingsSecrets(key, rawValue) {
         } else if (Array.isArray(rawValue)) {
             return stripModelsArraySecrets(rawValue);
         }
+    } else if (key === 'tool_settings_state' || key.startsWith('tool_settings_state_')) {
+        if (typeof rawValue === 'string') {
+            try {
+                const parsed = JSON.parse(rawValue);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return JSON.stringify(_stripToolSettingsMapSecrets(parsed));
+                }
+            } catch (e) {}
+        } else if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+            return _stripToolSettingsMapSecrets(rawValue);
+        }
+    } else if (key.startsWith('tools_config_')) {
+        if (typeof rawValue === 'string') {
+            try {
+                const parsed = JSON.parse(rawValue);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.settings) {
+                    return JSON.stringify({ ...parsed, settings: _stripToolSettingsMapSecrets(parsed.settings) });
+                }
+            } catch (e) {}
+        } else if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue) && rawValue.settings) {
+            return { ...rawValue, settings: _stripToolSettingsMapSecrets(rawValue.settings) };
+        }
     }
     return rawValue;
 }
 
 function preserveSettingsSecrets(key, incomingRaw, existingRaw) {
+    if (!existingRaw) return incomingRaw;
     if (key === 'models_json' || key.startsWith('models_')) {
         try {
             const inc = typeof incomingRaw === 'string' ? JSON.parse(incomingRaw) : incomingRaw;
             const ext = typeof existingRaw === 'string' ? JSON.parse(existingRaw) : existingRaw;
             if (Array.isArray(inc) && Array.isArray(ext)) {
                 const merged = preserveModelsArraySecrets(inc, ext);
+                return typeof incomingRaw === 'string' ? JSON.stringify(merged) : merged;
+            }
+        } catch (e) {}
+    } else if (key === 'tool_settings_state' || key.startsWith('tool_settings_state_')) {
+        try {
+            const inc = typeof incomingRaw === 'string' ? JSON.parse(incomingRaw) : incomingRaw;
+            const ext = typeof existingRaw === 'string' ? JSON.parse(existingRaw) : existingRaw;
+            if (inc && typeof inc === 'object' && !Array.isArray(inc) &&
+                ext && typeof ext === 'object' && !Array.isArray(ext)) {
+                const merged = _preserveToolSettingsMapSecrets(inc, ext);
+                return typeof incomingRaw === 'string' ? JSON.stringify(merged) : merged;
+            }
+        } catch (e) {}
+    } else if (key.startsWith('tools_config_')) {
+        try {
+            const inc = typeof incomingRaw === 'string' ? JSON.parse(incomingRaw) : incomingRaw;
+            const ext = typeof existingRaw === 'string' ? JSON.parse(existingRaw) : existingRaw;
+            if (inc && typeof inc === 'object' && !Array.isArray(inc) && inc.settings &&
+                ext && typeof ext === 'object' && !Array.isArray(ext) && ext.settings) {
+                const merged = { ...inc, settings: _preserveToolSettingsMapSecrets(inc.settings, ext.settings) };
                 return typeof incomingRaw === 'string' ? JSON.stringify(merged) : merged;
             }
         } catch (e) {}
@@ -678,6 +795,14 @@ async function _readLocalForUpload(store, key) {
         }
         return out;
     }
+    if (store === 'settings') {
+        if (!isSyncedLsKey(key)) return undefined;
+        const raw = localStorage.getItem(key);
+        if (raw === null) return undefined;
+        let val = raw;
+        try { val = JSON.parse(raw); } catch (e) {}
+        return RemoteStore.caps?.syncSecrets ? val : stripSettingsSecrets(key, val);
+    }
     if (store === 'vws') {
         return await idbGetRaw(STORE_HANDLES, key);
     }
@@ -698,6 +823,12 @@ async function _deleteLocalRaw(store, key) {
         const filtered = list.filter((f) => f && f.id !== key);
         if (filtered.length !== list.length) {
             _writeCatalogRaw(filtered);
+        }
+        return;
+    }
+    if (store === 'settings') {
+        if (isSyncedLsKey(key)) {
+            _rawLsRemove(key);
         }
         return;
     }
@@ -736,12 +867,20 @@ async function _applyLocalRaw(store, key, decoded, serverItemsMap) {
         }
         const existing = list.find((f) => f && f.id === entry.id)
             || list.find((f) => _catalogEntriesSameWorkspace(f, entry));
-        if (existing && !RemoteStore.caps?.syncSecrets) {
+        if (existing) {
             entry = preserveCatalogEntrySecrets(entry, existing);
         }
         const deduped = list.filter((f) => f && f.id !== entry.id && !_catalogEntriesSameWorkspace(f, entry));
         deduped.push(entry);
         _writeCatalogRaw(deduped);
+        return { needsReupload: false };
+    }
+    if (store === 'settings') {
+        if (!isSyncedLsKey(key)) return { needsReupload: false };
+        const existingRaw = localStorage.getItem(key);
+        const incomingStr = typeof decoded === 'string' ? decoded : JSON.stringify(decoded);
+        const finalStr = preserveSettingsSecrets(key, incomingStr, existingRaw);
+        _rawLsSet(key, finalStr);
         return { needsReupload: false };
     }
     if (store === 'vws') {
@@ -1585,7 +1724,30 @@ async function _seedLocalData() {
         }
     } catch (e) {}
 
+    await _seedSettingsData();
     _rawLsSet('sync_seeded', '1');
+}
+
+async function _seedSettingsData() {
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!isSyncedLsKey(k)) continue;
+            const mk = _syncMetaKey('settings', k);
+            const existing = await idbGetRaw(STORE_SYNC, mk);
+            if (!existing) {
+                await idbPutRaw(STORE_SYNC, mk, {
+                    store: 'settings',
+                    key: k,
+                    baseRev: 0,
+                    pending: 'put',
+                    dirtyGen: 1,
+                    lastHash: null
+                });
+            }
+        }
+    } catch (e) {}
+    _rawLsSet('sync_seeded_settings', '1');
 }
 
 // --- Initialization (§7.3) ---
@@ -1640,17 +1802,22 @@ async function remoteInit() {
         try { await idbClearRaw(STORE_SYNC); } catch (e) {}
         _rawLsSet('sync_server_id', caps.serverId || '');
         _rawLsRemove('sync_seeded');
+        _rawLsRemove('sync_seeded_settings');
     }
 
     // 5. First-time seed of pre-existing browser data
     if (!localStorage.getItem('sync_seeded')) {
         await _seedLocalData();
     } else {
+        if (!localStorage.getItem('sync_seeded_settings')) {
+            await _seedSettingsData();
+        }
         _rebuildCatalogSnapshot(_readCatalogRaw());
     }
 
-    // 6. Hydrate catalog before startup renders recent workspaces
+    // 6. Hydrate catalog and settings before startup reads localStorage
     await remoteHydrate('catalog', '');
+    await remoteHydrate('settings', '');
 
     // 7. Enable sync, start uploader, register lifecycle listeners
     RemoteStore.enabled = true;
