@@ -23,6 +23,8 @@ from wsgidav.wsgidav_app import WsgiDAVApp
 
 # Local Proxy
 from mcp_proxy import StdioToSSEProxy
+from state_store import StateStore
+from state_api import make_state_routes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("unified_server")
@@ -46,7 +48,16 @@ def create_webdav_app(root_path: str):
     }
     return WsgiDAVApp(config)
 
-def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", stdio_mcp_cfg=None, mcp_command=None):
+def create_app(
+    webdav_dir=".",
+    static_dir="extracted",
+    jsutils_dir="jsutils",
+    stdio_mcp_cfg=None,
+    mcp_command=None,
+    data_dir=None,
+    sync_secrets=False,
+    max_record_mb=64,
+):
     routes = []
 
     # 0. LLM Proxy Endpoint
@@ -413,6 +424,24 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
     routes.append(Route("/api/tools", list_jsutils, methods=["GET"]))
     routes.append(Mount("/jsutils", app=StaticFiles(directory=jsutils_path), name="jsutils"))
 
+    # 2.6 Persistent State KV API (registered before catch-all StaticFiles mount)
+    state_store = None
+    max_record_bytes = int(max_record_mb * 1024 * 1024)
+    if data_dir:
+        expanded_data_dir = os.path.abspath(os.path.expanduser(data_dir))
+        logger.info(
+            f"Enabling server state persistence in {expanded_data_dir} "
+            f"(sync_secrets={bool(sync_secrets)}, max_record_mb={max_record_mb})"
+        )
+        state_store = StateStore(expanded_data_dir)
+    routes.extend(
+        make_state_routes(
+            state_store,
+            sync_secrets=bool(sync_secrets),
+            max_record_bytes=max_record_bytes,
+        )
+    )
+
     # 3. Static Files (Frontend UI)
     static_dir_path = os.path.abspath(static_dir)
     if os.path.exists(static_dir_path):
@@ -423,13 +452,15 @@ def create_app(webdav_dir=".", static_dir="extracted", jsutils_dir="jsutils", st
 
     # Initialize ASGI App
     app = Starlette(debug=True, routes=routes)
+    app.state.state_store = state_store
     
     # Global CORS (Catches OPTIONS requests before they hit specific mounts)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["*"],
-        allow_headers=["*"]
+        allow_headers=["*"],
+        expose_headers=["X-Rev"],
     )
     return app
 
@@ -442,6 +473,9 @@ def main():
     parser.add_argument("--jsutils-dir", type=str, default="jsutils", help="Directory containing JS tool utilities to serve")
     parser.add_argument("--mcp-command", type=str, nargs="+", help="Command to run for MCP stdio (e.g., npx -y @modelcontextprotocol/server-everything)")
     parser.add_argument("--stdio-mcp-cfg", type=str, help="Path to YAML config for multiple dynamic stdio MCP servers")
+    parser.add_argument("--data-dir", type=str, default=None, help="Directory for persistent SQLite state storage (enables server sync)")
+    parser.add_argument("--sync-secrets", action="store_true", default=False, help="Allow syncing model API keys and WebDAV passwords to the server")
+    parser.add_argument("--max-record-mb", type=int, default=64, help="Maximum decompressed size of a single stored record in MB (default: 64)")
     
     args = parser.parse_args()
     app = create_app(
@@ -449,7 +483,10 @@ def main():
         static_dir=args.static_dir,
         jsutils_dir=args.jsutils_dir,
         stdio_mcp_cfg=args.stdio_mcp_cfg,
-        mcp_command=args.mcp_command
+        mcp_command=args.mcp_command,
+        data_dir=args.data_dir,
+        sync_secrets=args.sync_secrets,
+        max_record_mb=args.max_record_mb,
     )
 
     logger.info(f"Starting Unified Server on http://{args.host}:{args.port}")
