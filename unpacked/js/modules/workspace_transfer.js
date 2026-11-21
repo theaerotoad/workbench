@@ -1,6 +1,10 @@
 // --- addFilesToWorkspace.js ---
 async function addFilesToWorkspace(list, baseDir = '') {
     if (!rootHandle) return;
+    if (window.isWorkspaceReadOnly?.()) {
+        showToast('Workspace is read-only', 'error');
+        return;
+    }
     let skipped = 0;
     let items = list.map(it => ({ ...it, path: (baseDir ? baseDir + '/' : '') + it.path.replace(/^\/+/, '') })).filter(it => {
         const ok = it.path && !isAgentPath(it.path) && it.path.split('/')[0] !== '.agent' && !isSecurityProtectedPath(it.path);
@@ -15,6 +19,7 @@ async function addFilesToWorkspace(list, baseDir = '') {
     let added = 0;
     for (const it of items) {
         try {
+            if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
             if (it.dir) { await getDirectoryHandleByPath(it.path, true); state.expandedFolders.add(it.path); continue; }
             const parts = it.path.split('/'), name = parts.pop();
             let dir = rootHandle, acc = '';
@@ -332,6 +337,21 @@ async function loadVirtualSnapshot(vid) {
 window.loadVirtualSnapshot = loadVirtualSnapshot;
 // --- AST_EXPORTS_END ---
 
+// --- buildVirtualHandle.js ---
+function buildVirtualHandle(vid, snap) {
+    const root = new VFSNode('directory', snap.name, null);
+    root._ws = { vid };
+    for (const e of (snap.entries || [])) {
+        if (e.kind === 'directory') vfsPutDir(root, e.path);
+        else vfsPutFile(root, e.path, e.blob);
+    }
+    return vfsWrap(root);
+}
+
+// --- AST_EXPORTS_START ---
+window.buildVirtualHandle = buildVirtualHandle;
+// --- AST_EXPORTS_END ---
+
 // --- openVirtualWorkspaceById.js ---
 async function openVirtualWorkspaceById(vid, preloadedSnap = null) {
     try {
@@ -339,12 +359,9 @@ async function openVirtualWorkspaceById(vid, preloadedSnap = null) {
         if (!snap) {
             showToast('Virtual workspace data not found', 'error'); return;
         }
-        const root = new VFSNode('directory', snap.name, null);
-        root._ws = { vid };
-        for (const e of (snap.entries || [])) { if (e.kind === 'directory') vfsPutDir(root, e.path); else vfsPutFile(root, e.path, e.blob); }
         const folders = getRecentFolders(), f = folders.find(x => x.vid === vid);
         if (f) { f.lastAccessed = Date.now(); saveRecentFolders(folders); }
-        await setWorkspace(vfsWrap(root));
+        await setWorkspace(buildVirtualHandle(vid, snap));
     } catch (e) { showToast('Could not open virtual workspace: ' + e.message, 'error'); }
 }
 

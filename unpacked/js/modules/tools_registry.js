@@ -389,6 +389,7 @@ async function deleteToolFile(name, fileName) {
     // was picked up from an existing .agent/tools directory), remove it
     // there too so it doesn't linger and reappear on the next workspace sync.
     if (rootHandle) {
+        if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
         try {
             const parts = fp.split('/').filter(Boolean);
             const targetName = parts.pop();

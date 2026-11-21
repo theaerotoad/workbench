@@ -1,5 +1,9 @@
 // --- runTask.js ---
 async function runTask(task, msgId, imageUrls, sessionId) {
+    if (window.isWorkspaceReadOnly?.()) {
+        showToast('This workspace is read-only in this window.', 'info');
+        return;
+    }
     const runSessionId = sessionId || state.activeSessionId;
     if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(runSessionId);
     let { url: apiUrl, model, key: apiKey, vision: runModelVision, useProxy, providerName } = getCurrentModelInfo(runSessionId);
