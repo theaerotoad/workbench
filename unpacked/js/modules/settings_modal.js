@@ -47,7 +47,7 @@ export function closeSettingsModal() {
 export function switchSettingsTab(tabId, opts = {}) {
     ensureSettingsModalInit();
 
-    const validTabs = ['workspace', 'appearance', 'models', 'mcp', 'security', 'about'];
+    const validTabs = ['workspace', 'appearance', 'models', 'mcp', 'security', 'data', 'about'];
     const targetTab = validTabs.includes(tabId) ? tabId : 'workspace';
     _activeSettingsTab = targetTab;
 
@@ -316,6 +316,86 @@ export function initSettingsModal() {
       const layer = document.getElementById('bg-image-layer');
       if (layer) layer.style.setProperty('--bg-brightness', `${val}%`);
      });
+    }
+
+    // Data tab: Backup & Restore Controls
+    const btnDownloadBackup = document.getElementById('btn-download-backup');
+    const btnRestoreBackup = document.getElementById('btn-restore-backup');
+    const restoreFileInput = document.getElementById('settings-restore-file-input');
+    const includeSecretsCb = document.getElementById('settings-backup-include-secrets');
+
+    if (btnDownloadBackup) {
+        btnDownloadBackup.addEventListener('click', async () => {
+            if (typeof window.downloadBackup !== 'function') return;
+            const includeSecrets = !!(includeSecretsCb && includeSecretsCb.checked);
+            btnDownloadBackup.disabled = true;
+            try {
+                const filename = await window.downloadBackup({ includeSecrets });
+                if (typeof window.showToast === 'function') {
+                    window.showToast(`Backup downloaded: ${filename}`, 'success');
+                }
+            } catch (err) {
+                console.error('[backup] export failed:', err);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Backup export failed: ' + (err.message || err), 'error');
+                }
+            } finally {
+                btnDownloadBackup.disabled = false;
+            }
+        });
+    }
+
+    if (btnRestoreBackup && restoreFileInput) {
+        btnRestoreBackup.addEventListener('click', () => restoreFileInput.click());
+        restoreFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                let parsed;
+                try {
+                    parsed = JSON.parse(text);
+                } catch (parseErr) {
+                    throw new Error('File is not valid JSON.');
+                }
+                if (!parsed || typeof parsed !== 'object' || parsed.format !== 'workbench-backup' || parsed.version !== 1 || !parsed.stores) {
+                    throw new Error('Not a valid Workbench v1 backup file.');
+                }
+
+                const s = parsed.stores;
+                const summary = [
+                    `${s.catalog ? s.catalog.length : 0} workspace(s)`,
+                    `${s.sessions ? Object.keys(s.sessions).length : 0} session record(s)`,
+                    `${s.baselines ? Object.keys(s.baselines).length : 0} checkpoint(s)`,
+                    `${s.vws ? Object.keys(s.vws).length : 0} virtual workspace(s)`,
+                    `${s.settings ? Object.keys(s.settings).length : 0} setting(s)`
+                ].join(', ');
+                const stamp = parsed.createdAt ? new Date(parsed.createdAt).toLocaleString() : 'unknown date';
+
+                const ok = typeof window.confirmDialog === 'function'
+                    ? await window.confirmDialog(
+                        `Restore backup from ${stamp}?\n\nContents: ${summary}.\n\nExisting local data with matching keys will be overwritten and the page will reload.`,
+                        { confirmLabel: 'Restore', danger: true }
+                    )
+                    : window.confirm(`Restore backup from ${stamp}? Existing local data will be overwritten and the page will reload.`);
+                if (!ok) return;
+
+                btnRestoreBackup.disabled = true;
+                await window.importBackupData(parsed);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Backup restored. Reloading…', 'success');
+                }
+                setTimeout(() => location.reload(), 600);
+            } catch (err) {
+                console.error('[backup] restore failed:', err);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Backup restore failed: ' + (err.message || err), 'error');
+                }
+            } finally {
+                restoreFileInput.value = '';
+                btnRestoreBackup.disabled = false;
+            }
+        });
     }
 
     // Shield agent switch inside Security tab

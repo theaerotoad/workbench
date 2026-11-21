@@ -529,6 +529,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     const windowEl = document.getElementById('window');
     const noFolderOverlay = document.getElementById('no-folder-overlay');
     try {
+        if (typeof remoteInit === 'function') {
+            try { await remoteInit(); } catch (e) { console.error('[remote_store] init failed:', e); }
+        }
         const storedModels = localStorage.getItem('models_json');
         const parsedStored = storedModels ? JSON.parse(storedModels) : null;
         MODEL_PROVIDERS = isValidProvidersShape(parsedStored) ? parsedStored : seedDefaultModels();

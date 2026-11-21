@@ -26,6 +26,7 @@ import './modules/chat_models.js';
 import './modules/docx_export.js';
 
 import '../js/db.js';
+import '../js/remote_store.js';
 import '../js/monaco.js';
 window.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
