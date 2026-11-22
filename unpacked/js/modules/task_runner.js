@@ -4,6 +4,10 @@ async function runTask(task, msgId, imageUrls, sessionId) {
         showToast('This workspace is read-only in this window.', 'info');
         return;
     }
+    if (state.workspaceReloading) {
+        showToast('Workspace is reloading…', 'info');
+        return;
+    }
     const runSessionId = sessionId || state.activeSessionId;
     if (typeof ensureModelAndUISynced === 'function') ensureModelAndUISynced(runSessionId);
     let { url: apiUrl, model, key: apiKey, vision: runModelVision, useProxy, providerName } = getCurrentModelInfo(runSessionId);

@@ -389,7 +389,9 @@ window.pickFolderWithMemory = pickFolderWithMemory;
 // --- refreshPathMeta.js ---
 // Cheap per-path refresh straight from disk: used by tools so a single read/edit/exists never works from stale metadata.
 async function refreshPathMeta(fp) {
-    if (!rootHandle || typeof fp !== 'string' || !fp) return;
+    const root = rootHandle;
+    if (!root || typeof fp !== 'string' || !fp) return;
+    const alive = () => rootHandle === root;
     const cur = registry.meta[fp];
     if (cur && (cur.virtual || cur.attachment)) return;
     if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || fp === TOOLS_FILE || isPromptFileMode(fp)) return;
@@ -398,13 +400,14 @@ async function refreshPathMeta(fp) {
     const parts = fp.split('/').filter(Boolean);
     let kind = null, handle = null;
     try {
-        handle = await getHandleByPath(fp);
+        handle = await getHandleByPath(fp, false, root);
         kind = 'file';
     } catch (e) {
         if (e && e.name === 'TypeMismatchError') {
-            try { handle = await getDirectoryHandleByPath(fp, false); kind = 'directory'; } catch (e2) {}
+            try { handle = await getDirectoryHandleByPath(fp, false, root); kind = 'directory'; } catch (e2) {}
         }
     }
+    if (!alive()) return;
 
     if (!kind) {
         // Gone from disk: drop it (and anything beneath it) from the registry.
@@ -427,18 +430,21 @@ async function refreshPathMeta(fp) {
         dirPath = dirPath ? `${dirPath}/${parts[i]}` : parts[i];
         if (!registry.meta[dirPath]) {
             let dh = null;
-            try { dh = await getDirectoryHandleByPath(dirPath, false); } catch (e) {}
+            try { dh = await getDirectoryHandleByPath(dirPath, false, root); } catch (e) {}
+            if (!alive()) return;
             registry.meta[dirPath] = { kind: 'directory', size: 0, isBinary: false, handle: dh };
             added = true;
         }
     }
-    if (!cur || cur.kind !== kind) {
+    if (!alive()) return;
+    const liveCur = registry.meta[fp];
+    if (!liveCur || liveCur.kind !== kind) {
         registry.meta[fp] = kind === 'file'
             ? { kind: 'file', size: 0, isBinary: isBinaryByExtension(parts[parts.length - 1]), handle }
             : { kind: 'directory', size: 0, isBinary: false, handle };
         added = true;
     } else {
-        cur.handle = handle;
+        liveCur.handle = handle;
     }
     if (added) renderExplorerTree();
     if (isSkillPath(fp) && typeof window.scanWorkspaceSkills === 'function') {
@@ -658,11 +664,13 @@ window.renderRecentFoldersList = renderRecentFoldersList;
 
 // --- runSyncWorkspace.js ---
 async function runSyncWorkspace(silent = true) {
-    if (!rootHandle || state.isSaving) return;
+    const root = rootHandle;
+    if (!root || state.isSaving) return;
+    const alive = () => rootHandle === root;
 
     try {
-        const perm = await rootHandle.queryPermission({ mode: 'readwrite' });
-        if (perm !== 'granted') {
+        const perm = await root.queryPermission({ mode: 'readwrite' });
+        if (!alive() || perm !== 'granted') {
             return;
         }
     } catch(e) {
@@ -673,12 +681,14 @@ async function runSyncWorkspace(silent = true) {
         // Scan, and rescan if a write/delete/rename landed on disk while we were walking the tree.
         let newMeta, epoch, tries = 0;
         do {
+            if (!alive()) return;
             epoch = wsMutationEpoch;
             gitignoreCache.clear();
 
             let fastData = null;
-            if (rootHandle.isWebDAV && typeof rootHandle.fetchFastTree === 'function') {
-                fastData = await rootHandle.fetchFastTree();
+            if (root.isWebDAV && typeof root.fetchFastTree === 'function') {
+                fastData = await root.fetchFastTree();
+                if (!alive()) return;
             }
 
             if (fastData && Array.isArray(fastData.entries)) {
@@ -706,8 +716,8 @@ async function runSyncWorkspace(silent = true) {
                         continue;
                     }
                     if (entry.kind === 'file') {
-                        const fileWebdavPath = rootHandle.path + entry.path;
-                        const fileHandle = FileCtor ? new FileCtor(rootHandle.url, fileWebdavPath, rootHandle.auth, name) : null;
+                        const fileWebdavPath = root.path + entry.path;
+                        const fileHandle = FileCtor ? new FileCtor(root.url, fileWebdavPath, root.auth, name) : null;
                         newMeta[entry.path] = {
                             kind: 'file',
                             size: entry.size || 0,
@@ -716,8 +726,8 @@ async function runSyncWorkspace(silent = true) {
                             handle: fileHandle
                         };
                     } else if (entry.kind === 'directory') {
-                        const dirWebdavPath = rootHandle.path + entry.path + '/';
-                        const dirHandle = DirCtor ? new DirCtor(rootHandle.url, dirWebdavPath, rootHandle.auth, name) : null;
+                        const dirWebdavPath = root.path + entry.path + '/';
+                        const dirHandle = DirCtor ? new DirCtor(root.url, dirWebdavPath, root.auth, name) : null;
                         newMeta[entry.path] = {
                             kind: 'directory',
                             size: 0,
@@ -727,11 +737,14 @@ async function runSyncWorkspace(silent = true) {
                     }
                 }
             } else {
-                await prescanGitignoreFiles(rootHandle, "");
+                await prescanGitignoreFiles(root, "");
+                if (!alive()) return;
                 newMeta = {};
-                await fastTraverseDirectory(rootHandle, "", newMeta);
+                await fastTraverseDirectory(root, "", newMeta);
+                if (!alive()) return;
             }
         } while (epoch !== wsMutationEpoch && ++tries < 3);
+        if (!alive()) return;
         // If it still raced, only add/update this round; removals wait for the next clean scan.
         const allowRemoval = epoch === wsMutationEpoch;
 
@@ -739,6 +752,7 @@ async function runSyncWorkspace(silent = true) {
         if (newMeta && newMeta[CONFIG_FILE]) {
          try {
           const cText = await readDisk(CONFIG_FILE);
+          if (!alive()) return;
           if (cText) {
            const c = JSON.parse(cText);
            AppConfig._data = { ...CONFIG_DEFAULTS, ...c };
@@ -746,6 +760,7 @@ async function runSyncWorkspace(silent = true) {
           }
          } catch(e) {}
         }
+        if (!alive()) return;
 
         if (registry.files[PLAN_FILE] && !newMeta[PLAN_FILE]) {
             newMeta[PLAN_FILE] = { kind: 'file', size: registry.files[PLAN_FILE].length, isBinary: false };
@@ -761,6 +776,7 @@ async function runSyncWorkspace(silent = true) {
 
         if (typeof window.scanWorkspaceSkills === 'function') {
             await window.scanWorkspaceSkills();
+            if (!alive()) return;
         }
 
         if (structChanged || !silent) {
@@ -769,7 +785,8 @@ async function runSyncWorkspace(silent = true) {
             updateStatusInfo();
         }
 
-        await saveWorkspaceCacheToDB(wsStorageName(rootHandle), registry.meta);
+        await saveWorkspaceCacheToDB(wsStorageName(root), registry.meta);
+        if (!alive()) return;
 
         if (state.activeTab && state.activeTab !== 'chat' && !state.activeTab.startsWith('filediff:') && !state.activeTab.startsWith('attachment:')) {
             const fp = state.activeTab;
@@ -777,16 +794,24 @@ async function runSyncWorkspace(silent = true) {
             if (meta && meta.kind === 'file' && !meta.isBinary) {
                 // Avoid redundant re-reading on WebDAV if server-reported size and mtime have not changed
                 const contentAlreadyLoaded = registry.files[fp] !== undefined;
-                const mtimeUnchanged = rootHandle.isWebDAV && meta.mtime !== undefined && meta._syncedMtime === meta.mtime;
-                const sizeUnchanged = rootHandle.isWebDAV && meta.size !== undefined && meta._syncedSize === meta.size;
+                const mtimeUnchanged = root.isWebDAV && meta.mtime !== undefined && meta._syncedMtime === meta.mtime;
+                const sizeUnchanged = root.isWebDAV && meta.size !== undefined && meta._syncedSize === meta.size;
                 if (!contentAlreadyLoaded || !mtimeUnchanged || !sizeUnchanged) {
                     const freshContent = await readFileContent(fp, { force: true });
-                    meta._syncedMtime = meta.mtime;
-                    meta._syncedSize = meta.size;
+                    if (!alive()) return;
+                    const metaNow = registry.meta[fp];
+                    if (metaNow) {
+                        metaNow._syncedMtime = metaNow.mtime;
+                        metaNow._syncedSize = metaNow.size;
+                    }
                     if (monacoEditor && !isFileDirty(fp)) {
                         const model = monacoModels.get(fp);
-                        if (model && model.getValue() !== freshContent) {
-                            withDirtyTrackingSuppressed(() => model.setValue(freshContent));
+                        if (model) {
+                            if (typeof setModelFromDisk === 'function') {
+                                setModelFromDisk(fp, model, freshContent);
+                            } else if (model.getValue() !== freshContent) {
+                                withDirtyTrackingSuppressed(() => model.setValue(freshContent));
+                            }
                             registry.files[fp] = freshContent;
                         }
                     }
@@ -850,6 +875,14 @@ window.saveRecentHandleToDB = saveRecentHandleToDB;
 // --- setWorkspace.js ---
 async function setWorkspace(handle, opts = {}) {
     const isReopen = !!(opts && opts.reopen);
+    const keepView = !!(opts && opts.keepView);
+    const prevView = keepView ? {
+        sessionId: state.activeSessionId,
+        openTabs: Array.isArray(state.openTabs) ? state.openTabs.slice() : ['chat'],
+        activeTab: state.activeTab || 'chat',
+        tabViewModes: state.tabViewModes ? { ...state.tabViewModes } : {}
+    } : null;
+
     if (!isReopen && rootHandle && rootHandle !== handle) {
         await closeWorkspaceNoConfirm();
     }
@@ -930,6 +963,63 @@ async function setWorkspace(handle, opts = {}) {
     await selectInitialSession();
     await syncWorkspace(true);
     await restoreActiveSessionContent();
+
+    if (prevView) {
+        if (
+            prevView.sessionId &&
+            prevView.sessionId !== state.activeSessionId &&
+            Array.isArray(state.sessionIds) &&
+            state.sessionIds.includes(prevView.sessionId) &&
+            typeof switchSession === 'function'
+        ) {
+            await switchSession(prevView.sessionId);
+        }
+        const restoredTabs = prevView.openTabs.filter(t => {
+            if (t === 'chat' || t.startsWith('attachment:')) return true;
+            if (t.startsWith('filediff:')) {
+                const fp = t.slice('filediff:'.length).split('::')[0];
+                return !!registry.meta[fp];
+            }
+            return !!registry.meta[t];
+        });
+        if (!restoredTabs.includes('chat')) restoredTabs.unshift('chat');
+        state.openTabs = restoredTabs;
+        const restoredModes = {};
+        for (const [k, v] of Object.entries(prevView.tabViewModes || {})) {
+            if (restoredTabs.includes(k)) restoredModes[k] = v;
+        }
+        state.tabViewModes = restoredModes;
+        renderTabs();
+        const targetTab = (prevView.activeTab && restoredTabs.includes(prevView.activeTab))
+            ? prevView.activeTab
+            : 'chat';
+        await switchTab(targetTab, { keepFocus: true });
+    }
+
+    if (isReopen && state.dirtyFiles && state.dirtyFiles.size > 0 && state.fileBase) {
+        let conflictCount = 0;
+        for (const fp of state.dirtyFiles) {
+            const base = state.fileBase.get(fp);
+            if (base === undefined) continue;
+            if ((typeof isVirtualAgentFile === 'function' && isVirtualAgentFile(fp)) ||
+                (typeof isToolFilePath === 'function' && isToolFilePath(fp)) ||
+                (typeof isAttachmentPath === 'function' && isAttachmentPath(fp))) {
+                continue;
+            }
+            try {
+                const disk = await readFileContent(fp, { fromDisk: true });
+                if (disk !== base) conflictCount++;
+            } catch (e) {}
+        }
+        if (conflictCount > 0 && typeof showToast === 'function') {
+            showToast(
+                `${conflictCount} unsaved file${conflictCount === 1 ? '' : 's'} ${conflictCount === 1 ? 'was' : 'were'} also changed in the other window. Saving will ask before overwriting.`,
+                'info',
+                5000
+            );
+        }
+    }
+
     renderSessionPopoverList();
 
     const noFolderOverlay = document.getElementById('no-folder-overlay');
@@ -947,7 +1037,7 @@ async function setWorkspace(handle, opts = {}) {
     renderExplorerTree();
     renderChangesPanel();
     if (typeof setupWebDAVEvents === 'function') setupWebDAVEvents(handle);
-    focusPrompt();
+    if (!keepView) focusPrompt();
 }
 
 // --- AST_EXPORTS_START ---

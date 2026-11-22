@@ -16,23 +16,26 @@ async function readFileContent(filepath, opts = {}) {
     if (isAttachmentPath(filepath)) {
         return registry.files[filepath] !== undefined ? registry.files[filepath] : "";
     }
-    if (isFileDirty(filepath) && typeof monacoModels !== 'undefined' && monacoModels.has(filepath)) {
+    const fromDisk = !!(opts && opts.fromDisk === true);
+    if (!fromDisk && isFileDirty(filepath) && typeof monacoModels !== 'undefined' && monacoModels.has(filepath)) {
         return monacoModels.get(filepath).getValue();
     }
-    if (!rootHandle) return registry.files[filepath] !== undefined ? registry.files[filepath] : "";
+    const root = rootHandle;
+    if (!root) return registry.files[filepath] !== undefined ? registry.files[filepath] : "";
 
-    const force = opts && opts.force === true;
+    const force = fromDisk || !!(opts && opts.force === true);
     if (!force && registry.files[filepath] !== undefined) {
         return registry.files[filepath];
     }
 
-    if (_inFlightReads.has(filepath)) {
-        return _inFlightReads.get(filepath);
+    const existing = _inFlightReads.get(filepath);
+    if (!force && existing && existing.root === root) {
+        return existing.p;
     }
 
     const p = (async () => {
         try {
-            const handle = await getHandleByPath(filepath);
+            const handle = await getHandleByPath(filepath, false, root);
             if (!handle) return "";
             const file = await handle.getFile();
             let text;
@@ -41,26 +44,33 @@ async function readFileContent(filepath, opts = {}) {
                 text = await file.text();   // unchanged legacy behaviour; callers check isBinary first
             } else {
                 text = sniffed.text;
-                if (registry.meta[filepath]) registry.meta[filepath].encoding = sniffed.encoding;
             }
-            registry.files[filepath] = text;
-            if (registry.meta[filepath]) {
-                registry.meta[filepath].size = file.size;
-                if (file.lastModified) {
-                    registry.meta[filepath].mtime = file.lastModified / 1000;
-                    registry.meta[filepath]._syncedMtime = registry.meta[filepath].mtime;
-                    registry.meta[filepath]._syncedSize = file.size;
+            if (rootHandle === root && !fromDisk) {
+                if (!sniffed.binary && registry.meta[filepath]) {
+                    registry.meta[filepath].encoding = sniffed.encoding;
+                }
+                registry.files[filepath] = text;
+                if (registry.meta[filepath]) {
+                    registry.meta[filepath].size = file.size;
+                    if (file.lastModified) {
+                        registry.meta[filepath].mtime = file.lastModified / 1000;
+                        registry.meta[filepath]._syncedMtime = registry.meta[filepath].mtime;
+                        registry.meta[filepath]._syncedSize = file.size;
+                    }
                 }
             }
             return text;
         } catch(e) {
             return "";
         } finally {
-            _inFlightReads.delete(filepath);
+            const cur = _inFlightReads.get(filepath);
+            if (cur && cur.p === p) _inFlightReads.delete(filepath);
         }
     })();
 
-    _inFlightReads.set(filepath, p);
+    if (!fromDisk) {
+        _inFlightReads.set(filepath, { root, p });
+    }
     return p;
 }
 

@@ -525,8 +525,18 @@ async function closeTab(tabId) {
         const choice = await confirmSaveDiscard(`Do you want to save changes you made to ${tabId}?`);
         if (choice === 'cancel') return;
         if (choice === 'save') {
+            if (state.workspaceReloading) {
+                showToast('Workspace is reloading…', 'info');
+                return;
+            }
             const model = monacoModels.get(tabId);
             if (model) {
+                const base = state.fileBase ? state.fileBase.get(tabId) : undefined;
+                const ok = await confirmNoExternalChange(tabId, base);
+                if (!ok) {
+                    showToast('Save cancelled; your edits are still in the editor.', 'info');
+                    return;
+                }
                 try {
                     await writeDisk(tabId, model.getValue());
                 } catch(err) {
@@ -569,6 +579,7 @@ function closeTabNoConfirm(tabId) {
         const model = monacoModels.get(tabId);
         if (model) model.dispose();
         monacoModels.delete(tabId);
+        if (state.fileBase) state.fileBase.delete(tabId);
     }
 }
 
@@ -582,9 +593,11 @@ function disposeWorkspaceModels({ keepDirty = false } = {}) {
         }
         try { model.dispose(); } catch (e) {}
         monacoModels.delete(fp);
+        if (state && state.fileBase) state.fileBase.delete(fp);
     }
-    if (!keepDirty && typeof state !== 'undefined' && state && state.dirtyFiles) {
-        state.dirtyFiles.clear();
+    if (!keepDirty && typeof state !== 'undefined' && state) {
+        if (state.dirtyFiles) state.dirtyFiles.clear();
+        if (state.fileBase) state.fileBase.clear();
         state.isEditorDirty = false;
     }
     if (typeof monacoDiffEditor !== 'undefined' && monacoDiffEditor) {
@@ -627,22 +640,51 @@ window.getDuoSwitch = getDuoSwitch;
 // [AST_MERGED]: ./js/monaco.js
 
 
+function setModelFromDisk(fp, model, content) {
+    if (!state.fileBase) state.fileBase = new Map();
+    if (content !== undefined) {
+        state.fileBase.set(fp, content);
+        if (model && model.getValue() !== content) {
+            withDirtyTrackingSuppressed(() => model.setValue(content));
+        }
+    }
+}
+
+async function confirmNoExternalChange(fp, base) {
+    if (base === undefined) return true;
+    if (typeof isVirtualAgentFile === 'function' && isVirtualAgentFile(fp)) return true;
+    if (typeof isToolFilePath === 'function' && isToolFilePath(fp)) return true;
+    if (typeof isAttachmentPath === 'function' && isAttachmentPath(fp)) return true;
+    const disk = await readFileContent(fp, { fromDisk: true });
+    if (disk === base) return true;
+    return await confirmDialog(
+        `“${fp}” was changed outside this editor (another window, tool, or device) since you opened it. Overwrite it with your version?`,
+        { confirmLabel: 'Overwrite', danger: true }
+    );
+}
+
 function getOrCreateModel(filepath, content) {
     const uri = MONACO.Uri.parse(`inmemory://agent2/${encodeURIComponent(filepath)}`);
     let model = monacoModels.get(filepath) || (MONACO.editor ? MONACO.editor.getModel(uri) : null);
     
     if (model) {
-        if (content !== undefined && model.getValue() !== content && !isFileDirty(filepath)) {
-            withDirtyTrackingSuppressed(() => model.setValue(content));
+        if (content !== undefined && !isFileDirty(filepath)) {
+            setModelFromDisk(filepath, model, content);
         }
     } else {
         model = MONACO.editor.createModel(content || '', langOf(filepath), uri);
+        if (content !== undefined) {
+            if (!state.fileBase) state.fileBase = new Map();
+            state.fileBase.set(filepath, content);
+        }
     }
     monacoModels.set(filepath, model);
     return model;
 }
 
 // --- AST_EXPORTS_START ---
+window.setModelFromDisk = setModelFromDisk;
+window.confirmNoExternalChange = confirmNoExternalChange;
 window.getOrCreateModel = getOrCreateModel;
 // --- AST_EXPORTS_END ---
 
@@ -1205,9 +1247,18 @@ window.resolveGlowColor = resolveGlowColor;
 
 // --- saveDiffModifiedFile.js ---
 async function saveDiffModifiedFile() {
+    if (state.workspaceReloading) {
+        showToast('Workspace is reloading…', 'info');
+        return;
+    }
     if (state.isSaving || !state.currentDiffFilepath || !monacoDiffEditor) return;
     state.isSaving = true;
     try {
+        const ok = await confirmNoExternalChange(state.currentDiffFilepath, state.diffBase);
+        if (!ok) {
+            showToast('Save cancelled; your edits are still in the editor.', 'info');
+            return;
+        }
         const modEditor = monacoDiffEditor.getModifiedEditor();
         const content = modEditor.getValue();
         const isToolsConfig = state.currentDiffFilepath === (typeof TOOLS_FILE !== 'undefined' ? TOOLS_FILE : window.TOOLS_FILE) || state.currentDiffFilepath === '.agent/tools.json';
@@ -1239,6 +1290,7 @@ async function saveDiffModifiedFile() {
         }
 
         await writeDisk(state.currentDiffFilepath, content);
+        state.diffBase = content;
 
         if (typeof isToolFilePath === 'function' && isToolFilePath(state.currentDiffFilepath)) {
             if (typeof rebuildToolRegistryFromFiles === 'function') {
@@ -1261,6 +1313,10 @@ window.saveDiffModifiedFile = saveDiffModifiedFile;
 
 // --- saveEditorFile.js ---
 async function saveEditorFile() {
+    if (state.workspaceReloading) {
+        showToast('Workspace is reloading…', 'info');
+        return;
+    }
     if (state.isSaving || !state.currentEditorPath || !monacoEditor) return;
     const saveBtn = typeof btnDocSave !== 'undefined' && btnDocSave ? btnDocSave : document.getElementById('btn-doc-save');
     state.isSaving = true;
@@ -1268,6 +1324,12 @@ async function saveEditorFile() {
     hideEditorSaveError();
 
     try {
+        const base = state.fileBase ? state.fileBase.get(state.currentEditorPath) : undefined;
+        const ok = await confirmNoExternalChange(state.currentEditorPath, base);
+        if (!ok) {
+            showToast('Save cancelled; your edits are still in the editor.', 'info');
+            return;
+        }
         const content = monacoEditor.getValue();
         const isToolsConfig = state.currentEditorPath === (typeof TOOLS_FILE !== 'undefined' ? TOOLS_FILE : window.TOOLS_FILE) || state.currentEditorPath === '.agent/tools.json';
 
@@ -1690,7 +1752,7 @@ async function switchTab(tabId, opts = {}) {
         editorView.style.display = 'none';
         diffView.style.display = 'none';
         chatView.style.display = 'flex';
-        focusPrompt();
+        if (!opts.keepFocus) focusPrompt();
     } else if (tabId.startsWith('filediff:')) {
         chatView.style.display = 'none';
         editorView.style.display = 'none';
@@ -1788,7 +1850,7 @@ async function switchTab(tabId, opts = {}) {
 
             activateTextOrRenderedView();
 
-            if (focusChat && window.focusPrompt) {
+            if (focusChat && !opts.keepFocus && window.focusPrompt) {
                 window.focusPrompt();
             }
             return;
@@ -1865,7 +1927,7 @@ async function switchTab(tabId, opts = {}) {
 
         activateTextOrRenderedView();
 
-        if (focusChat && window.focusPrompt) {
+        if (focusChat && !opts.keepFocus && window.focusPrompt) {
             window.focusPrompt();
         }
     }
