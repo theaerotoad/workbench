@@ -340,12 +340,14 @@ window.isRestorableAgentFile = isRestorableAgentFile;
 
 // --- isScanVisiblePath.js ---
 // Same visibility rules the scan applies: is this path something a scan would list?
-function isScanVisiblePath(fp) {
+function isScanVisiblePath(fp, isDir = false) {
     const parts = fp.split('/').filter(Boolean);
     let cur = '';
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
         cur = cur ? `${cur}/${part}` : part;
-        if (shouldSkipScanEntry(part, cur)) return false;
+        const partIsDir = i < parts.length - 1 ? true : isDir;
+        if (shouldSkipScanEntry(part, cur, partIsDir)) return false;
     }
     return parts.length > 0;
 }
@@ -495,9 +497,17 @@ window.shouldHideFromTools = shouldHideFromTools;
 
 // --- shouldSkipScanEntry.js ---
 // Single rule for what a workspace scan skips (also used by refreshPathMeta so both agree).
-function shouldSkipScanEntry(name, fullPath) {
+function shouldSkipScanEntry(name, fullPath, isDir = false) {
     if (IGNORED_DIRS.has(name)) return true;
-    if (name.startsWith('.') && name !== PLAN_FILE && name !== '.gitignore' && name !== CUSTOM_TOOLS_DIR) return true;
+    if (isDir && name.startsWith('.') && fullPath !== CUSTOM_TOOLS_DIR) return true;
+    if (fullPath) {
+        const parts = fullPath.split('/').filter(Boolean);
+        for (let i = 0; i < parts.length - 1; i++) {
+            const seg = parts[i];
+            if (IGNORED_DIRS.has(seg)) return true;
+            if (seg.startsWith('.') && !(i === 0 && seg === CUSTOM_TOOLS_DIR)) return true;
+        }
+    }
     return isSecurityProtectedPath(fullPath);
 }
 

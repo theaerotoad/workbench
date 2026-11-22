@@ -87,6 +87,17 @@ async function readFileContentForTool(filepath) {
     if (isAgentPath(filepath) && !isToolFilePath(filepath) && !isVirtualAgentFile(filepath)) {
         return { error: `ERROR: ${filepath} is inside .agent and cannot be read by a tool call.` };
     }
+    if (!isVirtualAgentFile(filepath)) {
+        const meta = registry.meta[filepath];
+        if (meta && meta.kind === 'directory') {
+            return { error: `ERROR: ${filepath} is a directory and cannot be read as a file.` };
+        }
+        const inMemoryOnly = !rootHandle && registry.files[filepath] !== undefined;
+        const inMemoryPlan = filepath === PLAN_FILE && registry.files[PLAN_FILE] !== undefined;
+        if (!meta && !inMemoryOnly && !inMemoryPlan && !(await fileExistsOnDisk(filepath))) {
+            return { error: `ERROR: ${filepath} not found` };
+        }
+    }
     return { content: await readFileContent(filepath) };
 }
 

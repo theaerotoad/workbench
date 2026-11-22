@@ -211,7 +211,7 @@ async function fastTraverseDirectory(handle, path = "", targetMap) {
     const subdirs = [];
     for await (const entry of handle.values()) {
         const fullPath = path ? `${path}/${entry.name}` : entry.name;
-        if (shouldSkipScanEntry(entry.name, fullPath)) continue;
+        if (shouldSkipScanEntry(entry.name, fullPath, entry.kind === 'directory')) continue;
         if (entry.kind === 'file') {
             let size = 0;
             let isBinary = isBinaryByExtension(entry.name);   // hint only; resolveIsBinary() confirms from content on first use
@@ -422,6 +422,7 @@ async function refreshPathMeta(fp) {
         }
         return;
     }
+    if (kind === 'directory' && !isScanVisiblePath(fp, true)) return;
 
     let added = false;
     // Make sure every ancestor folder is known so the explorer can show the file.
@@ -712,7 +713,7 @@ async function runSyncWorkspace(silent = true) {
 
                 for (const entry of fastData.entries) {
                     const name = entry.path.split('/').pop();
-                    if (typeof shouldSkipScanEntry === 'function' && shouldSkipScanEntry(name, entry.path)) {
+                    if (typeof shouldSkipScanEntry === 'function' && shouldSkipScanEntry(name, entry.path, entry.kind === 'directory')) {
                         continue;
                     }
                     if (entry.kind === 'file') {
