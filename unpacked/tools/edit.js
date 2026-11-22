@@ -1,7 +1,7 @@
 // edit - tool definition.
 const TOOL_META = {
     "name": "edit",
-    "description": "Make targeted edits to a file by replacing an exact code block. To delete code, pass an empty string for replace_block.",
+    "description": "Make targeted edits to a file by replacing an exact code block. Fails if search_block matches multiple locations unless occurrence or replace_all is specified. To delete code, pass an empty string for replace_block.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -16,6 +16,14 @@ const TOOL_META = {
                 "type": "string",
                 "description": "Replacement code. Use an empty string to delete search_block entirely.",
                 "allowEmpty": true
+            },
+            "occurrence": {
+                "type": "integer",
+                "description": "Optional 1-based index of which match to replace when search_block appears multiple times."
+            },
+            "replace_all": {
+                "type": "boolean",
+                "description": "Optional. Set to true to replace every occurrence of search_block."
             }
         },
         "required": [
@@ -44,7 +52,7 @@ async function handler(args, api) {
         return { type: 'space4', char: '    ' };
     }
 
-    function applySearchReplace(original, searchBlock, replaceBlock) {
+    function applySearchReplace(original, searchBlock, replaceBlock, opts = {}) {
         const usesCRLF = String(original == null ? '' : original).includes('\r\n');
         const normalize = s => String(s == null ? '' : s).replace(/\r\n/g, '\n');
         const toFileEol = s => usesCRLF ? s.replace(/\n/g, '\r\n') : s;
@@ -53,23 +61,76 @@ async function handler(args, api) {
         const sBlock = normalize(searchBlock);
         const rBlock = normalize(replaceBlock);
 
-        // Fast path: exact match
-        const directIdx = orig.indexOf(sBlock);
-        if (directIdx !== -1) {
-            const before = orig.slice(0, directIdx);
-            const after  = orig.slice(directIdx + sBlock.length);
-            const res = before + rBlock + after;
-            const startLine = before.split('\n').length;
-            return { content: toFileEol(res), lineNumber: startLine };
+        if (sBlock === '') {
+            throw new Error("search_block cannot be empty.");
         }
 
-        // Fallback: line-by-line trim-aware match
+        const rawOcc = (opts && typeof opts === 'object') ? opts.occurrence : opts;
+        const replaceAllFlag = !!(opts && typeof opts === 'object' && (opts.replaceAll === true || opts.replace_all === true));
+        if (replaceAllFlag && rawOcc !== undefined && rawOcc !== null && rawOcc !== '' && rawOcc !== 'all') {
+            throw new Error("Cannot specify both occurrence and replace_all.");
+        }
+        const replaceAll = replaceAllFlag || rawOcc === 'all';
+        let occNum = null;
+        if (!replaceAll && rawOcc !== undefined && rawOcc !== null && rawOcc !== '') {
+            const n = Number(rawOcc);
+            if (!Number.isInteger(n) || n < 1) {
+                throw new Error(`Invalid occurrence "${rawOcc}": must be a positive integer (1-based) or "all".`);
+            }
+            occNum = n;
+        }
+
+        const selectMatches = (matches) => {
+            const linesList = matches.map(m => m.line).join(', ');
+            if (replaceAll) return matches;
+            if (occNum !== null) {
+                if (occNum > matches.length) {
+                    throw new Error(`search_block only matches ${matches.length} location${matches.length === 1 ? '' : 's'} (lines ${linesList}); cannot replace occurrence ${occNum}.`);
+                }
+                return [matches[occNum - 1]];
+            }
+            if (matches.length > 1) {
+                throw new Error(`search_block matches ${matches.length} locations (lines ${linesList}). Add more context, pass occurrence (1-${matches.length}), or set replace_all: true.`);
+            }
+            return matches;
+        };
+
+        // Fast path: exact match (collect all non-overlapping matches)
+        const exactMatches = [];
+        let searchFrom = 0;
+        while (true) {
+            const idx = orig.indexOf(sBlock, searchFrom);
+            if (idx === -1) break;
+            const line = orig.slice(0, idx).split('\n').length;
+            exactMatches.push({ idx, line });
+            searchFrom = idx + sBlock.length;
+        }
+
+        if (exactMatches.length > 0) {
+            const targets = selectMatches(exactMatches);
+            let res = '';
+            let cursor = 0;
+            for (const m of targets) {
+                res += orig.slice(cursor, m.idx) + rBlock;
+                cursor = m.idx + sBlock.length;
+            }
+            res += orig.slice(cursor);
+            return {
+                content: toFileEol(res),
+                lineNumber: targets[0].line,
+                matchCount: exactMatches.length,
+                replacedCount: targets.length,
+                matchLines: targets.map(m => m.line)
+            };
+        }
+
+        // Fallback: line-by-line trim-aware match (collect all non-overlapping matches)
         const origLines = orig.split('\n');
         const sLines    = sBlock.split('\n');
         const rLines    = rBlock.split('\n');
         const fileIndent = detectIndentation(origLines);
 
-        let matchIdx = -1;
+        const trimMatches = [];
         for (let i = 0; i <= origLines.length - sLines.length; i++) {
             let match = true;
             for (let j = 0; j < sLines.length; j++) {
@@ -79,32 +140,44 @@ async function handler(args, api) {
                 }
             }
             if (match) {
-                matchIdx = i;
-                break;
+                trimMatches.push({ lineIdx: i, line: i + 1 });
+                i += sLines.length - 1;
             }
         }
 
-        if (matchIdx !== -1) {
-            const origLead = origLines[matchIdx].match(/^\s*/)[0];
-            const sLead    = sLines[0].match(/^\s*/)[0];
+        if (trimMatches.length > 0) {
+            const targets = selectMatches(trimMatches);
+            const sLead = sLines[0].match(/^\s*/)[0];
+            const outLines = [];
+            let cursor = 0;
 
-            const adjustedRLines = rLines.map((line) => {
-                if (!line.trim()) return '';
-                const curLead = line.match(/^\s*/)[0];
-                const lineContent = line.slice(curLead.length);
+            for (const m of targets) {
+                for (let k = cursor; k < m.lineIdx; k++) outLines.push(origLines[k]);
+                const origLead = origLines[m.lineIdx].match(/^\s*/)[0];
+                const adjustedRLines = rLines.map((line) => {
+                    if (!line.trim()) return '';
+                    const curLead = line.match(/^\s*/)[0];
+                    const lineContent = line.slice(curLead.length);
 
-                let relativeIndent = curLead.startsWith(sLead) ? curLead.slice(sLead.length) : curLead;
-                if (fileIndent.type === 'tab') {
-                    relativeIndent = relativeIndent.replace(/ {4}/g, '\t').replace(/ {2}/g, '\t');
-                }
+                    let relativeIndent = curLead.startsWith(sLead) ? curLead.slice(sLead.length) : curLead;
+                    if (fileIndent.type === 'tab') {
+                        relativeIndent = relativeIndent.replace(/ {4}/g, '\t').replace(/ {2}/g, '\t');
+                    }
 
-                return origLead + relativeIndent + lineContent;
-            });
+                    return origLead + relativeIndent + lineContent;
+                });
+                outLines.push(...adjustedRLines);
+                cursor = m.lineIdx + sLines.length;
+            }
+            for (let k = cursor; k < origLines.length; k++) outLines.push(origLines[k]);
 
-            const before = origLines.slice(0, matchIdx).join('\n');
-            const after  = origLines.slice(matchIdx + sLines.length).join('\n');
-            const res = (before ? before + '\n' : '') + adjustedRLines.join('\n') + (after ? '\n' + after : '');
-            return { content: toFileEol(res), lineNumber: matchIdx + 1 };
+            return {
+                content: toFileEol(outLines.join('\n')),
+                lineNumber: targets[0].line,
+                matchCount: trimMatches.length,
+                replacedCount: targets.length,
+                matchLines: targets.map(m => m.line)
+            };
         }
 
         throw new Error("Could not find search_block in target file.");
@@ -197,7 +270,10 @@ async function handler(args, api) {
 
     try {
         const originalContent = await api.readFile(args.filepath);
-        const result = applySearchReplace(originalContent, args.search_block, args.replace_block || "");
+        const result = applySearchReplace(originalContent, args.search_block, args.replace_block || "", {
+            occurrence: args.occurrence,
+            replaceAll: args.replace_all === true
+        });
         const err = await api.writeFile(args.filepath, result.content);
         if (err) {
             await api.showUI(renderErrorHtml(args.filepath, err));
@@ -212,15 +288,18 @@ async function handler(args, api) {
         const searchLines  = searchRaw  === "" ? [] : searchRaw.split('\n');
         const replaceLines = replaceRaw === "" ? [] : replaceRaw.split('\n');
 
-        const linesRemoved = searchLines.length;
-        const linesAdded   = replaceLines.length;
-        const delta        = linesAdded - linesRemoved;
+        const replacedCount = result.replacedCount || 1;
+        const linesRemoved  = searchLines.length * replacedCount;
+        const linesAdded    = replaceLines.length * replacedCount;
+        const delta         = linesAdded - linesRemoved;
 
         const startLineNum = result.lineNumber;
-        const endLineNum   = linesRemoved > 0 ? startLineNum + linesRemoved - 1 : startLineNum;
-        const rangeText    = linesRemoved > 1 
-            ? `L${startLineNum}–L${endLineNum}` 
-            : (linesRemoved === 1 ? `L${startLineNum}` : `L${startLineNum} (ins)`);
+        const endLineNum   = searchLines.length > 0 ? startLineNum + searchLines.length - 1 : startLineNum;
+        const rangeText    = replacedCount > 1
+            ? `${replacedCount} matches`
+            : (searchLines.length > 1
+                ? `L${startLineNum}–L${endLineNum}`
+                : (searchLines.length === 1 ? `L${startLineNum}` : `L${startLineNum} (ins)`));
 
         const totalFileLines = result.content.split(/\r?\n/).length;
 
@@ -234,7 +313,7 @@ async function handler(args, api) {
         let intraLineDel = null;
         let intraLineAdd = null;
 
-        if (linesRemoved === 1 && linesAdded === 1) {
+        if (searchLines.length === 1 && replaceLines.length === 1) {
             const s1 = searchLines[0];
             const s2 = replaceLines[0];
 
@@ -263,7 +342,7 @@ async function handler(args, api) {
         let lineNum = startLineNum;
 
         searchLines.forEach((l) => {
-            const lineContent = (linesRemoved === 1 && linesAdded === 1 && intraLineDel) ? intraLineDel : escapeHtml(l);
+            const lineContent = (searchLines.length === 1 && replaceLines.length === 1 && intraLineDel) ? intraLineDel : escapeHtml(l);
             diffLinesHTML += `
                 <div class="tool-ui-line-row" style="background:color-mix(in srgb, var(--red) 12%, transparent); color:var(--red);">
                     <div class="tool-ui-line-no" style="color:color-mix(in srgb, var(--red) 60%, transparent); border-right-color:color-mix(in srgb, var(--red) 20%, transparent);">${lineNum}</div>
@@ -275,7 +354,7 @@ async function handler(args, api) {
 
         lineNum = startLineNum;
         replaceLines.forEach((l) => {
-            const lineContent = (linesRemoved === 1 && linesAdded === 1 && intraLineAdd) ? intraLineAdd : escapeHtml(l);
+            const lineContent = (searchLines.length === 1 && replaceLines.length === 1 && intraLineAdd) ? intraLineAdd : escapeHtml(l);
             diffLinesHTML += `
                 <div class="tool-ui-line-row" style="background:color-mix(in srgb, var(--green) 12%, transparent); color:var(--green);">
                     <div class="tool-ui-line-no" style="color:color-mix(in srgb, var(--green) 60%, transparent); border-right-color:color-mix(in srgb, var(--green) 20%, transparent);">${lineNum}</div>
@@ -340,15 +419,22 @@ async function handler(args, api) {
                 <div style="display:flex; align-items:center; justify-content:space-between; font-size:10.5px; color:var(--dim); padding:0 2px;">
                     <div style="display:flex; align-items:center; gap:4px;">
                         <span class="icon" style="font-size:12px; color:var(--green);">check_circle</span>
-                        <span>Applied at line ${startLineNum}</span>
+                        <span>${replacedCount > 1
+                            ? `Replaced ${replacedCount} occurrences (lines ${result.matchLines.slice(0, 8).join(', ')}${result.matchLines.length > 8 ? '…' : ''})`
+                            : (result.matchCount > 1 ? `Applied at line ${startLineNum} (occurrence ${args.occurrence} of ${result.matchCount})` : `Applied at line ${startLineNum}`)
+                        }</span>
                     </div>
                     <span style="opacity:0.6;">${totalFileLines} total lines</span>
                 </div>
             </div>
         `;
 
-        const resultText = `Edited ${args.filepath} at ${rangeText}`;
-        const summary = `${args.filepath}:${startLineNum}`;
+        const resultText = replacedCount > 1
+            ? `Edited ${args.filepath}: replaced ${replacedCount} occurrences (lines ${result.matchLines.join(', ')})`
+            : `Edited ${args.filepath} at ${rangeText}`;
+        const summary = replacedCount > 1
+            ? `${args.filepath} (${replacedCount}×)`
+            : `${args.filepath}:${startLineNum}`;
 
         await api.showUI(displayHtml);
         return { output: resultText, summary };
