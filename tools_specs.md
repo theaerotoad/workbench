@@ -186,9 +186,13 @@ All paths are workspace-relative (e.g., src/index.js):
   - api.listFiles() -> Promise<string[]> Returns array of relative paths of all
     accessible files in the workspace.
   - api.fileExists(filepath) -> Promise<boolean> Checks if a file exists and is
-    accessible.
+      accessible.
+  - api.statFile(filepath) -> Promise<{ size: number, mtime: number | null,
+      isBinary: boolean } | null> Returns byte size, modification timestamp
+      (Unix seconds, or null if unavailable), and binary flag for an accessible
+      workspace file, or null if not found or inaccessible.
   - api.isBinary(filepath) -> Promise<boolean> Checks whether a file contains
-    binary bytes.
+      binary bytes.
 
 Context & Configuration
 
