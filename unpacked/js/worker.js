@@ -70,6 +70,7 @@ async function runTool(runId, toolMeta, args) {
         renameFile: (oldPath, newPath) => callApi(runId, 'renameFile', [oldPath, newPath]),
         listFiles: () => callApi(runId, 'listFiles', []),
         fileExists: (fp) => callApi(runId, 'fileExists', [fp]),
+        statFile: (fp) => callApi(runId, 'statFile', [fp]),
         isBinary: (fp) => callApi(runId, 'isBinary', [fp]),
         isSensitiveFile: (fp) => callApi(runId, 'isSensitiveFile', [fp]),
         cleanupText: (text) => cleanupText(text),

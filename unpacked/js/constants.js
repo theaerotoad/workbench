@@ -600,6 +600,49 @@ const TOOL_API_METHODS = {
         !(window.isAgentPath(f) && !window.isToolFilePath(f) && !window.isVirtualAgentFile(f) && !window.isSkillPath?.(f))
     ).sort(),
     fileExists: async (toolName, [fp]) => !!window.registry.meta[fp] && !window.isSecurityProtectedPath(fp) && !window.isSensitiveUserFile(fp) && !window.shouldHideFromTools(fp),
+    statFile: async (toolName, [fp]) => {
+        if (typeof fp !== 'string' || !fp) return null;
+        if (window.isSecurityProtectedPath(fp) || window.isSensitiveUserFile(fp) || window.shouldHideFromTools(fp)) return null;
+        if (window.isAgentPath(fp) && !window.isToolFilePath(fp) && !window.isVirtualAgentFile(fp) && !window.isSkillPath?.(fp)) return null;
+        const meta = window.registry?.meta?.[fp];
+        if (!meta || meta.kind !== 'file') return null;
+
+        const dirty = typeof window.isFileDirty === 'function' && window.isFileDirty(fp) &&
+            typeof window.monacoModels !== 'undefined' && window.monacoModels.has(fp);
+        if (dirty) {
+            const val = window.monacoModels.get(fp).getValue();
+            return { size: new TextEncoder().encode(val).length, mtime: meta.mtime ?? null, isBinary: false };
+        }
+
+        const isBin = !!(meta.isBinary || window.BINARY_EXT_DEFINITE?.test(fp));
+        if (meta.virtual || !window.rootHandle) {
+            const cached = window.registry?.files?.[fp];
+            let size = typeof meta.size === 'number' ? meta.size : 0;
+            if (typeof cached === 'string') size = new TextEncoder().encode(cached).length;
+            else if (cached instanceof Blob) size = cached.size;
+            return { size, mtime: meta.mtime ?? null, isBinary: !!meta.isBinary };
+        }
+        if (window.rootHandle.isWebDAV && typeof meta.size === 'number' && meta.mtime !== undefined) {
+            return { size: meta.size, mtime: meta.mtime, isBinary: isBin };
+        }
+        try {
+            const handle = meta.handle || await window.getHandleByPath(fp);
+            if (!handle || typeof handle.getFile !== 'function') {
+                return { size: typeof meta.size === 'number' ? meta.size : 0, mtime: meta.mtime ?? null, isBinary: isBin };
+            }
+            const file = await handle.getFile();
+            const size = typeof file.size === 'number' ? file.size : 0;
+            const mtime = file.lastModified ? file.lastModified / 1000 : (meta.mtime ?? null);
+            meta.size = size;
+            if (mtime !== null) meta.mtime = mtime;
+            return { size, mtime, isBinary: isBin };
+        } catch (e) {
+            if (fp === window.PLAN_FILE && typeof window.registry?.files?.[fp] === 'string') {
+                return { size: new TextEncoder().encode(window.registry.files[fp]).length, mtime: meta.mtime ?? null, isBinary: false };
+            }
+            return null;
+        }
+    },
     isBinary: async (toolName, [fp]) => window.resolveIsBinary(fp),
     isSensitiveFile: async (toolName, [fp]) => window.isSensitiveUserFile(fp),
     getSetting: async (toolName, [key]) => {
