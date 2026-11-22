@@ -18,6 +18,36 @@ export function vfsFlushIfDirty() {
     if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n._dirty) return vfsFlush(window.rootHandle);
 }
 
+export function vfsSnapToken(s) {
+    return s ? (s.token || (s.updated ? 'u' + s.updated : 'legacy')) : null;
+}
+
+async function _vfsCasPut(key, expectedBase, record) {
+    const db = await window.getDB();
+    return await new Promise((resolve) => {
+        const tx = db.transaction(window.STORE_HANDLES, 'readwrite');
+        const store = tx.objectStore(window.STORE_HANDLES);
+        let outcome = null;
+        const req = store.get(key);
+        req.onsuccess = () => {
+            const cur = req.result;
+            const curToken = vfsSnapToken(cur);
+            if (curToken === expectedBase) {
+                store.put(record, key);
+                outcome = 'ok';
+            } else {
+                outcome = { stale: true, deleted: !cur, actualToken: curToken };
+            }
+        };
+        req.onerror = () => {
+            outcome = { error: req.error || new Error('IDB get failed') };
+        };
+        tx.oncomplete = () => resolve(outcome || { error: new Error('IDB CAS incomplete') });
+        tx.onerror = () => resolve({ error: tx.error || new Error('IDB transaction error') });
+        tx.onabort = () => resolve({ error: tx.error || new Error('IDB transaction aborted') });
+    });
+}
+
 export async function vfsFlush(h) {
     if (window.isWorkspaceReadOnly?.()) return;
     const r = h instanceof window.VFSNode ? h : h._n;
@@ -26,28 +56,82 @@ export async function vfsFlush(h) {
     const prev = r._flushPromise || Promise.resolve();
     const run = prev.catch(() => {}).then(async () => {
         if (window.isWorkspaceReadOnly?.() || !r._ws) return;
-        r._dirty = false;
-        const entries = [];
-        const walk = (node, p) => {
-            for (const [k, c] of node.children) {
-                const path = p ? p + '/' + k : k;
-                if (c.kind === 'file') entries.push({ path, kind: 'file', blob: c.blob });
-                else { entries.push({ path, kind: 'directory' }); walk(c, path); }
-            }
+        const ws = r._ws;
+        const collectEntries = () => {
+            const entries = [];
+            const walk = (node, p) => {
+                for (const [k, c] of node.children) {
+                    const path = p ? p + '/' + k : k;
+                    if (c.kind === 'file') entries.push({ path, kind: 'file', blob: c.blob });
+                    else { entries.push({ path, kind: 'directory' }); walk(c, path); }
+                }
+            };
+            walk(r, '');
+            return entries;
         };
-        walk(r, '');
+
         try {
-            const db = await window.getDB();
-            const key = 'vws_' + r._ws.vid;
-            const tx = db.transaction(window.STORE_HANDLES, 'readwrite');
-            tx.objectStore(window.STORE_HANDLES).put({ vid: r._ws.vid, name: r.name, entries, updated: Date.now() }, key);
-            const ok = await new Promise(res => {
-                tx.oncomplete = () => res(true);
-                tx.onerror = () => res(false);
-                tx.onabort = () => res(false);
-            });
-            if (ok) window.remoteMarkDirty?.('vws', key);
-        } catch (e) {}
+            let forkedThisRun = false;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                if (window.isWorkspaceReadOnly?.() || r._ws !== ws) return;
+                r._dirty = false;
+                const entries = collectEntries();
+                const isFork = !!ws.forkVid;
+                const targetVid = isFork ? ws.forkVid : ws.vid;
+                const expectedBase = isFork ? ws.forkBase : ws.base;
+                const targetName = isFork ? (ws.forkName || r.name) : r.name;
+                const key = 'vws_' + targetVid;
+                const newToken = typeof window.makeSyncId === 'function'
+                    ? window.makeSyncId()
+                    : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+                const record = {
+                    vid: targetVid,
+                    name: targetName,
+                    entries,
+                    updated: Date.now(),
+                    token: newToken
+                };
+
+                const res = (!isFork && ws.stale)
+                    ? { stale: true, deleted: false, forcedStale: true }
+                    : await _vfsCasPut(key, expectedBase, record);
+
+                window.wbSyncDebug?.('vfsFlush', {
+                    vid: targetVid,
+                    isFork,
+                    base: expectedBase,
+                    newToken,
+                    result: res
+                });
+
+                if (res === 'ok') {
+                    if (isFork) ws.forkBase = newToken;
+                    else ws.base = newToken;
+                    window.remoteMarkDirty?.('vws', key);
+                    if (forkedThisRun && r._ws === ws) {
+                        window.scheduleStaleWorkspaceReopen?.();
+                    }
+                    return;
+                }
+
+                if (res && res.stale && !isFork && attempt === 0) {
+                    if (r._ws !== ws) return;
+                    r._dirty = true;
+                    if (typeof window.forkLiveVirtualTree === 'function') {
+                        window.forkLiveVirtualTree(r, res.deleted ? 'deleted' : 'changed');
+                        forkedThisRun = true;
+                        continue;
+                    }
+                }
+
+                if (res && res.error) {
+                    r._dirty = true;
+                }
+                return;
+            }
+        } catch (e) {
+            r._dirty = true;
+        }
     });
     r._flushPromise = run;
     await run;
@@ -859,7 +943,7 @@ export const fs = (() => {
 // Attach all to window for legacy scripts
 Object.entries({
     fs,
-    vfsChanged, vfsCheckName, vfsErr, vfsFlushIfDirty, vfsFlush, vfsPutDir, vfsPutFile,
+    vfsChanged, vfsCheckName, vfsErr, vfsFlushIfDirty, vfsFlush, vfsSnapToken, vfsPutDir, vfsPutFile,
     vfsReadBlob, vfsRoot, vfsWrap, rawRename, writeAgentFileToDisk, writeDisk,
     readFileTextSniffed, readImageDataUrl, readImageBlobUrl, sniffBytes, sniffWorkspaceFile,
     isBinaryByExtension, isBinaryContent, resolveIsBinary, encodeForDisk,

@@ -3,6 +3,14 @@ const RemoteStore = {
     caps: null
 };
 
+function wbSyncDebug(...a) {
+    try {
+        if (localStorage.getItem('wb_debug_sync') === '1') {
+            console.debug('[wb-sync]', ...a);
+        }
+    } catch (e) {}
+}
+
 const _origLsSet = Storage.prototype.setItem;
 const _origLsRemove = Storage.prototype.removeItem;
 let _applyingLs = false;
@@ -1042,6 +1050,25 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
         }
 
         const localRec = await idbGetRaw(STORE_SESSIONS, key);
+        const srv = await _fetchServerItem('sessions', key);
+        const actualRev = srv.rev != null ? srv.rev : serverRev;
+
+        if (srv.status === 200 && srv.rawText !== null && localRec !== undefined) {
+            try {
+                const localHash = hash53(JSON.stringify(await encodeForTransport(localRec)));
+                const srvHash = hash53(srv.rawText);
+                if (localHash === srvHash) {
+                    await _withSyncMeta('sessions', key, (cur) => ({
+                        ...cur,
+                        baseRev: actualRev,
+                        pending: null,
+                        lastHash: srvHash
+                    }));
+                    return;
+                }
+            } catch (e) {}
+        }
+
         let forkedTitle = null;
 
         if (localRec && typeof localRec === 'object') {
@@ -1094,8 +1121,6 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
         }
 
         // Apply server version of the original session key
-        const srv = await _fetchServerItem('sessions', key);
-        const actualRev = srv.rev != null ? srv.rev : serverRev;
         if (srv.status === 200) {
             await idbPutRaw(STORE_SESSIONS, key, srv.value);
             await _withSyncMeta('sessions', key, (cur) => ({
@@ -1162,22 +1187,48 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
         return;
     }
 
+    let prefetchedSrv = null;
+    let vwsForkInfo = null;
+
     // 8.3 vws: keep local snapshot as "(conflict copy)", then apply server version
     if (store === 'vws') {
         const localSnap = await idbGetRaw(STORE_HANDLES, key);
+        prefetchedSrv = await _fetchServerItem('vws', key);
+        const actualVwsRev = prefetchedSrv.rev != null ? prefetchedSrv.rev : serverRev;
+
+        if (prefetchedSrv.status === 200 && prefetchedSrv.rawText !== null && localSnap !== undefined) {
+            try {
+                const localHash = hash53(JSON.stringify(await encodeForTransport(localSnap)));
+                const srvHash = hash53(prefetchedSrv.rawText);
+                if (localHash === srvHash) {
+                    wbSyncDebug('handleConflict:vws-identical-adopt', { key, rev: actualVwsRev });
+                    await _withSyncMeta('vws', key, (cur) => ({
+                        ...cur,
+                        baseRev: actualVwsRev,
+                        pending: null,
+                        lastHash: srvHash
+                    }));
+                    return;
+                }
+            } catch (e) {}
+        }
+
         if (localSnap && typeof localSnap === 'object') {
             const newVid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
             const baseName = localSnap.name || 'Virtual Workspace';
             const copyName = baseName.endsWith(' (conflict copy)') ? baseName : `${baseName} (conflict copy)`;
             const copyKey = 'vws_' + newVid;
+            const copyToken = makeSyncId();
             const copySnap = {
                 ...localSnap,
                 vid: newVid,
                 name: copyName,
-                updated: Date.now()
+                updated: Date.now(),
+                token: copyToken
             };
             await idbPutRaw(STORE_HANDLES, copyKey, copySnap);
             remoteMarkDirty('vws', copyKey);
+            vwsForkInfo = { newVid, copyName, copyToken };
 
             if (typeof window.getRecentFolders === 'function' && typeof window.saveRecentFolders === 'function') {
                 const folders = window.getRecentFolders();
@@ -1203,7 +1254,7 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
     }
 
     // 8.2 / 8.3 baselines, catalog, settings, vws: server wins
-    const srv = await _fetchServerItem(store, key);
+    const srv = prefetchedSrv || await _fetchServerItem(store, key);
     const actualRev = srv.rev != null ? srv.rev : serverRev;
     if (srv.status === 200) {
         await _applyLocalRaw(store, key, srv.value, serverItemsMap);
@@ -1221,6 +1272,22 @@ async function handleConflict(store, key, serverRev, serverItemsMap = null) {
             pending: null,
             lastHash: null
         }));
+    }
+
+    if (store === 'vws') {
+        const liveWs = (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n && window.rootHandle._n._ws) || null;
+        if (liveWs && key === 'vws_' + liveWs.vid) {
+            if (_lease.mode !== 'readonly') {
+                if (vwsForkInfo) {
+                    liveWs.forkVid = vwsForkInfo.newVid;
+                    liveWs.forkBase = vwsForkInfo.copyToken;
+                    liveWs.forkName = vwsForkInfo.copyName;
+                }
+                liveWs.stale = true;
+            }
+            wbSyncDebug('handleConflict:vws-schedule-reopen', { key, mode: _lease.mode, forkedTo: vwsForkInfo?.newVid || null });
+            scheduleStaleWorkspaceReopen();
+        }
     }
 }
 
@@ -1279,9 +1346,14 @@ function remoteMarkDeleted(store, key) {
 
 async function _uploadOneEntry(meta) {
     const { store, key } = meta;
-    const gen = meta.dirtyGen || 0;
-    const baseRev = meta.baseRev || 0;
-    let op = meta.pending;
+    const freshMeta = await idbGetRaw(STORE_SYNC, _syncMetaKey(store, key));
+    if (!freshMeta || freshMeta.pending === null) {
+        if (store === 'vws') wbSyncDebug('upload:skip-clean', { key });
+        return { transientError: false };
+    }
+    const gen = freshMeta.dirtyGen || 0;
+    const baseRev = freshMeta.baseRev || 0;
+    let op = freshMeta.pending;
     let valueHash = null;
     let rawText = null;
 
@@ -1293,13 +1365,14 @@ async function _uploadOneEntry(meta) {
             const encoded = await encodeForTransport(val);
             rawText = JSON.stringify(encoded);
             valueHash = hash53(rawText);
-            if (meta.lastHash !== null && meta.lastHash === valueHash) {
+            if (freshMeta.lastHash !== null && freshMeta.lastHash === valueHash) {
                 await _withSyncMeta(store, key, (cur) => {
                     if ((cur.dirtyGen || 0) === gen) {
                         return { ...cur, pending: null };
                     }
                     return cur;
                 });
+                if (store === 'vws') wbSyncDebug('upload:skip-hash-match', { key, baseRev });
                 return { transientError: false };
             }
         }
@@ -1330,7 +1403,12 @@ async function _uploadOneEntry(meta) {
             });
         }
     } catch (netErr) {
+        if (store === 'vws') wbSyncDebug('upload:net-error', { key, baseRev });
         return { transientError: true };
+    }
+
+    if (store === 'vws') {
+        wbSyncDebug('upload:vws', { key, op, baseRev, status: resp.status });
     }
 
     if (resp.status === 200 || (op === 'delete' && resp.status === 404)) {
@@ -1356,6 +1434,28 @@ async function _uploadOneEntry(meta) {
         let j = null;
         try { j = await resp.json(); } catch (e) {}
         const serverRev = _parseRevFromResponse(resp, j) || 0;
+        if (op === 'put' && valueHash !== null) {
+            try {
+                const srv = await _fetchServerItem(store, key);
+                if (srv.status === 200 && srv.rawText !== null && hash53(srv.rawText) === valueHash) {
+                    const adoptedRev = srv.rev !== null ? srv.rev : serverRev;
+                    if (store === 'vws') wbSyncDebug('upload:412-identical-adopt', { key, baseRev, adoptedRev });
+                    await _withSyncMeta(store, key, (cur) => {
+                        const next = {
+                            ...cur,
+                            baseRev: adoptedRev,
+                            lastHash: valueHash,
+                            tooLarge: false
+                        };
+                        if ((cur.dirtyGen || 0) === gen) {
+                            next.pending = null;
+                        }
+                        return next;
+                    });
+                    return { transientError: false };
+                }
+            } catch (checkErr) {}
+        }
         try {
             await handleConflict(store, key, serverRev);
         } catch (conflictErr) {
@@ -1477,7 +1577,7 @@ async function _runFlush() {
 }
 
 async function remoteFlushNow({ drain = false, deadlineMs = 4500 } = {}) {
-    if (!RemoteStore.enabled) return;
+    if (!RemoteStore.enabled) return { ok: true };
     const deadline = Date.now() + deadlineMs;
     do {
         if (_markInFlight.size > 0) {
@@ -1485,8 +1585,10 @@ async function remoteFlushNow({ drain = false, deadlineMs = 4500 } = {}) {
         }
         await _runFlush();
         if (_flushInFlight) await _flushInFlight;
-        if (!drain) return;
+        if (!drain) break;
     } while (await _hasPendingEntries() && !_lastFlushHadTransientError && Date.now() < deadline);
+    const ok = !(await _hasPendingEntries()) && !_lastFlushHadTransientError;
+    return { ok };
 }
 
 // --- Hydration (§7.5) ---
@@ -1607,15 +1709,23 @@ async function remoteHydrateKey(store, key) {
             store, key, baseRev: 0, pending: null, dirtyGen: 0, lastHash: null
         };
         const srv = await _fetchServerItem(store, key);
-        if (srv.status === 404) return { changed: false };
+        if (srv.status === 404) {
+            if (store === 'vws') wbSyncDebug('hydrateKey:vws', { key, metaBaseRev: meta.baseRev, serverRev: 0, action: '404' });
+            return { changed: false };
+        }
         const serverRev = srv.rev || 0;
-        if (serverRev === meta.baseRev) return { changed: false };
+        if (serverRev === meta.baseRev) {
+            if (store === 'vws') wbSyncDebug('hydrateKey:vws', { key, metaBaseRev: meta.baseRev, serverRev, action: 'unchanged' });
+            return { changed: false };
+        }
 
         if (meta.pending !== null && serverRev !== meta.baseRev) {
+            if (store === 'vws') wbSyncDebug('hydrateKey:vws', { key, metaBaseRev: meta.baseRev, serverRev, action: 'conflict' });
             await handleConflict(store, key, serverRev);
             return { changed: true };
         }
         if (srv.status === 410) {
+            if (store === 'vws') wbSyncDebug('hydrateKey:vws', { key, metaBaseRev: meta.baseRev, serverRev, action: 'delete-410' });
             await _deleteLocalRaw(store, key);
             await _withSyncMeta(store, key, (cur) => ({
                 ...cur,
@@ -1626,6 +1736,7 @@ async function remoteHydrateKey(store, key) {
             return { changed: true };
         }
         if (srv.status === 200) {
+            if (store === 'vws') wbSyncDebug('hydrateKey:vws', { key, metaBaseRev: meta.baseRev, serverRev, action: 'apply-200' });
             await _applyLocalRaw(store, key, srv.value, null);
             await _withSyncMeta(store, key, (cur) => ({
                 ...cur,
@@ -1936,9 +2047,20 @@ async function remoteInit() {
         });
         window.addEventListener('pageshow', (ev) => {
             if (ev.persisted && window.rootHandle && typeof window.currentWsName === 'function') {
-                remoteAcquireWorkspaceLease(window.currentWsName()).then(() => {
-                    if (typeof window.setWorkspaceReadOnly === 'function') {
-                        window.setWorkspaceReadOnly(isWorkspaceReadOnly());
+                if (window.rootHandle.isVirtual && window.rootHandle._n && window.rootHandle._n._ws) {
+                    window.rootHandle._n._ws.stale = true;
+                }
+                remoteAcquireWorkspaceLease(window.currentWsName()).then(async () => {
+                    const ro = isWorkspaceReadOnly();
+                    if (!ro && window.rootHandle && window.rootHandle.isVirtual) {
+                        try {
+                            const ok = await remoteReopenWorkspace({ flushOld: false, keepView: true });
+                            if (ok && typeof window.setWorkspaceReadOnly === 'function') {
+                                window.setWorkspaceReadOnly(false);
+                            }
+                        } catch (e) {}
+                    } else if (typeof window.setWorkspaceReadOnly === 'function') {
+                        window.setWorkspaceReadOnly(ro);
                     }
                 }).catch(() => {});
             }
@@ -2108,6 +2230,66 @@ function _startLeaseHeartbeat() {
     }, intervalMs);
 }
 
+let _staleReopenPending = false;
+let _staleReopenTimer = null;
+let _readOnlyRefreshing = false;
+let _lastReadOnlyRefreshAt = 0;
+
+function _isAnyModalOpenForAutoRefresh() {
+    if (typeof window.getOpenModalCount === 'function' && window.getOpenModalCount() > 0) {
+        return true;
+    }
+    const yesno = document.getElementById('yesno-modal-overlay');
+    if (yesno && yesno.style.display && yesno.style.display !== 'none') {
+        return true;
+    }
+    return false;
+}
+
+function _tryRunStaleWorkspaceReopen() {
+    if (!_staleReopenPending) return;
+    if (_staleReopenTimer) {
+        clearTimeout(_staleReopenTimer);
+        _staleReopenTimer = null;
+    }
+    if (!window.rootHandle || !window.rootHandle.isVirtual) {
+        _staleReopenPending = false;
+        return;
+    }
+    if (_lease.takingOver || _lease.revoking || window.state?.workspaceReloading) {
+        _staleReopenTimer = setTimeout(_tryRunStaleWorkspaceReopen, 2000);
+        return;
+    }
+    if (_lease.mode === 'readonly') {
+        const ws = window.rootHandle._n && window.rootHandle._n._ws;
+        if (ws && ws.forkVid) {
+            _staleReopenTimer = setTimeout(_tryRunStaleWorkspaceReopen, 2000);
+            return;
+        }
+        if (_isAnyModalOpenForAutoRefresh()) {
+            _staleReopenTimer = setTimeout(_tryRunStaleWorkspaceReopen, 2000);
+            return;
+        }
+        _staleReopenPending = false;
+        remoteRefreshReadOnlyWorkspace({ silent: true });
+        return;
+    }
+    const busy = (typeof window.isAnySessionRunning === 'function' && window.isAnySessionRunning())
+        || !!(window.state && window.state.isSaving);
+    if (busy) {
+        _staleReopenTimer = setTimeout(_tryRunStaleWorkspaceReopen, 2000);
+        return;
+    }
+    _staleReopenPending = false;
+    remoteReopenWorkspace({ flushOld: true, keepView: true }).catch(() => {});
+}
+
+function scheduleStaleWorkspaceReopen() {
+    _staleReopenPending = true;
+    if (_staleReopenTimer) clearTimeout(_staleReopenTimer);
+    _staleReopenTimer = setTimeout(_tryRunStaleWorkspaceReopen, 250);
+}
+
 async function _pollLeaseStatus(force = false) {
     if (!RemoteStore.enabled || !RemoteStore.caps?.leases) return;
     if (_lease.mode !== 'readonly' || !_lease.wsKey) return;
@@ -2124,7 +2306,49 @@ async function _pollLeaseStatus(force = false) {
         if (typeof window.updateWorkspaceLeaseBanner === 'function') {
             window.updateWorkspaceLeaseBanner();
         }
-    } catch (e) {}
+    } catch (e) {
+        return;
+    }
+
+    if (
+        _lease.wsKey === wsKey &&
+        _lease.mode === 'readonly' &&
+        !_lease.takingOver &&
+        !_lease.revoking &&
+        !_readOnlyRefreshing &&
+        !window.state?.workspaceReloading &&
+        window.rootHandle &&
+        window.rootHandle.isVirtual &&
+        window.rootHandle._n &&
+        window.rootHandle._n._ws &&
+        window.rootHandle._n._ws.vid
+    ) {
+        const vid = window.rootHandle._n._ws.vid;
+        const curRev = window.rootHandle._n._ws.rev || 0;
+        const vwsKey = 'vws_' + vid;
+        try {
+            const listResp = await fetch(_kvListUrl('vws', vwsKey), { cache: 'no-store' });
+            if (listResp.ok) {
+                const listData = await listResp.json();
+                const items = Array.isArray(listData?.items) ? listData.items : [];
+                const match = items.find((it) => it && it.key === vwsKey);
+                if (
+                    match &&
+                    typeof match.rev === 'number' &&
+                    match.rev > curRev &&
+                    _lease.wsKey === wsKey &&
+                    _lease.mode === 'readonly' &&
+                    !_lease.takingOver &&
+                    !_lease.revoking &&
+                    !window.state?.workspaceReloading &&
+                    !_isAnyModalOpenForAutoRefresh()
+                ) {
+                    wbSyncDebug('poll:vws-auto-refresh', { vid, curRev, serverRev: match.rev });
+                    await remoteRefreshReadOnlyWorkspace({ silent: true });
+                }
+            }
+        } catch (e) {}
+    }
 }
 
 function _startLeasePoll() {
@@ -2138,6 +2362,9 @@ function _startLeasePoll() {
 }
 
 function remoteLeaseBusyMaybeChanged() {
+    if (_staleReopenPending) {
+        _tryRunStaleWorkspaceReopen();
+    }
     if (!RemoteStore.enabled || !RemoteStore.caps?.leases) return;
     if (_lease.mode !== 'writer' || !_lease.wsKey || _lease.revoking) return;
     const busy = _computeBusy();
@@ -2267,6 +2494,8 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
     const wsKey = _lease.wsKey;
     const run = (async () => {
         try {
+            wbSyncDebug('revoke:start', { wsKey, handoffId, newLabel, abortBusy });
+
             // 1. Stop heartbeat; lock UI only while storage remains in 'writer' mode.
             _stopLeaseHeartbeat();
             if (typeof window.setWorkspaceReadOnly === 'function') {
@@ -2277,6 +2506,7 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
             if (window.state && window.state.sessions && typeof window.isSessionRunning === 'function') {
                 for (const id of Object.keys(window.state.sessions)) {
                     if (window.isSessionRunning(id)) {
+                        wbSyncDebug('revoke:abort-running', { sessionId: id });
                         if (typeof window.abortGeneration === 'function') {
                             window.abortGeneration({ showResumeUI: false, sessionId: id });
                         }
@@ -2297,14 +2527,17 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
                 window.state.sessions[window.state.activeSessionId] &&
                 typeof window.saveActiveSession === 'function'
             ) {
+                wbSyncDebug('revoke:save-session', { sessionId: window.state.activeSessionId });
                 await window.saveActiveSession(true);
             }
 
             // 4. Flush virtual workspace snapshot if dirty or already flushing.
             if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n) {
                 if (window.rootHandle._n._dirty && typeof window.vfsFlush === 'function') {
+                    wbSyncDebug('revoke:vfs-flush', { vid: window.rootHandle._n._ws?.vid });
                     await window.vfsFlush(window.rootHandle);
                 } else if (window.rootHandle._n._flushPromise) {
+                    wbSyncDebug('revoke:vfs-await-inflight', { vid: window.rootHandle._n._ws?.vid });
                     await window.rootHandle._n._flushPromise.catch(() => {});
                 }
             }
@@ -2336,9 +2569,27 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
             }
 
             // 5. Drain outbox to server within handoff deadline.
-            await remoteFlushNow({ drain: true, deadlineMs: 4500 });
+            const flushRes = (await remoteFlushNow({ drain: true, deadlineMs: 4500 })) || {};
+            const clean = !!flushRes.ok;
+            wbSyncDebug('revoke:drained', { wsKey, clean });
 
-            // 6. Switch storage to read-only, close SSE, start polling.
+            // 6. Ack handoff BEFORE closing SSE stream so server receives clean status.
+            if (handoffId) {
+                try {
+                    wbSyncDebug('revoke:ack', { wsKey, handoffId, clean });
+                    await fetch('/api/v1/leases/ack', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ wsKey, tabId: _tabId, handoffId, clean }),
+                        cache: 'no-store'
+                    });
+                } catch (e) {}
+            }
+
+            // 7. Switch storage to read-only, mark virtual tree stale, close SSE, start polling.
+            if (window.rootHandle && window.rootHandle.isVirtual && window.rootHandle._n && window.rootHandle._n._ws) {
+                window.rootHandle._n._ws.stale = true;
+            }
             if (_lease.wsKey === wsKey) {
                 _lease.mode = 'readonly';
                 _lease.revoked = true;
@@ -2346,18 +2597,7 @@ async function _handleLeaseRevoked({ handoffId = null, newLabel = null, abortBus
                 _closeLeaseStream();
                 _startLeasePoll();
             }
-
-            // 7. Ack handoff if requested.
-            if (handoffId) {
-                try {
-                    await fetch('/api/v1/leases/ack', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ wsKey, tabId: _tabId, handoffId }),
-                        cache: 'no-store'
-                    });
-                } catch (e) {}
-            }
+            wbSyncDebug('revoke:done', { wsKey });
 
             // 8. Warn if unsaved editor buffers remain.
             if (
@@ -2423,43 +2663,116 @@ function _applyHydratedSettingsToRuntime() {
     }
 }
 
-async function remoteReopenWorkspace() {
+function _detachLiveVirtualTree(h = window.rootHandle) {
+    if (!h || !h.isVirtual || !h._n) return null;
+    const n = h._n;
+    const vid = (n._ws && n._ws.vid) || n._detachedVid || null;
+    clearTimeout(n._t);
+    n._dirty = false;
+    n._ws = null;
+    n._detachedVid = vid;
+    return vid;
+}
+
+async function remoteReopenWorkspace({ flushOld = false, keepView = true, vid: explicitVid = null } = {}) {
     const h = window.rootHandle;
-    if (!h) return;
-    if (RemoteStore.enabled) {
-        await remoteHydrate('settings', '');
+    if (!h) return false;
+    const isVirtual = !!h.isVirtual;
+    const n = isVirtual ? h._n : null;
+    const vid = explicitVid || (n && ((n._ws && n._ws.vid) || n._detachedVid)) || null;
+
+    wbSyncDebug('reopen:start', { isVirtual, vid, flushOld, keepView, mode: _lease.mode });
+
+    // Synchronous detach before any await when not flushing the old tree (R3)
+    if (!flushOld && isVirtual) {
+        _detachLiveVirtualTree(h);
     }
-    _applyHydratedSettingsToRuntime();
-    if (h.isVirtual) {
-        const n = h._n;
-        const vid = n && n._ws && n._ws.vid;
-        if (n) {
-            clearTimeout(n._t);
-            n._dirty = false;
-            n._ws = null; // Detach old VFS tree before hydrating (Pitfall 3)
-        }
-        const snap = await window.loadVirtualSnapshot(vid);
-        if (!snap) {
-            if (typeof window.showToast === 'function') {
-                window.showToast('Virtual workspace data not found', 'error');
+
+    if (window.state) window.state.workspaceReloading = true;
+    try {
+        if (flushOld && isVirtual && n) {
+            if (n._dirty && typeof window.vfsFlush === 'function') {
+                wbSyncDebug('reopen:flushOld', { vid });
+                await window.vfsFlush(h);
+            } else if (n._flushPromise) {
+                await n._flushPromise.catch(() => {});
             }
-            if (typeof window.closeWorkspace === 'function') {
-                window.closeWorkspace();
-            }
-            return;
+            _detachLiveVirtualTree(h);
         }
-        await window.setWorkspace(window.buildVirtualHandle(vid, snap), { reopen: true });
-    } else {
-        await window.setWorkspace(h, { reopen: true });
+
+        wbSyncDebug('reopen:hydrate-settings', { vid });
+        if (RemoteStore.enabled) {
+            await remoteHydrate('settings', '');
+        }
+        _applyHydratedSettingsToRuntime();
+
+        if (isVirtual) {
+            wbSyncDebug('reopen:load-snapshot', { vid });
+            const snap = await window.loadVirtualSnapshot(vid);
+            if (!snap) {
+                wbSyncDebug('reopen:snapshot-missing', { vid });
+                if (_lease.mode === 'writer') {
+                    remoteReleaseWorkspaceLease();
+                }
+                if (typeof window.showToast === 'function') {
+                    window.showToast('Virtual workspace data not found', 'error');
+                }
+                if (typeof window.closeWorkspace === 'function') {
+                    window.closeWorkspace();
+                }
+                return false;
+            }
+            wbSyncDebug('reopen:setWorkspace', {
+                vid,
+                token: typeof window.vfsSnapToken === 'function' ? window.vfsSnapToken(snap) : null,
+                rev: snap.__rev || 0
+            });
+            await window.setWorkspace(window.buildVirtualHandle(vid, snap), { reopen: true, keepView });
+        } else {
+            wbSyncDebug('reopen:setWorkspace', { nonVirtual: true });
+            await window.setWorkspace(h, { reopen: true, keepView });
+        }
+        wbSyncDebug('reopen:done', { vid });
+        return true;
+    } catch (err) {
+        wbSyncDebug('reopen:error', { vid, error: err?.message || String(err) });
+        console.error('[remote_store] remoteReopenWorkspace failed:', err);
+        if (_lease.mode === 'writer') {
+            remoteReleaseWorkspaceLease();
+        }
+        if (typeof window.closeWorkspace === 'function') {
+            try { window.closeWorkspace(); } catch (e) {}
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(
+                'Could not reload the workspace. It was closed to protect your data; open it again.',
+                'error',
+                6000
+            );
+        }
+        if (err && typeof err === 'object') err._reopenHandled = true;
+        throw err;
+    } finally {
+        if (window.state) window.state.workspaceReloading = false;
     }
 }
 
-async function remoteRefreshReadOnlyWorkspace() {
-    if (!window.rootHandle) return;
-    await remoteReopenWorkspace();
-    await _pollLeaseStatus(true);
-    if (typeof window.showToast === 'function') {
-        window.showToast('Workspace refreshed', 'info', 2000);
+async function remoteRefreshReadOnlyWorkspace({ silent = false } = {}) {
+    if (!window.rootHandle || _readOnlyRefreshing) return;
+    if (silent && (Date.now() - _lastReadOnlyRefreshAt < 5000)) return;
+    _readOnlyRefreshing = true;
+    _lastReadOnlyRefreshAt = Date.now();
+    try {
+        const ok = await remoteReopenWorkspace({ flushOld: false, keepView: true });
+        if (!ok) return;
+        await _pollLeaseStatus(true);
+        if (!silent && typeof window.showToast === 'function') {
+            window.showToast('Workspace refreshed', 'info', 2000);
+        }
+    } catch (e) {
+        // R4 close + toast already handled inside remoteReopenWorkspace
+    } finally {
+        _readOnlyRefreshing = false;
     }
 }
 
@@ -2539,6 +2852,16 @@ async function remoteTakeOverWorkspace() {
             return;
         }
 
+        wbSyncDebug('takeover:response', {
+            wsKey,
+            displacedTabId: res.data.displacedTabId || null,
+            handedOffCleanly: !!res.data.handedOffCleanly,
+            epoch: res.data.lease?.epoch
+        });
+
+        // R3: Detach old virtual tree synchronously BEFORE setting mode = 'writer' or any await
+        const detachedVid = _detachLiveVirtualTree();
+
         _stopLeasePoll();
         _lease.mode = 'writer';
         _lease.revoked = false;
@@ -2548,7 +2871,9 @@ async function remoteTakeOverWorkspace() {
         _openLeaseStream(wsKey);
         _startLeaseHeartbeat();
 
-        await remoteReopenWorkspace();
+        const reopened = await remoteReopenWorkspace({ flushOld: false, keepView: true, vid: detachedVid });
+        if (!reopened) return;
+
         if (typeof window.setWorkspaceReadOnly === 'function') {
             window.setWorkspaceReadOnly(false);
         }
@@ -2567,7 +2892,7 @@ async function remoteTakeOverWorkspace() {
         }
     } catch (err) {
         console.warn('[remote_store] takeover failed:', err);
-        if (typeof window.showToast === 'function') {
+        if (!err?._reopenHandled && typeof window.showToast === 'function') {
             window.showToast('Failed to take over workspace: ' + (err?.message || 'network error'), 'error', 4000);
         }
     } finally {
@@ -2580,6 +2905,7 @@ async function remoteTakeOverWorkspace() {
 
 // --- AST_EXPORTS_START ---
 window.RemoteStore = RemoteStore;
+window.wbSyncDebug = wbSyncDebug;
 window.remoteReady = remoteReady;
 window.makeSyncId = makeSyncId;
 window.hash53 = hash53;
@@ -2616,5 +2942,6 @@ window.remoteReleaseWorkspaceLease = remoteReleaseWorkspaceLease;
 window.remoteTakeOverWorkspace = remoteTakeOverWorkspace;
 window.remoteRefreshReadOnlyWorkspace = remoteRefreshReadOnlyWorkspace;
 window.remoteReopenWorkspace = remoteReopenWorkspace;
+window.scheduleStaleWorkspaceReopen = scheduleStaleWorkspaceReopen;
 window.remoteLeaseBusyMaybeChanged = remoteLeaseBusyMaybeChanged;
 // --- AST_EXPORTS_END ---

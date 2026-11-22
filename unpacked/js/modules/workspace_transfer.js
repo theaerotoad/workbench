@@ -263,7 +263,7 @@ window.crc32 = crc32;
 async function createVirtualWorkspace(name, list) {
     const vid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const root = new VFSNode('directory', name, null);
-    root._ws = { vid };
+    root._ws = { vid, base: null, rev: 0 };
     for (const it of list) { if (it.dir) vfsPutDir(root, it.path); else vfsPutFile(root, it.path, it.file); }
     await vfsFlush(root);
     return vfsWrap(root);
@@ -326,11 +326,20 @@ async function loadVirtualSnapshot(vid) {
         } catch (e) {}
     }
     const db = await getDB();
-    return await new Promise((res) => {
+    const snap = await new Promise((res) => {
         const req = db.transaction(STORE_HANDLES, 'readonly').objectStore(STORE_HANDLES).get(key);
         req.onsuccess = () => res(req.result);
         req.onerror = () => res(null);
     });
+    if (snap && typeof snap === 'object' && typeof window.idbGetRaw === 'function') {
+        try {
+            const syncMeta = await window.idbGetRaw(STORE_SYNC, 'vws|' + key);
+            if (syncMeta && typeof syncMeta.baseRev === 'number') {
+                snap.__rev = syncMeta.baseRev;
+            }
+        } catch (e) {}
+    }
+    return snap;
 }
 
 // --- AST_EXPORTS_START ---
@@ -340,7 +349,14 @@ window.loadVirtualSnapshot = loadVirtualSnapshot;
 // --- buildVirtualHandle.js ---
 function buildVirtualHandle(vid, snap) {
     const root = new VFSNode('directory', snap.name, null);
-    root._ws = { vid };
+    const base = typeof window.vfsSnapToken === 'function'
+        ? window.vfsSnapToken(snap)
+        : (snap ? (snap.token || (snap.updated ? 'u' + snap.updated : 'legacy')) : null);
+    root._ws = {
+        vid,
+        base,
+        rev: (snap && typeof snap.__rev === 'number') ? snap.__rev : 0
+    };
     for (const e of (snap.entries || [])) {
         if (e.kind === 'directory') vfsPutDir(root, e.path);
         else vfsPutFile(root, e.path, e.blob);
@@ -350,6 +366,50 @@ function buildVirtualHandle(vid, snap) {
 
 // --- AST_EXPORTS_START ---
 window.buildVirtualHandle = buildVirtualHandle;
+// --- AST_EXPORTS_END ---
+
+// --- forkLiveVirtualTree.js ---
+function forkLiveVirtualTree(r, reason) {
+    if (!r || !r._ws) return null;
+    if (r._ws.forkVid) return r._ws.forkVid;
+
+    const newVid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const baseName = r.name || 'Virtual Workspace';
+    const forkName = baseName.endsWith(' (conflict copy)') ? baseName : `${baseName} (conflict copy)`;
+
+    r._ws.forkVid = newVid;
+    r._ws.forkName = forkName;
+    r._ws.forkBase = null;
+    r._ws.stale = true;
+
+    if (typeof window.getRecentFolders === 'function' && typeof window.saveRecentFolders === 'function') {
+        const folders = window.getRecentFolders();
+        folders.unshift({
+            name: forkName,
+            virtual: true,
+            vid: newVid,
+            storageKey: 'virtual_' + newVid,
+            lastAccessed: Date.now()
+        });
+        window.saveRecentFolders(folders);
+        if (typeof window.renderRecentFoldersList === 'function') {
+            window.renderRecentFoldersList();
+        }
+    }
+
+    if (!r._ws._forkToasted && typeof window.showToast === 'function') {
+        r._ws._forkToasted = true;
+        const msg = reason === 'deleted'
+            ? `This workspace was deleted elsewhere. Your recent file changes were saved to "${forkName}". Reloading the latest version…`
+            : `Another window changed this workspace. Your recent file changes were saved to "${forkName}". Reloading the latest version…`;
+        window.showToast(msg, 'info', 6000);
+    }
+
+    return newVid;
+}
+
+// --- AST_EXPORTS_START ---
+window.forkLiveVirtualTree = forkLiveVirtualTree;
 // --- AST_EXPORTS_END ---
 
 // --- openVirtualWorkspaceById.js ---
