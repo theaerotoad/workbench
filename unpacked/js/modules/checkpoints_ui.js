@@ -341,9 +341,13 @@ async function renderFileDiffView(filepath, checkpointRange) {
         titleSuffix = `(${fromLabel} → ${toLabel})`;
         btnDiffSave.style.display = 'none';
         btnDiffDiscard.style.display = 'none';
+        state.diffBase = undefined;
     } else {
         origContent = registry.originalFiles[filepath] || '';
         modContent = (await readFileContent(filepath)) || '';
+        state.diffBase = (typeof isFileDirty === 'function' && isFileDirty(filepath) && state.fileBase && state.fileBase.has(filepath))
+            ? state.fileBase.get(filepath)
+            : modContent;
         titleSuffix = '(vs Baseline)';
     }
 

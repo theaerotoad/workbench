@@ -136,13 +136,22 @@ async function executeRevertPlan(actions, opts = {}) {
                     monacoModels.delete(action.filepath);
                     monacoModels.set(action.targetPath, model);
                 }
+                if (state.fileBase && state.fileBase.has(action.filepath)) {
+                    state.fileBase.set(action.targetPath, state.fileBase.get(action.filepath));
+                    state.fileBase.delete(action.filepath);
+                }
             } else if (action.kind === 'delete') {
                 await fs.del(action.filepath, { track: false });
+                if (state.fileBase) state.fileBase.delete(action.filepath);
             } else if (action.kind === 'restore') {
                 await fs.write(action.filepath, action.content, { track: false });
-                if (state.currentEditorPath === action.filepath && monacoEditor) {
-                    const model = monacoModels.get(action.filepath);
-                    if (model) withDirtyTrackingSuppressed(() => model.setValue(action.content));
+                const model = monacoModels.get(action.filepath);
+                if (model) {
+                    if (typeof setModelFromDisk === 'function') {
+                        setModelFromDisk(action.filepath, model, action.content);
+                    } else {
+                        withDirtyTrackingSuppressed(() => model.setValue(action.content));
+                    }
                 }
             }
             applied++;

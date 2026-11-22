@@ -741,7 +741,11 @@ window.rebuildToolRegistryFromFiles = rebuildToolRegistryFromFiles;
 function refreshAgentFileTab(path, content) {
     const model = monacoModels.get(path);
     if (!model) return;
-    withDirtyTrackingSuppressed(() => model.setValue(content));
+    if (typeof setModelFromDisk === 'function') {
+        setModelFromDisk(path, model, content);
+    } else {
+        withDirtyTrackingSuppressed(() => model.setValue(content));
+    }
     clearFileDirty(path);
 }
 

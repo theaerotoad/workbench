@@ -399,19 +399,25 @@ export async function writeDisk(filePath, content, opts) {
         return { handled: true };
     }
 
-    if (isFromLLMTool) {
-        await fs.write(filePath, content, { sessionId, mode: 'tool' });
-    } else {
-        await fs.write(filePath, content, { sessionId, mode: 'editor' });
+    const writeRes = isFromLLMTool
+        ? await fs.write(filePath, content, { sessionId, mode: 'tool' })
+        : await fs.write(filePath, content, { sessionId, mode: 'editor' });
+    if (writeRes && writeRes.error) {
+        return { output: writeRes.error };
     }
 
+    if (state.fileBase) state.fileBase.set(filePath, content);
     window.clearFileDirty(filePath);
 
     if (!isLive) return;
 
     const m = window.monacoModels.get(filePath);
     if (m && m.getValue() !== content) {
-        window.withDirtyTrackingSuppressed(() => m.setValue(content));
+        if (typeof window.setModelFromDisk === 'function') {
+            window.setModelFromDisk(filePath, m, content);
+        } else {
+            window.withDirtyTrackingSuppressed(() => m.setValue(content));
+        }
     }
 
     if (state.activeTab === `filediff:${filePath}`) {
@@ -651,21 +657,21 @@ export function encodeForDisk(content, enc, path) {
     return content;
 }
 
-export async function getDirectoryHandleByPath(dirpath, create = false) {
-    if (!window.rootHandle) return null;
-    if (!dirpath || dirpath === '/') return window.rootHandle;
+export async function getDirectoryHandleByPath(dirpath, create = false, root = window.rootHandle) {
+    if (!root) return null;
+    if (!dirpath || dirpath === '/') return root;
     const parts = dirpath.split('/').filter(Boolean);
-    let curr = window.rootHandle;
+    let curr = root;
     for (const part of parts) {
         curr = await curr.getDirectoryHandle(part, { create });
     }
     return curr;
 }
 
-export async function getHandleByPath(filepath, create = false) {
-    if (!window.rootHandle) return null;
+export async function getHandleByPath(filepath, create = false, root = window.rootHandle) {
+    if (!root) return null;
     const parts = filepath.split('/').filter(Boolean);
-    let curr = window.rootHandle;
+    let curr = root;
     for (let i = 0; i < parts.length - 1; i++) {
         curr = await curr.getDirectoryHandle(parts[i], { create });
     }
@@ -882,7 +888,7 @@ export const fs = (() => {
         
         let previousContent;
         if (existed) {
-            previousContent = onDisk ? await window.readFileContent(path) : registry.files[path];
+            previousContent = onDisk ? await window.readFileContent(path, { fromDisk: true }) : registry.files[path];
         }
         try { await window.rawWrite(path, content); }
         catch (e) { if (e && e.encodingError) return { error: `ERROR: ${e.message}` }; throw e; }

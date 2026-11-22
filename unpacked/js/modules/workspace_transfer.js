@@ -37,7 +37,11 @@ async function addFilesToWorkspace(list, baseDir = '') {
             registry.files[it.path] = await readFileContent(it.path);
             const model = (typeof monacoModels !== 'undefined') && monacoModels.get(it.path);
             if (model && !isFileDirty(it.path)) {
-                withDirtyTrackingSuppressed(() => model.setValue(registry.files[it.path]));
+                if (typeof setModelFromDisk === 'function') {
+                    setModelFromDisk(it.path, model, registry.files[it.path]);
+                } else {
+                    withDirtyTrackingSuppressed(() => model.setValue(registry.files[it.path]));
+                }
             }
             added++;
         } catch (e) { showToast(`Could not add ${it.path}: ${e.message}`, 'error'); }
