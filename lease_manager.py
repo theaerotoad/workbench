@@ -224,13 +224,13 @@ class LeaseManager:
             "handedOffCleanly": handed_off_cleanly,
         }
 
-    def ack(self, ws_key: str, tab_id: str, handoff_id: str) -> bool:
+    def ack(self, ws_key: str, tab_id: str, handoff_id: str, clean: bool = True) -> bool:
         handoff = self._handoffs.get(ws_key)
         if handoff is None:
             return False
         if handoff.handoff_id != handoff_id or handoff.old_tab_id != tab_id:
             return False
-        handoff.acked = True
+        handoff.acked = bool(clean)
         handoff.event.set()
         return True
 

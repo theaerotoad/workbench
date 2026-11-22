@@ -173,7 +173,11 @@ def make_state_routes(
             if check is not None:
                 return check
 
-        ok = lease_manager.ack(ws_key, tab_id, handoff_id)
+        clean = data.get("clean", True)
+        if not isinstance(clean, bool):
+            return JSONResponse({"error": "invalid clean"}, status_code=400)
+
+        ok = lease_manager.ack(ws_key, tab_id, handoff_id, clean=clean)
         return JSONResponse({"ok": ok})
 
     async def leases_release(request: Request):

@@ -289,6 +289,34 @@ class TestLeaseManager(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_handoff_ack_unclean(self):
+        async def run():
+            lm = LeaseManager(ttl_sec=30.0, handoff_timeout_sec=2.0)
+            await lm.acquire("ws-1", "tab-a", "client-1", "Tab A")
+            qa = lm.open_stream("ws-1", "tab-a")
+
+            t0 = time.monotonic()
+            b_task = asyncio.create_task(
+                lm.acquire("ws-1", "tab-b", "client-2", "Tab B", force=True)
+            )
+
+            event_name, payload = await asyncio.wait_for(qa.get(), timeout=0.5)
+            self.assertEqual(event_name, "revoke")
+            handoff_id = payload["handoffId"]
+
+            self.assertTrue(lm.ack("ws-1", "tab-a", handoff_id, clean=False))
+            st_b, body_b = await b_task
+            elapsed = time.monotonic() - t0
+
+            self.assertLess(elapsed, 0.2)
+            self.assertEqual(st_b, 200)
+            self.assertTrue(body_b["granted"])
+            self.assertFalse(body_b["handedOffCleanly"])
+            self.assertEqual(body_b["displacedTabId"], "tab-a")
+            self.assertEqual(body_b["lease"]["epoch"], 2)
+
+        asyncio.run(run())
+
     def test_handoff_timeout(self):
         async def run():
             lm = LeaseManager(ttl_sec=30.0, handoff_timeout_sec=0.15)
@@ -477,9 +505,23 @@ class TestLeaseHTTPAPI(unittest.TestCase):
             400,
         )
 
-        # Missing fields on ack / release / events
+        # Missing or invalid fields on ack / release / events
         self.assertEqual(
             self.client.post_json("/api/v1/leases/ack", {"wsKey": "w1", "tabId": "t1"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post_json(
+                "/api/v1/leases/ack",
+                {"wsKey": "w1", "tabId": "t1", "handoffId": "h1", "clean": "x"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post_json(
+                "/api/v1/leases/ack",
+                {"wsKey": "w1", "tabId": "t1", "handoffId": "h1", "clean": 1},
+            ).status_code,
             400,
         )
         self.assertEqual(
@@ -524,10 +566,10 @@ class TestLeaseHTTPAPI(unittest.TestCase):
         self.assertFalse(r2.json()["busyConflict"])
         self.assertEqual(r2.json()["holder"]["tabId"], "tab-a")
 
-        # Ack with no pending handoff -> ok: false
+        # Ack with no pending handoff -> ok: false (accepts optional boolean clean)
         r_ack = self.client.post_json(
             "/api/v1/leases/ack",
-            {"wsKey": ws_key, "tabId": "tab-a", "handoffId": "nope"},
+            {"wsKey": ws_key, "tabId": "tab-a", "handoffId": "nope", "clean": False},
         )
         self.assertEqual(r_ack.status_code, 200)
         self.assertEqual(r_ack.json(), {"ok": False})
