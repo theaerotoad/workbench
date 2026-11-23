@@ -891,6 +891,155 @@ export async function workspaceDirExists(dirPath) {
     }
 }
 
+export const BINARY_BACKUP_MAX_FILE_BYTES = 5 * 1024 * 1024;     // 5 MB per deleted binary file
+export const BINARY_BACKUP_MAX_SESSION_BYTES = 25 * 1024 * 1024; // 25 MB total binary backups per session
+
+const _BIN_B64_CHUNK = 32768;
+
+function _binBytesToBase64(u8) {
+    const parts = [];
+    for (let i = 0; i < u8.length; i += _BIN_B64_CHUNK) {
+        const chunk = u8.subarray(i, Math.min(i + _BIN_B64_CHUNK, u8.length));
+        parts.push(String.fromCharCode.apply(null, chunk));
+    }
+    return btoa(parts.join(''));
+}
+
+function _binBase64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+export function isBinaryBackupPayload(val) {
+    return !!(val && typeof val === 'object' && val.__wb_binary__ === true);
+}
+
+export function decodeBinaryBackupPayload(val) {
+    if (!isBinaryBackupPayload(val) || val.omitted || typeof val.b64 !== 'string') return null;
+    try {
+        return _binBase64ToBytes(val.b64);
+    } catch (_) {
+        return null;
+    }
+}
+
+export function estimateSessionBinaryBackupBytes(baseline) {
+    if (!baseline || typeof baseline !== 'object') return 0;
+    const seen = new Set();
+    let total = 0;
+    const countVal = (val) => {
+        if (!isBinaryBackupPayload(val) || val.omitted || typeof val.b64 !== 'string') return;
+        const size = typeof val.size === 'number' ? val.size : Math.floor(val.b64.length * 0.75);
+        const sig = `${size}:${val.b64.length}:${val.b64.slice(0, 48)}:${val.b64.slice(-24)}`;
+        if (seen.has(sig)) return;
+        seen.add(sig);
+        total += size;
+    };
+    if (baseline.originalFiles && typeof baseline.originalFiles === 'object') {
+        for (const v of Object.values(baseline.originalFiles)) countVal(v);
+    }
+    if (baseline.opsLog && typeof baseline.opsLog === 'object') {
+        for (const ops of Object.values(baseline.opsLog)) {
+            if (!Array.isArray(ops)) continue;
+            for (const op of ops) {
+                if (!op || typeof op !== 'object') continue;
+                countVal(op.content);
+                countVal(op.previousContent);
+            }
+        }
+    }
+    return total;
+}
+
+function _makeBinaryBackupFromBytes(u8, remainingSessionBytes) {
+    const size = u8.byteLength;
+    if (size > BINARY_BACKUP_MAX_FILE_BYTES) {
+        return { payload: { __wb_binary__: true, omitted: true, size, reason: 'file-limit' }, bytesUsed: 0 };
+    }
+    if (size > remainingSessionBytes) {
+        return { payload: { __wb_binary__: true, omitted: true, size, reason: 'session-limit' }, bytesUsed: 0 };
+    }
+    return {
+        payload: { __wb_binary__: true, b64: _binBytesToBase64(u8), size },
+        bytesUsed: size
+    };
+}
+
+export async function captureBinaryBackupForFile(fp, remainingSessionBytes = BINARY_BACKUP_MAX_SESSION_BYTES) {
+    try {
+        if (window.rootHandle) {
+            const meta = registry.meta[fp];
+            const handle = meta?.handle || await getHandleByPath(fp, false);
+            if (!handle || typeof handle.getFile !== 'function') return null;
+            const file = await handle.getFile();
+            const size = typeof file.size === 'number' ? file.size : null;
+            if (size !== null && size > BINARY_BACKUP_MAX_FILE_BYTES) {
+                return { payload: { __wb_binary__: true, omitted: true, size, reason: 'file-limit' }, bytesUsed: 0 };
+            }
+            if (size !== null && size > remainingSessionBytes) {
+                return { payload: { __wb_binary__: true, omitted: true, size, reason: 'session-limit' }, bytesUsed: 0 };
+            }
+            const u8 = new Uint8Array(await file.arrayBuffer());
+            return _makeBinaryBackupFromBytes(u8, remainingSessionBytes);
+        }
+        const cached = registry.files[fp];
+        if (cached instanceof Blob) {
+            if (cached.size > BINARY_BACKUP_MAX_FILE_BYTES) {
+                return { payload: { __wb_binary__: true, omitted: true, size: cached.size, reason: 'file-limit' }, bytesUsed: 0 };
+            }
+            if (cached.size > remainingSessionBytes) {
+                return { payload: { __wb_binary__: true, omitted: true, size: cached.size, reason: 'session-limit' }, bytesUsed: 0 };
+            }
+            const u8 = new Uint8Array(await cached.arrayBuffer());
+            return _makeBinaryBackupFromBytes(u8, remainingSessionBytes);
+        }
+        if (ArrayBuffer.isView(cached)) {
+            const u8 = new Uint8Array(cached.buffer, cached.byteOffset, cached.byteLength);
+            return _makeBinaryBackupFromBytes(u8, remainingSessionBytes);
+        }
+        if (cached instanceof ArrayBuffer) {
+            return _makeBinaryBackupFromBytes(new Uint8Array(cached), remainingSessionBytes);
+        }
+    } catch (_) {}
+    return null;
+}
+
+// Inspects a directory directly on disk (without skipping IGNORED_DIRS) so revert can tell
+// whether a directory is truly empty before removing it.
+export async function checkDirectoryOnDisk(dirPath) {
+    if (!window.rootHandle) {
+        const prefix = dirPath + '/';
+        const children = Object.keys(registry.meta)
+            .filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'));
+        if (!registry.meta[dirPath] && children.length === 0) {
+            return { status: 'missing', children: [] };
+        }
+        return { status: children.length > 0 ? 'non-empty' : 'empty', children };
+    }
+    try {
+        const dirHandle = await getDirectoryHandleByPath(dirPath, false);
+        if (!dirHandle || typeof dirHandle.entries !== 'function') {
+            return { status: 'missing', children: [] };
+        }
+        if (dirHandle.isWebDAV && typeof dirHandle._statKind === 'function') {
+            const kind = await dirHandle._statKind();
+            if (kind !== 'directory') return { status: 'missing', children: [] };
+        }
+        const children = [];
+        for await (const [name] of dirHandle.entries()) {
+            children.push(dirPath ? `${dirPath}/${name}` : name);
+        }
+        return { status: children.length > 0 ? 'non-empty' : 'empty', children };
+    } catch (e) {
+        if (e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError')) {
+            return { status: 'missing', children: [] };
+        }
+        return { status: 'error', error: e, children: [] };
+    }
+}
+
 export async function walkDirectoryOnDisk(dirPath, onEntry, opts = {}) {
     if (!window.rootHandle) return;
     const skipIgnored = opts.skipIgnored !== false;
@@ -1117,17 +1266,44 @@ export const fs = (() => {
         const sid = opts.sessionId || state.activeSessionId;
         if (isSecurityProtectedPath(path)) return { error: `ERROR: ${path} is a protected path.` };
         await ensureParentDirs(path, opts);
-        const onDisk = await fileExistsOnDisk(path);
-        const existed = onDisk || registry.files[path] !== undefined;
-        
+        const track = opts.track !== false;
+        let existed = false;
         let previousContent;
-        if (existed) {
-            previousContent = onDisk ? await window.readFileContent(path, { fromDisk: true }) : registry.files[path];
+        if (track) {
+            const onDisk = await fileExistsOnDisk(path);
+            existed = onDisk || registry.files[path] !== undefined;
+            if (existed) {
+                const fpMeta = registry.meta[path];
+                const prevIsBin = !!(fpMeta?.isBinary || window.BINARY_EXT_DEFINITE?.test(path));
+                if (prevIsBin) {
+                    const ctx = window.sessionCtx(sid);
+                    const used = estimateSessionBinaryBackupBytes(ctx?.baseline);
+                    const remaining = Math.max(0, BINARY_BACKUP_MAX_SESSION_BYTES - used);
+                    const cap = await captureBinaryBackupForFile(path, remaining);
+                    if (cap) previousContent = cap.payload;
+                } else {
+                    previousContent = onDisk ? await window.readFileContent(path, { fromDisk: true }) : registry.files[path];
+                }
+            }
         }
         try { await window.rawWrite(path, content); }
         catch (e) { if (e && e.encodingError) return { error: `ERROR: ${e.message}` }; throw e; }
-        if (opts.track !== false) {
-            await record({ kind: existed ? 'write' : 'create', path, content, previousContent, mode: opts.mode || 'ui' }, sid);
+        if (track) {
+            let recordedContent = content;
+            const isRawBin = (typeof Blob !== 'undefined' && content instanceof Blob) ||
+                content instanceof ArrayBuffer || ArrayBuffer.isView(content);
+            if (isRawBin) {
+                const ctx = window.sessionCtx(sid);
+                const used = estimateSessionBinaryBackupBytes(ctx?.baseline);
+                const remaining = Math.max(0, BINARY_BACKUP_MAX_SESSION_BYTES - used);
+                const u8 = (typeof Blob !== 'undefined' && content instanceof Blob)
+                    ? new Uint8Array(await content.arrayBuffer())
+                    : (content instanceof ArrayBuffer
+                        ? new Uint8Array(content)
+                        : new Uint8Array(content.buffer, content.byteOffset, content.byteLength));
+                recordedContent = _makeBinaryBackupFromBytes(u8, remaining).payload;
+            }
+            await record({ kind: existed ? 'write' : 'create', path, content: recordedContent, previousContent, mode: opts.mode || 'ui' }, sid);
         }
         return { ok: true };
     }
@@ -1191,6 +1367,7 @@ export const fs = (() => {
         const meta = registry.meta[path];
         const isDir = opts.isDir === true || !!(meta && meta.kind === 'directory');
         const affectedFiles = [];
+        const affectedDirs = [];
         const diskFileSet = new Set();
         const prevByPath = new Map();
 
@@ -1203,37 +1380,79 @@ export const fs = (() => {
 
         if (opts.track !== false) {
             const ctx = window.sessionCtx(sid);
-            const origFiles = (ctx && !ctx.deleted && ctx.baseline && ctx.baseline.originalFiles) || {};
+            const baseline = (ctx && !ctx.deleted && ctx.baseline) || null;
+            const origFiles = (baseline && baseline.originalFiles) || {};
+            const opsLog = (baseline && baseline.opsLog) || {};
+            let remainingBinBytes = Math.max(0, BINARY_BACKUP_MAX_SESSION_BYTES - estimateSessionBinaryBackupBytes(baseline));
 
             if (isDir) {
                 const fileSet = new Set();
+                const dirSet = new Set([path]);
                 const prefix = path + '/';
                 for (const k of Object.keys(registry.meta)) {
-                    if (k.startsWith(prefix) && registry.meta[k]?.kind === 'file') {
-                        fileSet.add(k);
-                    }
+                    if (!k.startsWith(prefix)) continue;
+                    if (registry.meta[k]?.kind === 'file') fileSet.add(k);
+                    else if (registry.meta[k]?.kind === 'directory') dirSet.add(k);
                 }
                 if (window.rootHandle) {
                     try {
-                        const diskFiles = await listFilesUnderDir(path, { skipIgnored: true });
-                        for (const fp of diskFiles) {
-                            fileSet.add(fp);
-                            diskFileSet.add(fp);
-                        }
+                        await walkDirectoryOnDisk(path, (child, entry) => {
+                            if (entry.kind === 'file') {
+                                fileSet.add(child);
+                                diskFileSet.add(child);
+                            } else if (entry.kind === 'directory') {
+                                dirSet.add(child);
+                            }
+                        }, { skipIgnored: true });
                     } catch (_) {}
                 }
                 affectedFiles.push(...Array.from(fileSet).sort());
+                affectedDirs.push(...Array.from(dirSet).sort((a, b) => {
+                    const depthDiff = b.split('/').length - a.split('/').length;
+                    return depthDiff !== 0 ? depthDiff : b.localeCompare(a);
+                }));
             } else {
                 affectedFiles.push(path);
             }
 
             for (const fp of affectedFiles) {
-                if (origFiles[fp] !== undefined) continue;
                 const fpMeta = registry.meta[fp];
-                const isBin = !!(fpMeta?.isBinary || window.BINARY_EXT_DEFINITE?.test(fp));
-                if (isBin) continue;
                 const onDisk = diskFileSet.has(fp) || await fileExistsOnDisk(fp);
+                let isBin = !!(fpMeta?.isBinary || window.BINARY_EXT_DEFINITE?.test(fp));
+                if (!isBin && onDisk && window.BINARY_EXT_AMBIGUOUS?.test(fp)) {
+                    try { isBin = await resolveIsBinary(fp); } catch (_) {}
+                }
+
+                if (isBin) {
+                    const existingOps = opsLog[fp] || [];
+                    const alreadyHasBinBackup = isBinaryBackupPayload(origFiles[fp]) ||
+                        existingOps.some(o => o && (isBinaryBackupPayload(o.content) || isBinaryBackupPayload(o.previousContent)));
+                    if (!alreadyHasBinBackup && (onDisk || registry.files[fp] !== undefined)) {
+                        const cap = await captureBinaryBackupForFile(fp, remainingBinBytes);
+                        if (cap) {
+                            prevByPath.set(fp, cap.payload);
+                            remainingBinBytes = Math.max(0, remainingBinBytes - cap.bytesUsed);
+                        }
+                    }
+                    continue;
+                }
+
+                if (origFiles[fp] !== undefined) continue;
                 if (onDisk) {
+                    // Sniff unknown/extensionless files before text-reading so binary bytes are backed up cleanly.
+                    if (window.rootHandle && !fpMeta?.encoding && fpMeta?.isBinary === undefined) {
+                        try {
+                            const s = await sniffWorkspaceFile(fp);
+                            if (s && s.binary) {
+                                const cap = await captureBinaryBackupForFile(fp, remainingBinBytes);
+                                if (cap) {
+                                    prevByPath.set(fp, cap.payload);
+                                    remainingBinBytes = Math.max(0, remainingBinBytes - cap.bytesUsed);
+                                }
+                                continue;
+                            }
+                        } catch (_) {}
+                    }
                     prevByPath.set(fp, await window.readFileContent(fp, { fromDisk: true }));
                 } else if (registry.files[fp] !== undefined) {
                     prevByPath.set(fp, registry.files[fp]);
@@ -1246,9 +1465,16 @@ export const fs = (() => {
         await window.rawDelete(path);
 
         if (opts.track !== false) {
-            if (isDir && affectedFiles.length > 0) {
+            if (isDir) {
+                const ctx = window.sessionCtx(sid);
+                const opsLog = (ctx && !ctx.deleted && ctx.baseline && ctx.baseline.opsLog) || {};
                 for (const fp of affectedFiles) {
                     await record({ kind: 'delete', path: fp, previousContent: prevByPath.get(fp), mode: opts.mode || 'ui' }, sid);
+                }
+                for (const dp of affectedDirs) {
+                    const prior = opsLog[dp];
+                    const existedBefore = !Array.isArray(prior) || prior.length === 0;
+                    await record({ kind: 'delete', path: dp, isDir: true, existedBefore, mode: opts.mode || 'ui' }, sid);
                 }
             } else {
                 await record({ kind: 'delete', path, previousContent: prevByPath.get(path), mode: opts.mode || 'ui' }, sid);
@@ -1277,6 +1503,8 @@ Object.entries({
     readFileTextSniffed, readImageDataUrl, readImageBlobUrl, sniffBytes, sniffWorkspaceFile,
     isBinaryByExtension, isBinaryContent, resolveIsBinary, encodeForDisk,
     getDirectoryHandleByPath, getHandleByPath, fileExistsOnDisk, workspaceDirExists,
-    walkDirectoryOnDisk, listFilesUnderDir,
+    BINARY_BACKUP_MAX_FILE_BYTES, BINARY_BACKUP_MAX_SESSION_BYTES,
+    isBinaryBackupPayload, decodeBinaryBackupPayload, estimateSessionBinaryBackupBytes, captureBinaryBackupForFile,
+    checkDirectoryOnDisk, walkDirectoryOnDisk, listFilesUnderDir,
     isHardProtectedPath, isUnderDirPattern, matchesPattern, globToRegExp, dirnameOf
 }).forEach(([k, v]) => window[k] = v);

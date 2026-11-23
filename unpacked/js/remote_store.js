@@ -786,6 +786,134 @@ function remoteSyncCatalogDiff(folders) {
     _catalogSnapshot = next;
 }
 
+// --- Binary Backup Sync Cap for Baselines ---
+
+const _SYNC_MAX_BINARY_BACKUP_FILE_BYTES = 1 * 1024 * 1024;    // 1 MB per binary backup when syncing to server
+const _SYNC_MAX_BINARY_BACKUP_RECORD_BYTES = 4 * 1024 * 1024;  // 4 MB total binary backups per synced baseline record
+
+function _isBinaryBackupObj(val) {
+    return !!(val && typeof val === 'object' && val.__wb_binary__ === true);
+}
+
+function _sanitizeBaselineForRemoteSync(rec) {
+    if (!rec || typeof rec !== 'object') return rec;
+    let remaining = _SYNC_MAX_BINARY_BACKUP_RECORD_BYTES;
+    let changed = false;
+
+    const sanitizeVal = (val) => {
+        if (!_isBinaryBackupObj(val) || val.omitted || typeof val.b64 !== 'string') return val;
+        const size = typeof val.size === 'number' ? val.size : Math.floor(val.b64.length * 0.75);
+        if (size > _SYNC_MAX_BINARY_BACKUP_FILE_BYTES || size > remaining) {
+            changed = true;
+            return { __wb_binary__: true, omitted: true, size, reason: 'sync-limit' };
+        }
+        remaining -= size;
+        return val;
+    };
+
+    let origOut = rec.originalFiles;
+    if (rec.originalFiles && typeof rec.originalFiles === 'object') {
+        let origChanged = false;
+        const nextOrig = {};
+        for (const [k, v] of Object.entries(rec.originalFiles)) {
+            const sv = sanitizeVal(v);
+            if (sv !== v) origChanged = true;
+            nextOrig[k] = sv;
+        }
+        if (origChanged) origOut = nextOrig;
+    }
+
+    let opsOut = rec.opsLog;
+    if (rec.opsLog && typeof rec.opsLog === 'object') {
+        let opsChanged = false;
+        const nextOps = {};
+        for (const [fp, list] of Object.entries(rec.opsLog)) {
+            if (!Array.isArray(list)) {
+                nextOps[fp] = list;
+                continue;
+            }
+            let listChanged = false;
+            const nextList = list.map((op) => {
+                if (!op || typeof op !== 'object') return op;
+                const sc = sanitizeVal(op.content);
+                const sp = sanitizeVal(op.previousContent);
+                if (sc !== op.content || sp !== op.previousContent) {
+                    listChanged = true;
+                    return { ...op, content: sc, previousContent: sp };
+                }
+                return op;
+            });
+            if (listChanged) opsChanged = true;
+            nextOps[fp] = listChanged ? nextList : list;
+        }
+        if (opsChanged) opsOut = nextOps;
+    }
+
+    if (!changed) return rec;
+    return { ...rec, originalFiles: origOut, opsLog: opsOut };
+}
+
+function _preserveLocalBinaryBackups(incoming, existing) {
+    if (!incoming || typeof incoming !== 'object' || !existing || typeof existing !== 'object') return incoming;
+    let changed = false;
+
+    const restoreVal = (incVal, extVal) => {
+        if (_isBinaryBackupObj(incVal) && incVal.omitted && incVal.reason === 'sync-limit' &&
+            _isBinaryBackupObj(extVal) && !extVal.omitted &&
+            (incVal.size == null || extVal.size == null || incVal.size === extVal.size)) {
+            changed = true;
+            return extVal;
+        }
+        return incVal;
+    };
+
+    let origOut = incoming.originalFiles;
+    if (incoming.originalFiles && typeof incoming.originalFiles === 'object' &&
+        existing.originalFiles && typeof existing.originalFiles === 'object') {
+        let origChanged = false;
+        const nextOrig = {};
+        for (const [k, v] of Object.entries(incoming.originalFiles)) {
+            const rv = restoreVal(v, existing.originalFiles[k]);
+            if (rv !== v) origChanged = true;
+            nextOrig[k] = rv;
+        }
+        if (origChanged) origOut = nextOrig;
+    }
+
+    let opsOut = incoming.opsLog;
+    if (incoming.opsLog && typeof incoming.opsLog === 'object' &&
+        existing.opsLog && typeof existing.opsLog === 'object') {
+        let opsChanged = false;
+        const nextOps = {};
+        for (const [fp, list] of Object.entries(incoming.opsLog)) {
+            const extList = existing.opsLog[fp];
+            if (!Array.isArray(list) || !Array.isArray(extList)) {
+                nextOps[fp] = list;
+                continue;
+            }
+            let listChanged = false;
+            const nextList = list.map((op) => {
+                if (!op || typeof op !== 'object') return op;
+                const match = extList.find((eo) => eo && eo.kind === op.kind && eo.ts === op.ts);
+                if (!match) return op;
+                const rc = restoreVal(op.content, match.content);
+                const rp = restoreVal(op.previousContent, match.previousContent);
+                if (rc !== op.content || rp !== op.previousContent) {
+                    listChanged = true;
+                    return { ...op, content: rc, previousContent: rp };
+                }
+                return op;
+            });
+            if (listChanged) opsChanged = true;
+            nextOps[fp] = listChanged ? nextList : list;
+        }
+        if (opsChanged) opsOut = nextOps;
+    }
+
+    if (!changed) return incoming;
+    return { ...incoming, originalFiles: origOut, opsLog: opsOut };
+}
+
 // --- Store Readers & Raw Writers (§7.6) ---
 
 async function _readLocalForUpload(store, key) {
@@ -793,7 +921,8 @@ async function _readLocalForUpload(store, key) {
         return await idbGetRaw(STORE_SESSIONS, key);
     }
     if (store === 'baselines') {
-        return await idbGetRaw(STORE_BASELINES, key);
+        const rec = await idbGetRaw(STORE_BASELINES, key);
+        return _sanitizeBaselineForRemoteSync(rec);
     }
     if (store === 'catalog') {
         const list = _readCatalogRaw();
@@ -865,7 +994,9 @@ async function _applyLocalRaw(store, key, decoded, serverItemsMap) {
         return { needsReupload: false };
     }
     if (store === 'baselines') {
-        await idbPutRaw(STORE_BASELINES, key, decoded);
+        const existing = await idbGetRaw(STORE_BASELINES, key);
+        const merged = _preserveLocalBinaryBackups(decoded, existing);
+        await idbPutRaw(STORE_BASELINES, key, merged);
         return { needsReupload: false };
     }
     if (store === 'catalog') {

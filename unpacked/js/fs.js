@@ -130,17 +130,40 @@ async function readFileContentForTool(filepath) {
 async function rawWrite(path, content) {
     if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     wsMutationEpoch++;
+    const isBlob = typeof Blob !== 'undefined' && content instanceof Blob;
+    const isBinaryPayload = isBlob || content instanceof ArrayBuffer || ArrayBuffer.isView(content);
+    const binaryByteLength = isBlob
+        ? content.size
+        : (content instanceof ArrayBuffer ? content.byteLength : (ArrayBuffer.isView(content) ? content.byteLength : 0));
+
     if (!rootHandle) {
-        registry.files[path] = content;
-        registry.meta[path] = { kind: 'file' };
+        if (isBinaryPayload) {
+            registry.files[path] = isBlob ? content : new Blob([content]);
+            registry.meta[path] = { kind: 'file', isBinary: true, size: binaryByteLength };
+        } else {
+            registry.files[path] = content;
+            registry.meta[path] = { kind: 'file', isBinary: false };
+        }
+        wsMutationEpoch++;
         return;
     }
-    // Keep the file's existing encoding (UTF-16, BOM, Windows-1252) instead of silently converting to UTF-8.
-    let enc = registry.meta[path]?.encoding;
-    if (!enc) {
-        try { enc = (await sniffWorkspaceFile(path)).encoding; } catch (e) { enc = null; }   // new file -> utf-8
+
+    let enc = null;
+    let payload;
+    if (isBinaryPayload) {
+        payload = isBlob
+            ? content
+            : (content instanceof ArrayBuffer
+                ? new Uint8Array(content)
+                : new Uint8Array(content.buffer, content.byteOffset, content.byteLength));
+    } else {
+        // Keep the file's existing encoding (UTF-16, BOM, Windows-1252) instead of silently converting to UTF-8.
+        enc = registry.meta[path]?.encoding;
+        if (!enc) {
+            try { enc = (await sniffWorkspaceFile(path)).encoding; } catch (e) { enc = null; }   // new file -> utf-8
+        }
+        payload = encodeForDisk(content, enc, path);   // may throw before the file is touched
     }
-    const payload = encodeForDisk(content, enc, path);   // may throw before the file is touched
 
     const parts = path.split('/').filter(Boolean);
     const fileName = parts.pop();
@@ -152,14 +175,24 @@ async function rawWrite(path, content) {
     const w = await fh.createWritable();
     await w.write(payload);
     await w.close();
-    registry.files[path] = content;
+
     // Merge into the existing entry so size/isBinary/handle are not thrown away by a write.
     const prevMeta = registry.meta[path];
     const nextMeta = (prevMeta && prevMeta.kind === 'file') ? prevMeta : { kind: 'file' };
     nextMeta.handle = fh;
-    nextMeta.isBinary = false;
-    if (enc && enc !== 'utf-8') nextMeta.encoding = enc; else delete nextMeta.encoding;
+    if (isBinaryPayload) {
+        // Keep binary payloads out of registry.files so text-only code never treats them as strings.
+        delete registry.files[path];
+        nextMeta.isBinary = true;
+        nextMeta.size = binaryByteLength;
+        delete nextMeta.encoding;
+    } else {
+        registry.files[path] = content;
+        nextMeta.isBinary = false;
+        if (enc && enc !== 'utf-8') nextMeta.encoding = enc; else delete nextMeta.encoding;
+    }
     registry.meta[path] = nextMeta;
+    if (window.sniffCache) window.sniffCache.delete(path);
     wsMutationEpoch++;
 }
 
