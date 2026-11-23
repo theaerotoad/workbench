@@ -907,6 +907,12 @@ window.addEventListener('beforeunload', (e) => {
         TOOL_API_METHODS[name] = async (toolName, args, ...rest) => {
             const a = args || [];
             await refreshPathMeta(a[0]);
+            if (name === 'renameFile' && a[1]) {
+                const resolved = typeof resolveRenamePaths === 'function' ? resolveRenamePaths(a[0], a[1]) : null;
+                if (resolved && !resolved.error && resolved.newPath && resolved.newPath !== resolved.oldPath) {
+                    await refreshPathMeta(resolved.newPath);
+                }
+            }
             return orig(toolName, a, ...rest);
         };
     });

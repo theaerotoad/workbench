@@ -236,7 +236,15 @@ function coerceToolSettingValue(settingDef, value) {
         if (settingDef.max !== undefined) v = Math.min(settingDef.max, v);
         return v;
     }
-    if (settingDef.type === 'boolean') return !!value;
+    if (settingDef.type === 'boolean') {
+        if (value === undefined || value === null) return !!settingDef.default;
+        if (typeof value === 'string') {
+            const lower = value.trim().toLowerCase();
+            if (lower === 'false' || lower === '0' || lower === '') return false;
+            if (lower === 'true' || lower === '1') return true;
+        }
+        return !!value;
+    }
     if (settingDef.type === 'select') return settingDef.options.includes(value) ? value : settingDef.default;
     return (typeof value === 'string') ? value : settingDef.default;
 }

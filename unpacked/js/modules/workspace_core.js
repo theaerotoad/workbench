@@ -391,20 +391,40 @@ window.pickFolderWithMemory = pickFolderWithMemory;
 async function refreshPathMeta(fp) {
     const root = rootHandle;
     if (!root || typeof fp !== 'string' || !fp) return;
+    fp = fp.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
+    if (!fp) return;
+    const parts = fp.split('/').filter(Boolean);
+    if (!parts.length || parts.some(seg => seg === '.' || seg === '..')) return;
+
     const alive = () => rootHandle === root;
     const cur = registry.meta[fp];
     if (cur && (cur.virtual || cur.attachment)) return;
     if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || fp === TOOLS_FILE || isPromptFileMode(fp)) return;
     if (fp === PLAN_FILE || !isScanVisiblePath(fp)) return;   // the plan file can live only in memory
 
-    const parts = fp.split('/').filter(Boolean);
     let kind = null, handle = null;
-    try {
-        handle = await getHandleByPath(fp, false, root);
-        kind = 'file';
-    } catch (e) {
-        if (e && e.name === 'TypeMismatchError') {
-            try { handle = await getDirectoryHandleByPath(fp, false, root); kind = 'directory'; } catch (e2) {}
+    if (root.isWebDAV) {
+        try {
+            const probe = await getHandleByPath(fp, false, root);
+            if (probe && typeof probe._statKind === 'function') {
+                const statKind = await probe._statKind();
+                if (statKind === 'file') {
+                    handle = probe;
+                    kind = 'file';
+                } else if (statKind === 'directory') {
+                    handle = await getDirectoryHandleByPath(fp, false, root);
+                    kind = 'directory';
+                }
+            }
+        } catch (e) {}
+    } else {
+        try {
+            handle = await getHandleByPath(fp, false, root);
+            kind = 'file';
+        } catch (e) {
+            if (e && e.name === 'TypeMismatchError') {
+                try { handle = await getDirectoryHandleByPath(fp, false, root); kind = 'directory'; } catch (e2) {}
+            }
         }
     }
     if (!alive()) return;
@@ -416,6 +436,9 @@ async function refreshPathMeta(fp) {
                 if (k === fp || k.startsWith(fp + '/')) {
                     if (registry.meta[k] && (registry.meta[k].virtual || registry.meta[k].attachment)) continue;
                     delete registry.meta[k];
+                    if (typeof isFileDirty !== 'function' || !isFileDirty(k)) {
+                        delete registry.files[k];
+                    }
                 }
             }
             renderExplorerTree();
@@ -429,7 +452,7 @@ async function refreshPathMeta(fp) {
     let dirPath = '';
     for (let i = 0; i < parts.length - 1; i++) {
         dirPath = dirPath ? `${dirPath}/${parts[i]}` : parts[i];
-        if (!registry.meta[dirPath]) {
+        if (!registry.meta[dirPath] || registry.meta[dirPath].kind !== 'directory') {
             let dh = null;
             try { dh = await getDirectoryHandleByPath(dirPath, false, root); } catch (e) {}
             if (!alive()) return;
@@ -440,6 +463,17 @@ async function refreshPathMeta(fp) {
     if (!alive()) return;
     const liveCur = registry.meta[fp];
     if (!liveCur || liveCur.kind !== kind) {
+        if (liveCur && liveCur.kind === 'directory' && kind === 'file') {
+            for (const k of Object.keys(registry.meta)) {
+                if (k.startsWith(fp + '/')) {
+                    if (registry.meta[k] && (registry.meta[k].virtual || registry.meta[k].attachment)) continue;
+                    delete registry.meta[k];
+                    if (typeof isFileDirty !== 'function' || !isFileDirty(k)) {
+                        delete registry.files[k];
+                    }
+                }
+            }
+        }
         registry.meta[fp] = kind === 'file'
             ? { kind: 'file', size: 0, isBinary: isBinaryByExtension(parts[parts.length - 1]), handle }
             : { kind: 'directory', size: 0, isBinary: false, handle };
@@ -1112,10 +1146,14 @@ async function syncAgentFilesWithWorkspace() {
     }
 
     let hasAgentDir = false;
-    try {
-        await getDirectoryHandleByPath(CUSTOM_TOOLS_DIR, false);
-        hasAgentDir = true;
-    } catch (e) {}
+    if (typeof workspaceDirExists === 'function') {
+        hasAgentDir = await workspaceDirExists(CUSTOM_TOOLS_DIR);
+    } else {
+        try {
+            await getDirectoryHandleByPath(CUSTOM_TOOLS_DIR, false);
+            hasAgentDir = true;
+        } catch (e) {}
+    }
 
     if (hasAgentDir) {
         const readDisk = async (path) => {
@@ -1176,7 +1214,8 @@ async function syncAgentFilesWithWorkspace() {
             }
         } else {
             try {
-                const pDir = await getDirectoryHandleByPath(PROMPTS_DIR, false);
+                const hasPromptsDir = !rootHandle.isWebDAV || (typeof workspaceDirExists === 'function' && await workspaceDirExists(PROMPTS_DIR));
+                const pDir = hasPromptsDir ? await getDirectoryHandleByPath(PROMPTS_DIR, false) : null;
                 if (pDir) {
                     for await (const entry of pDir.values()) {
                         if (entry.kind === 'file' && entry.name.endsWith('.md')) {
@@ -1212,7 +1251,10 @@ async function syncAgentFilesWithWorkspace() {
 
         let tDir = null;
         try {
-            tDir = await getDirectoryHandleByPath(TOOLS_DIR, false);
+            const hasToolsDir = !rootHandle.isWebDAV || (typeof workspaceDirExists === 'function' && await workspaceDirExists(TOOLS_DIR));
+            if (hasToolsDir) {
+                tDir = await getDirectoryHandleByPath(TOOLS_DIR, false);
+            }
         } catch(e) {}
 
         const toolsManifestText = await readDisk(TOOLS_FILE);
