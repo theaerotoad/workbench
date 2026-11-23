@@ -66,6 +66,8 @@ class WebDAVFileHandle extends WebDAVHandle {
             cache: 'no-store'
         });
         if (!resp.ok) throw new Error('WebDAV MOVE failed: ' + resp.status);
+        this.path = parentHandle.path + newName;
+        this.name = newName;
     }
     async createWritable(opts) {
         let parts = [];

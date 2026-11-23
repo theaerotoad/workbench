@@ -166,38 +166,155 @@ export function vfsRoot(n) { while (n.parent) n = n.parent; return n; }
 
 export function vfsWrap(n) { return n._h || (n._h = n.kind === 'file' ? new window.VFSFileHandle(n) : new window.VFSDirHandle(n)); }
 
-export async function rawRename(oldPath, newPath) {
-    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
-    window.wsMutationEpoch++;
-    const newName = newPath.split('/').filter(Boolean).pop();
-    if (!newName) return { error: `ERROR: Invalid new file name.` };
-
-    const oldParts = oldPath.split('/').filter(Boolean);
-    const oldDirParts = oldParts.slice(0, -1);
-    const resolvedNewPath = [...oldDirParts, newName].join('/');
-
-    if (oldPath === resolvedNewPath) {
-        return {}; 
+export function resolveRenamePaths(oldPath, newPath, opts = {}) {
+    const rawOld = String(oldPath || '').trim().replace(/\\/g, '/');
+    const normOld = rawOld.replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+    if (!normOld || normOld.endsWith('/')) {
+        return { error: `ERROR: Invalid source file path.` };
+    }
+    const oldSegs = normOld.split('/');
+    if (oldSegs.some(seg => !seg || seg === '.' || seg === '..')) {
+        return { error: `ERROR: Source path cannot contain "." or ".." segments.` };
     }
 
-    try {
-        const oldMeta = registry.meta[oldPath];
-        if (!oldMeta) return { error: `ERROR: ${oldPath} not found` };
+    const rawNew = String(newPath || '').trim().replace(/\\/g, '/');
+    if (!rawNew) {
+        return { error: `ERROR: Invalid target path.` };
+    }
+    if (rawNew.endsWith('/')) {
+        return { error: `ERROR: Target path must end with a file name.` };
+    }
 
-        const oldContent = await window.readFileContent(oldPath);
-        if (oldContent === undefined) return { error: `ERROR: Content for ${oldPath} not found.` };
+    const treatAsPath = !!(opts && opts.exactPath) || rawNew.includes('/');
+    let resolvedNew;
+    if (treatAsPath) {
+        resolvedNew = rawNew.replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+    } else {
+        const oldDir = oldSegs.slice(0, -1).join('/');
+        resolvedNew = oldDir ? `${oldDir}/${rawNew}` : rawNew;
+    }
+
+    if (!resolvedNew || resolvedNew.endsWith('/')) {
+        return { error: `ERROR: Invalid target file path.` };
+    }
+    const newSegs = resolvedNew.split('/');
+    if (newSegs.some(seg => !seg || seg === '.' || seg === '..')) {
+        return { error: `ERROR: Target path cannot contain "." or ".." segments.` };
+    }
+    if (/[<>:"|?*\x00-\x1f]/.test(resolvedNew)) {
+        return { error: `ERROR: Target path contains invalid characters.` };
+    }
+
+    return { oldPath: normOld, newPath: resolvedNew };
+}
+
+function _migrateRenamedPathUI(oldPath, newPath) {
+    if (!oldPath || !newPath || oldPath === newPath) return;
+    const replaceTab = (fromId, toId) => {
+        const idx = state.openTabs.indexOf(fromId);
+        if (idx !== -1) state.openTabs[idx] = toId;
+        if (state.activeTab === fromId) state.activeTab = toId;
+    };
+    if (Array.isArray(state.openTabs)) {
+        replaceTab(oldPath, newPath);
+        replaceTab(`filediff:${oldPath}`, `filediff:${newPath}`);
+        replaceTab(`render:${oldPath}`, `render:${newPath}`);
+    }
+    if (state.currentEditorPath === oldPath) state.currentEditorPath = newPath;
+    if (state.currentDiffFilepath === oldPath) state.currentDiffFilepath = newPath;
+    if (state.checkpointModalFile === oldPath) state.checkpointModalFile = newPath;
+
+    if (window.monacoModels && window.monacoModels.has(oldPath)) {
+        const model = window.monacoModels.get(oldPath);
+        window.monacoModels.delete(oldPath);
+        window.monacoModels.set(newPath, model);
+        if (window.MONACO?.editor?.setModelLanguage && typeof window.langOf === 'function') {
+            try { window.MONACO.editor.setModelLanguage(model, window.langOf(newPath)); } catch (_) {}
+        }
+    }
+    if (state.fileBase && state.fileBase.has(oldPath)) {
+        state.fileBase.set(newPath, state.fileBase.get(oldPath));
+        state.fileBase.delete(oldPath);
+    }
+    if (state.dirtyFiles && state.dirtyFiles.has(oldPath)) {
+        state.dirtyFiles.delete(oldPath);
+        state.dirtyFiles.add(newPath);
+    }
+    if (window.sniffCache && window.sniffCache.has(oldPath)) {
+        window.sniffCache.set(newPath, window.sniffCache.get(oldPath));
+        window.sniffCache.delete(oldPath);
+    }
+    if (typeof window.renderTabs === 'function') {
+        window.renderTabs();
+    }
+    const docPathEl = typeof document !== 'undefined' ? document.getElementById('doc-bar-path') : null;
+    if (state.activeTab === newPath && docPathEl && docPathEl.textContent === oldPath) {
+        docPathEl.textContent = newPath;
+    }
+    if (typeof window.persistTabState === 'function') {
+        window.persistTabState();
+    }
+}
+
+export async function rawRename(oldPath, newPath, opts = {}) {
+    if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
+    window.wsMutationEpoch++;
+
+    const resolved = resolveRenamePaths(oldPath, newPath, opts);
+    if (resolved.error) return resolved;
+
+    const normOldPath = resolved.oldPath;
+    const resolvedNewPath = resolved.newPath;
+
+    try {
+        const oldMeta = registry.meta[normOldPath];
+        if (!oldMeta) return { error: `ERROR: ${normOldPath} not found` };
+        if (oldMeta.kind === 'directory') {
+            return { error: `ERROR: Renaming directories is not supported (${normOldPath}).` };
+        }
+
+        if (normOldPath === resolvedNewPath) {
+            return { ok: true, resolvedNewPath, unchanged: true };
+        }
+
+        const existingTarget = registry.meta[resolvedNewPath];
+        if (existingTarget) {
+            const what = existingTarget.kind === 'directory' ? 'directory' : 'file';
+            return { error: `ERROR: Cannot rename to ${resolvedNewPath}: a ${what} already exists at that path.` };
+        }
+
+        const newParts = resolvedNewPath.split('/');
+        const newName = newParts[newParts.length - 1];
+        const targetDirPath = newParts.slice(0, -1).join('/');
+        const isBinary = !!oldMeta.isBinary || (window.BINARY_EXT_DEFINITE && window.BINARY_EXT_DEFINITE.test(normOldPath));
+
+        let oldContent;
+        if (isBinary) {
+            if (window.rootHandle) {
+                const h = oldMeta.handle || await getHandleByPath(normOldPath);
+                if (h && typeof h.getFile === 'function') {
+                    const f = await h.getFile();
+                    oldContent = new Uint8Array(await f.arrayBuffer());
+                }
+            }
+            if (oldContent === undefined && registry.files[normOldPath] !== undefined) {
+                oldContent = registry.files[normOldPath];
+            }
+        } else {
+            oldContent = await window.readFileContent(normOldPath);
+        }
+        if (oldContent === undefined) return { error: `ERROR: Content for ${normOldPath} not found.` };
 
         let nativeMoveSuccess = false;
         let fileHandle = oldMeta.handle;
 
         if (window.rootHandle) {
-            const oldHandle = await getHandleByPath(oldPath);
+            const oldHandle = await getHandleByPath(normOldPath);
             if (oldHandle && typeof oldHandle.move === 'function') {
                 try {
-                    const dirPath = oldDirParts.join('/');
-                    const parentDirHandle = dirPath === ''
+                    const parentDirHandle = targetDirPath === ''
                         ? window.rootHandle
-                        : await getDirectoryHandleByPath(dirPath, false);
+                        : await getDirectoryHandleByPath(targetDirPath, true);
 
                     if (parentDirHandle) {
                         await oldHandle.move(parentDirHandle, newName);
@@ -211,20 +328,38 @@ export async function rawRename(oldPath, newPath) {
         }
 
         if (nativeMoveSuccess) {
-            delete registry.meta[oldPath];
-            delete registry.files[oldPath];
-            registry.meta[resolvedNewPath] = {
+            delete registry.meta[normOldPath];
+            delete registry.files[normOldPath];
+            const nextMeta = {
                 kind: 'file',
                 size: oldMeta.size || 0,
-                isBinary: false,
+                isBinary,
                 handle: fileHandle
             };
-            registry.files[resolvedNewPath] = oldContent;
+            if (oldMeta.encoding) nextMeta.encoding = oldMeta.encoding;
+            if (oldMeta.mtime !== undefined) nextMeta.mtime = oldMeta.mtime;
+            registry.meta[resolvedNewPath] = nextMeta;
+            if (!isBinary) {
+                registry.files[resolvedNewPath] = oldContent;
+            }
         } else {
-            if (oldMeta && oldMeta.encoding) registry.meta[resolvedNewPath] = { kind: 'file', encoding: oldMeta.encoding };
+            if (oldMeta.encoding) registry.meta[resolvedNewPath] = { kind: 'file', encoding: oldMeta.encoding };
             await window.rawWrite(resolvedNewPath, oldContent);
-            await window.rawDelete(oldPath);
+            await window.rawDelete(normOldPath);
+            if (isBinary && registry.meta[resolvedNewPath]) {
+                registry.meta[resolvedNewPath].isBinary = true;
+            }
         }
+
+        if (targetDirPath) {
+            let built = '';
+            for (const seg of targetDirPath.split('/')) {
+                built = built ? `${built}/${seg}` : seg;
+                if (!registry.meta[built]) registry.meta[built] = { kind: 'directory' };
+            }
+        }
+
+        _migrateRenamedPathUI(normOldPath, resolvedNewPath);
 
         window.wsMutationEpoch++;
         return { ok: true, resolvedNewPath };
@@ -908,16 +1043,42 @@ export const fs = (() => {
 
     async function rename(from, to, opts = {}) {
         const sid = opts.sessionId || state.activeSessionId;
-        if (isSecurityProtectedPath(from) || isSecurityProtectedPath(to)) {
+        const resolved = resolveRenamePaths(from, to, opts);
+        if (resolved.error) return resolved;
+
+        const normFrom = resolved.oldPath;
+        const normTo = resolved.newPath;
+
+        if (isSecurityProtectedPath(normFrom) || isSecurityProtectedPath(normTo)) {
             return { error: `ERROR: protected paths can't be renamed or moved.` };
         }
-        if (window.isToolOrAgentPath(from)) return { error: `ERROR: ${from} is a virtual settings file and can't be renamed.` };
-        if (window.isAgentPath(to)) return { error: `ERROR: Cannot rename files into .agent` };
-        const res = await rawRename(from, to);
+        if (window.isToolOrAgentPath(normFrom) || window.isAgentPath(normFrom)) {
+            return { error: `ERROR: ${normFrom} is a virtual settings file and can't be renamed.` };
+        }
+        if (window.isAgentPath(normTo)) {
+            return { error: `ERROR: Cannot rename files into .agent` };
+        }
+
+        const oldMeta = registry.meta[normFrom];
+        if (!oldMeta) return { error: `ERROR: ${normFrom} not found` };
+        if (oldMeta.kind === 'directory') {
+            return { error: `ERROR: Renaming directories is not supported (${normFrom}).` };
+        }
+        if (normFrom === normTo) {
+            return { ok: true, resolvedNewPath: normTo, unchanged: true };
+        }
+        const existingTarget = registry.meta[normTo];
+        if (existingTarget) {
+            const what = existingTarget.kind === 'directory' ? 'directory' : 'file';
+            return { error: `ERROR: Cannot rename to ${normTo}: a ${what} already exists at that path.` };
+        }
+
+        await ensureParentDirs(normTo, opts);
+        const res = await rawRename(normFrom, normTo, { ...opts, exactPath: true });
         if (res.error) return res;
-        if (opts.track === false) return { ok: true, resolvedNewPath: res.resolvedNewPath || to };
-        const actualTo = res.resolvedNewPath || to;
-        await record({ kind: 'rename', from, to: actualTo, mode: opts.mode || 'ui' }, sid);
+        if (opts.track === false) return { ok: true, resolvedNewPath: res.resolvedNewPath || normTo };
+        const actualTo = res.resolvedNewPath || normTo;
+        await record({ kind: 'rename', from: normFrom, to: actualTo, mode: opts.mode || 'ui' }, sid);
         return { ok: true, resolvedNewPath: actualTo };
     }
 
@@ -950,7 +1111,7 @@ export const fs = (() => {
 Object.entries({
     fs,
     vfsChanged, vfsCheckName, vfsErr, vfsFlushIfDirty, vfsFlush, vfsSnapToken, vfsPutDir, vfsPutFile,
-    vfsReadBlob, vfsRoot, vfsWrap, rawRename, writeAgentFileToDisk, writeDisk,
+    vfsReadBlob, vfsRoot, vfsWrap, resolveRenamePaths, rawRename, writeAgentFileToDisk, writeDisk,
     readFileTextSniffed, readImageDataUrl, readImageBlobUrl, sniffBytes, sniffWorkspaceFile,
     isBinaryByExtension, isBinaryContent, resolveIsBinary, encodeForDisk,
     getDirectoryHandleByPath, getHandleByPath, fileExistsOnDisk, workspaceDirExists,

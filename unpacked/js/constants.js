@@ -572,28 +572,35 @@ const TOOL_API_METHODS = {
         }
     },
     renameFile: async (toolName, [oldPath, newPath], sessionId) => {
-        if (window.isSecurityProtectedPath(oldPath)) {
-            return `ERROR: ${oldPath} is a protected path and cannot be renamed by a tool call.`;
+        const resolved = typeof window.resolveRenamePaths === 'function'
+            ? window.resolveRenamePaths(oldPath, newPath)
+            : { oldPath, newPath };
+        if (resolved.error) return resolved.error;
+        const src = resolved.oldPath;
+        const dst = resolved.newPath;
+
+        if (window.isSecurityProtectedPath(src)) {
+            return `ERROR: ${src} is a protected path and cannot be renamed or moved by a tool call.`;
         }
-        if (window.isSecurityProtectedPath(newPath)) {
-            return `ERROR: ${newPath} is a protected path and cannot be renamed by a tool call.`;
+        if (window.isSecurityProtectedPath(dst)) {
+            return `ERROR: ${dst} is a protected path and cannot be renamed or moved by a tool call.`;
         }
-        if (window.isSensitiveUserFile(oldPath)) {
-            return `ERROR: ${oldPath} is a private user settings file and cannot be renamed by a tool call.`;
+        if (window.isSensitiveUserFile(src) || window.isSensitiveUserFile(dst)) {
+            return `ERROR: ${window.isSensitiveUserFile(src) ? src : dst} is a private user settings file and cannot be renamed or moved by a tool call.`;
         }
-        if (window.isToolOrAgentPath(oldPath)) {
-            return `ERROR: ${oldPath} is a virtual settings file and can't be renamed or moved.`;
+        if (window.isToolOrAgentPath(src) || window.isAgentPath(src)) {
+            return `ERROR: ${src} is a virtual settings file and can't be renamed or moved.`;
         }
-        if (window.isAgentPath(newPath)) {
-            return `ERROR: Cannot rename files into .agent`;
+        if (window.isAgentPath(dst)) {
+            return `ERROR: Cannot rename or move files into .agent`;
         }
-        if (window.shouldHideFromTools(oldPath)) {
-            return `ERROR: ${oldPath} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
+        if (window.shouldHideFromTools(src)) {
+            return `ERROR: ${src} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
         }
-        if (window.shouldHideFromTools(newPath)) {
-            return `ERROR: ${newPath} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
+        if (window.shouldHideFromTools(dst)) {
+            return `ERROR: ${dst} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
         }
-        const res = await window.fs.rename(oldPath, newPath, { mode: 'tool' });
+        const res = await window.fs.rename(src, dst, { mode: 'tool', sessionId, exactPath: true });
         return (res && res.error) ? res.error : null;
     },
     listFiles: async () => Object.keys(window.registry.meta).filter(f =>
