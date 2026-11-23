@@ -73,6 +73,10 @@ const PY_MAX_BIN_FILE = 32 * 1024 * 1024;
 const PY_MAX_TOTAL = 128 * 1024 * 1024;
 const PY_IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const PY_BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|gz|npy|npz|pkl|pickle|parquet|feather|h5|hdf5|joblib|bin|onnx|wav|mp3|mp4|woff2?|ttf|otf)$/i;
+const PY_IGNORED_DIRS = new Set([
+    '.agent', '.ion', 'node_modules', '.git', 'venv', '.venv', '__pycache__',
+    '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', 'target', 'build', 'dist'
+]);
 
 // --- Live streaming limits ----------------------------------------------------
 const PY_LIVE_TAIL_CHARS = 6000;   // live card shows only the last N chars of output
@@ -1719,8 +1723,11 @@ async function gatherWorkspace(api, targetPath, code, notes) {
     let total = 0;
     const paths = (typeof api?.listFiles === 'function') ? await api.listFiles() : [];
     const targetExisted = paths.includes(targetPath);
-    const wanted = paths.filter(p => typeof p === 'string' && p !== targetPath &&
-        !p.startsWith('.agent') && !p.startsWith('.ion') && !p.startsWith('.git/') && !p.includes('node_modules/'));
+    const wanted = paths.filter(p => {
+        if (typeof p !== 'string' || p === targetPath) return false;
+        const dirs = p.split('/').slice(0, -1);
+        return !dirs.some(seg => PY_IGNORED_DIRS.has(seg));
+    });
 
     const load = async (fp) => {
         try {
