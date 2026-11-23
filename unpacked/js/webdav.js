@@ -42,6 +42,19 @@ class WebDAVHandle {
             return true;
         } catch (e) { throw e; }
     }
+    // Server-checked kind of this handle's path: 'file', 'directory', or null if missing.
+    // Needed because getFileHandle/getDirectoryHandle are lazy and never confirm existence.
+    async _statKind() {
+        const resp = await fetch(this.url + this.path, {
+            method: 'PROPFIND',
+            headers: { ...this.getHeaders(), 'Depth': '0' },
+            cache: 'no-store'
+        });
+        if (resp.status === 404) return null;
+        if (!resp.ok) throw new Error('WebDAV check failed: ' + resp.status);
+        const text = await resp.text();
+        return /<([a-z0-9_-]+:)?collection\b/i.test(text) ? 'directory' : 'file';
+    }
 }
 
 class WebDAVFileHandle extends WebDAVHandle {

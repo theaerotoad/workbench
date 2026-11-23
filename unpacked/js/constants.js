@@ -653,34 +653,24 @@ const TOOL_API_METHODS = {
                     return `ERROR: Cannot delete directory ${normFp}: contains protected path ${k}.`;
                 }
             }
-            if (window.rootHandle && typeof window.getDirectoryHandleByPath === 'function') {
+            if (window.rootHandle && typeof window.walkDirectoryOnDisk === 'function') {
                 try {
-                    const dirHandle = await window.getDirectoryHandleByPath(normFp, false);
-                    if (dirHandle && typeof dirHandle.entries === 'function') {
-                        const findProtected = async (h, cur) => {
-                            for await (const [name, entry] of h.entries()) {
-                                const child = cur ? `${cur}/${name}` : name;
-                                if (window.isSecurityProtectedPath(child) || window.isSensitiveUserFile(child) || window.isAgentPath(child)) {
-                                    return child;
-                                }
-                                if (entry.kind === 'directory') {
-                                    const hit = await findProtected(entry, child);
-                                    if (hit) return hit;
-                                }
-                            }
-                            return null;
-                        };
-                        const blocked = await findProtected(dirHandle, normFp);
-                        if (blocked) {
-                            return `ERROR: Cannot delete directory ${normFp}: contains protected path ${blocked}.`;
+                    let blocked = null;
+                    await window.walkDirectoryOnDisk(normFp, (child) => {
+                        if (window.isSecurityProtectedPath(child) || window.isSensitiveUserFile(child) || window.isAgentPath(child)) {
+                            blocked = child;
+                            return false;
                         }
+                    }, { skipIgnored: false });
+                    if (blocked) {
+                        return `ERROR: Cannot delete directory ${normFp}: contains protected path ${blocked}.`;
                     }
                 } catch (_) {}
             }
         }
 
         try {
-            const res = await window.fs.del(normFp, { mode: 'tool', sessionId });
+            const res = await window.fs.del(normFp, { mode: 'tool', sessionId, isDir });
             if (res && res.error) return res.error;
         } catch (e) {
             return `ERROR: ${e.message || String(e)}`;

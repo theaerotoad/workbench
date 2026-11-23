@@ -817,7 +817,11 @@ export async function fileExistsOnDisk(filePath) {
     if (!window.rootHandle) return false;
     try {
         const handle = await getHandleByPath(filePath);
-        return !!handle;
+        if (!handle) return false;
+        if (handle.isWebDAV && typeof handle._statKind === 'function') {
+            return (await handle._statKind()) === 'file';
+        }
+        return true;
     } catch(e) {
         return false;
     }
@@ -828,7 +832,48 @@ export async function workspaceDirExists(dirPath) {
     const meta = registry.meta[dirPath];
     if (meta && meta.kind === 'directory') return true;
     if (!window.rootHandle) return false;
-    try { await getDirectoryHandleByPath(dirPath, false); return true; } catch (e) { return false; }
+    try {
+        const h = await getDirectoryHandleByPath(dirPath, false);
+        if (!h) return false;
+        if (h.isWebDAV && typeof h._statKind === 'function') {
+            return (await h._statKind()) === 'directory';
+        }
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+export async function walkDirectoryOnDisk(dirPath, onEntry, opts = {}) {
+    if (!window.rootHandle) return;
+    const skipIgnored = opts.skipIgnored !== false;
+    const dirHandle = await getDirectoryHandleByPath(dirPath, false);
+    if (!dirHandle || typeof dirHandle.entries !== 'function') return;
+    if (dirHandle.isWebDAV && typeof dirHandle._statKind === 'function') {
+        if ((await dirHandle._statKind()) !== 'directory') return;
+    }
+    const walk = async (h, cur) => {
+        for await (const [name, entry] of h.entries()) {
+            if (skipIgnored && window.IGNORED_DIRS?.has(name)) continue;
+            const child = cur ? `${cur}/${name}` : name;
+            const stop = await onEntry(child, entry, name);
+            if (stop === false) return false;
+            if (entry.kind === 'directory') {
+                const cont = await walk(entry, child);
+                if (cont === false) return false;
+            }
+        }
+        return true;
+    };
+    await walk(dirHandle, dirPath);
+}
+
+export async function listFilesUnderDir(dirPath, opts = {}) {
+    const files = [];
+    await walkDirectoryOnDisk(dirPath, (child, entry) => {
+        if (entry.kind === 'file') files.push(child);
+    }, opts);
+    return files.sort();
 }
 
 export function isHardProtectedPath(path) {
@@ -1097,21 +1142,40 @@ export const fs = (() => {
         if (isSecurityProtectedPath(path)) return { error: `ERROR: ${path} is a protected path.` };
 
         const meta = registry.meta[path];
-        const isDir = !!(meta && meta.kind === 'directory');
+        const isDir = opts.isDir === true || !!(meta && meta.kind === 'directory');
         const affectedFiles = [];
+        const diskFileSet = new Set();
         const prevByPath = new Map();
+
+        if (!isDir && window.rootHandle && !(meta && meta.kind === 'file')) {
+            const isFileOnDisk = await fileExistsOnDisk(path);
+            if (!isFileOnDisk && await workspaceDirExists(path)) {
+                return { error: `ERROR: ${path} is a directory and cannot be deleted as a file.` };
+            }
+        }
 
         if (opts.track !== false) {
             const ctx = window.sessionCtx(sid);
             const origFiles = (ctx && !ctx.deleted && ctx.baseline && ctx.baseline.originalFiles) || {};
 
             if (isDir) {
+                const fileSet = new Set();
                 const prefix = path + '/';
-                for (const k of Object.keys(registry.meta).sort()) {
+                for (const k of Object.keys(registry.meta)) {
                     if (k.startsWith(prefix) && registry.meta[k]?.kind === 'file') {
-                        affectedFiles.push(k);
+                        fileSet.add(k);
                     }
                 }
+                if (window.rootHandle) {
+                    try {
+                        const diskFiles = await listFilesUnderDir(path, { skipIgnored: true });
+                        for (const fp of diskFiles) {
+                            fileSet.add(fp);
+                            diskFileSet.add(fp);
+                        }
+                    } catch (_) {}
+                }
+                affectedFiles.push(...Array.from(fileSet).sort());
             } else {
                 affectedFiles.push(path);
             }
@@ -1121,11 +1185,13 @@ export const fs = (() => {
                 const fpMeta = registry.meta[fp];
                 const isBin = !!(fpMeta?.isBinary || window.BINARY_EXT_DEFINITE?.test(fp));
                 if (isBin) continue;
-                const onDisk = await fileExistsOnDisk(fp);
+                const onDisk = diskFileSet.has(fp) || await fileExistsOnDisk(fp);
                 if (onDisk) {
                     prevByPath.set(fp, await window.readFileContent(fp, { fromDisk: true }));
                 } else if (registry.files[fp] !== undefined) {
                     prevByPath.set(fp, registry.files[fp]);
+                } else if (!isDir && window.rootHandle && await workspaceDirExists(path)) {
+                    return { error: `ERROR: ${path} is a directory and cannot be deleted as a file.` };
                 }
             }
         }
@@ -1141,7 +1207,7 @@ export const fs = (() => {
                 await record({ kind: 'delete', path, previousContent: prevByPath.get(path), mode: opts.mode || 'ui' }, sid);
             }
         }
-        return { ok: true };
+        return { ok: true, isDir, deletedFiles: affectedFiles };
     }
 
     async function mkdir(path, opts = {}) {
@@ -1164,5 +1230,6 @@ Object.entries({
     readFileTextSniffed, readImageDataUrl, readImageBlobUrl, sniffBytes, sniffWorkspaceFile,
     isBinaryByExtension, isBinaryContent, resolveIsBinary, encodeForDisk,
     getDirectoryHandleByPath, getHandleByPath, fileExistsOnDisk, workspaceDirExists,
+    walkDirectoryOnDisk, listFilesUnderDir,
     isHardProtectedPath, isUnderDirPattern, matchesPattern, globToRegExp, dirnameOf
 }).forEach(([k, v]) => window[k] = v);
