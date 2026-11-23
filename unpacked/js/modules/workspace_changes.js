@@ -13,6 +13,7 @@ const NOTICE_SNIPPET_CONTEXT_CHARS = 60;                // Context kept on each 
 const NOTICE_SNIPPET_MAX_CHANGE_CHARS = 160;            // Cap per-side removed/inserted text in a single snippet
 const NOTICE_MAX_SNIPPET_BYTES = 2048;                  // Total snippet budget across the entire notice
 const NOTICE_MAX_RANGES_PER_FILE = 6;                   // Cap displayed line ranges per file
+const NOTICE_WORD_BOUNDARY_MAX_STEP = 32;               // Max chars to shift prefix/suffix cut to a word boundary
 
 const _noticeTextEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 
@@ -24,6 +25,11 @@ function _formatByteInt(n) {
     return Math.round(n).toLocaleString('en-US');
 }
 
+function _pathDirname(fp) {
+    const i = fp.lastIndexOf('/');
+    return i === -1 ? '' : fp.slice(0, i);
+}
+
 function _pathBasename(fp) {
     const i = fp.lastIndexOf('/');
     return i === -1 ? fp : fp.slice(i + 1);
@@ -33,6 +39,10 @@ function _pathExtname(fp) {
     const base = _pathBasename(fp);
     const dot = base.lastIndexOf('.');
     return dot > 0 ? base.slice(dot).toLowerCase() : '';
+}
+
+function _isWordChar(ch) {
+    return typeof ch === 'string' && /[\p{L}\p{N}_]/u.test(ch);
 }
 
 function _sanitizeSnippetText(str) {
@@ -51,12 +61,12 @@ function _clipText(str, maxLen) {
 
 function _formatLineSnippet(lineNo, oldLine, newLine) {
     if (oldLine === null) {
-        if (newLine === '') return `    L${lineNo}: ⟨+ (blank line)⟩`;
-        return `    L${lineNo}: ⟨+ ${_sanitizeSnippetText(_clipText(newLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
+        if (newLine === '') return `    L${lineNo}: ⟨+(blank line)⟩`;
+        return `    L${lineNo}: ⟨+${_sanitizeSnippetText(_clipText(newLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
     }
     if (newLine === null) {
-        if (oldLine === '') return `    L${lineNo}: ⟨− (blank line)⟩`;
-        return `    L${lineNo}: ⟨− ${_sanitizeSnippetText(_clipText(oldLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
+        if (oldLine === '') return `    L${lineNo}: ⟨−(blank line)⟩`;
+        return `    L${lineNo}: ⟨−${_sanitizeSnippetText(_clipText(oldLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
     }
 
     let p = 0;
@@ -66,6 +76,37 @@ function _formatLineSnippet(lineNo, oldLine, newLine) {
     let s = 0;
     const maxSuffix = minLen - p;
     while (s < maxSuffix && oldLine.charCodeAt(oldLine.length - 1 - s) === newLine.charCodeAt(newLine.length - 1 - s)) s++;
+
+    // Snap mid-word cut points to word boundaries (capped so huge tokens/hashes still highlight the edit).
+    if (p > 0 && _isWordChar(oldLine[p - 1]) &&
+        ((p < oldLine.length && _isWordChar(oldLine[p])) ||
+         (p < newLine.length && _isWordChar(newLine[p])))) {
+        let p2 = p;
+        let steps = 0;
+        while (p2 > 0 && _isWordChar(oldLine[p2 - 1]) && steps < NOTICE_WORD_BOUNDARY_MAX_STEP) {
+            p2--;
+            steps++;
+        }
+        if (p2 === 0 || !_isWordChar(oldLine[p2 - 1])) {
+            p = p2;
+        }
+    }
+
+    if (s > 0 && _isWordChar(oldLine[oldLine.length - s]) &&
+        ((oldLine.length - s > p && _isWordChar(oldLine[oldLine.length - s - 1])) ||
+         (newLine.length - s > p && _isWordChar(newLine[newLine.length - s - 1])))) {
+        let s2 = s;
+        let steps = 0;
+        while (s2 > 0 && _isWordChar(oldLine[oldLine.length - s2]) && steps < NOTICE_WORD_BOUNDARY_MAX_STEP) {
+            s2--;
+            steps++;
+        }
+        if (s2 === 0 || !_isWordChar(oldLine[oldLine.length - s2])) {
+            s = s2;
+        }
+    }
+
+    if (p + s > minLen) s = Math.max(0, minLen - p);
 
     const prefix = oldLine.slice(0, p);
     const suffix = s > 0 ? oldLine.slice(oldLine.length - s) : '';
@@ -83,8 +124,8 @@ function _formatLineSnippet(lineNo, oldLine, newLine) {
 
     let body = '';
     if (prefixOut) body += _sanitizeSnippetText(prefixOut);
-    if (removedOut) body += `⟨− ${_sanitizeSnippetText(removedOut)}⟩`;
-    if (insertedOut) body += `⟨+ ${_sanitizeSnippetText(insertedOut)}⟩`;
+    if (removedOut) body += `⟨−${_sanitizeSnippetText(removedOut)}⟩`;
+    if (insertedOut) body += `⟨+${_sanitizeSnippetText(insertedOut)}⟩`;
     if (suffixOut) body += _sanitizeSnippetText(suffixOut);
     return `    L${lineNo}: ${body}`;
 }
@@ -523,6 +564,152 @@ function _detectRenames(added, deleted, renamedOut, { allowSizeFallback = true }
     removeMatched(matchedAdd2, matchedDel2);
 }
 
+function _isFuzzyRenameCandidate(delPath, delSizeRaw, delText, addPath, addSizeRaw, addText = null) {
+    const sameDir = _pathDirname(delPath) === _pathDirname(addPath);
+    const extD = _pathExtname(delPath);
+    const sameExt = extD !== '' && extD === _pathExtname(addPath);
+    if (!sameDir && !sameExt) return false;
+
+    const delSize = typeof delSizeRaw === 'number' && delSizeRaw > 0
+        ? delSizeRaw
+        : (typeof delText === 'string' ? _utf8ByteLength(delText) : 0);
+    const addSize = typeof addSizeRaw === 'number' && addSizeRaw > 0
+        ? addSizeRaw
+        : (typeof addText === 'string' ? _utf8ByteLength(addText) : 0);
+    if (delSize <= 0 || addSize <= 0) return false;
+
+    return Math.min(delSize, addSize) / Math.max(delSize, addSize) >= 0.5;
+}
+
+function _computeRenameSimilarity(beforeText, afterText) {
+    if (typeof beforeText !== 'string' || typeof afterText !== 'string') return null;
+    if (!beforeText.length || !afterText.length) return null;
+    if (beforeText.length > SNAPSHOT_MAX_TEXT_BYTES || afterText.length > SNAPSHOT_MAX_TEXT_BYTES) return null;
+    if (beforeText === afterText) {
+        return { delta: null, hunks: null, lineEndingsOnly: false };
+    }
+
+    const normA = beforeText.replace(/\r\n?/g, '\n');
+    const normB = afterText.replace(/\r\n?/g, '\n');
+    if (normA === normB) {
+        return { delta: null, hunks: null, lineEndingsOnly: true };
+    }
+
+    const aLines = normA.split('\n');
+    const bLines = normB.split('\n');
+    const maxLines = Math.max(aLines.length, bLines.length);
+    if (maxLines === 0) return null;
+
+    if (typeof window.computeLineDiffHunks === 'function') {
+        const res = window.computeLineDiffHunks(beforeText, afterText);
+        if (!res) return null;
+        const matchedLines = Math.max(0, aLines.length - res.removed);
+        if (matchedLines === 0) return null;
+        const lineSim = matchedLines / maxLines;
+
+        if (!res.approximate && Array.isArray(res.hunks)) {
+            let oldChars = 0;
+            for (const l of aLines) oldChars += l.length;
+            let newChars = 0;
+            for (const l of bLines) newChars += l.length;
+            let removedChars = 0;
+            for (const h of res.hunks) {
+                for (const l of h.oldLines) removedChars += l.length;
+            }
+            const matchedChars = Math.max(0, oldChars - removedChars);
+            const maxChars = Math.max(oldChars, newChars);
+            const charSim = maxChars > 0 ? matchedChars / maxChars : 0;
+            // Accept either >= 50% matched character content (handles adding short/blank lines
+            // around long prose lines) or >= 50% matched lines with meaningful character overlap.
+            if (matchedChars === 0 || (charSim < 0.5 && !(lineSim >= 0.5 && charSim >= 0.3))) {
+                return null;
+            }
+        } else if (lineSim < 0.5) {
+            return null;
+        }
+
+        return {
+            delta: (res.added > 0 || res.removed > 0) ? { added: res.added, removed: res.removed } : null,
+            hunks: _summarizeHunksFromDiff(res),
+            lineEndingsOnly: false
+        };
+    }
+
+    if (typeof window.computeLineDiffCounts !== 'function') return null;
+    const d = window.computeLineDiffCounts(beforeText, afterText);
+    if (!d) return null;
+    const matchedLines = Math.max(0, aLines.length - d.removed);
+    if (matchedLines / maxLines < 0.5) return null;
+    return {
+        delta: (d.added > 0 || d.removed > 0) ? d : null,
+        hunks: null,
+        lineEndingsOnly: false
+    };
+}
+
+// Pairs remaining deleted & added files that were both renamed and edited, using
+// line/content similarity when both texts are available and the match is unique on both sides.
+function _detectEditedRenames(added, deleted, renamedOut, prevFiles, nextFiles) {
+    if (!added.length || !deleted.length || !prevFiles || !nextFiles) return;
+
+    const edgesByDel = new Map();
+    const edgesByAdd = new Map();
+
+    for (const d of deleted) {
+        const oldText = prevFiles[d.path]?.text;
+        if (typeof oldText !== 'string' || !oldText.length || oldText.length > SNAPSHOT_MAX_TEXT_BYTES) continue;
+
+        for (const a of added) {
+            if (a.isBinary) continue;
+            const newText = nextFiles[a.path]?.text;
+            if (typeof newText !== 'string' || !newText.length || newText.length > SNAPSHOT_MAX_TEXT_BYTES) continue;
+            if (!_isFuzzyRenameCandidate(d.path, d.size, oldText, a.path, a.size, newText)) continue;
+
+            const analysis = _computeRenameSimilarity(oldText, newText);
+            if (!analysis) continue;
+
+            const edge = { d, a, analysis };
+            const dList = edgesByDel.get(d) || [];
+            dList.push(edge);
+            edgesByDel.set(d, dList);
+
+            const aList = edgesByAdd.get(a) || [];
+            aList.push(edge);
+            edgesByAdd.set(a, aList);
+        }
+    }
+
+    const matchedAdd = new Set();
+    const matchedDel = new Set();
+    for (const [d, dList] of edgesByDel.entries()) {
+        if (dList.length !== 1) continue;
+        const edge = dList[0];
+        const aList = edgesByAdd.get(edge.a);
+        if (!aList || aList.length !== 1) continue;
+
+        renamedOut.push({
+            from: d.path,
+            to: edge.a.path,
+            delta: edge.analysis.delta,
+            hunks: edge.analysis.hunks,
+            lineEndingsOnly: !!edge.analysis.lineEndingsOnly
+        });
+        matchedDel.add(d);
+        matchedAdd.add(edge.a);
+    }
+
+    if (matchedAdd.size > 0) {
+        for (let i = added.length - 1; i >= 0; i--) {
+            if (matchedAdd.has(added[i])) added.splice(i, 1);
+        }
+    }
+    if (matchedDel.size > 0) {
+        for (let i = deleted.length - 1; i >= 0; i--) {
+            if (matchedDel.has(deleted[i])) deleted.splice(i, 1);
+        }
+    }
+}
+
 function diffWorkspaceSnapshot(prev, next, sessionId, opts = {}) {
     const empty = { modified: [], unsaved: [], renamed: [], added: [], deleted: [], total: 0 };
     if (!prev || !next || !prev.files || !next.files) return empty;
@@ -650,7 +837,13 @@ function diffWorkspaceSnapshot(prev, next, sessionId, opts = {}) {
         });
     }
 
-    _detectRenames(added, deleted, renamed, { allowSizeFallback: !opts.skipSizeRenameFallback });
+    _detectRenames(added, deleted, renamed, { allowSizeFallback: false });
+    if (!opts.skipFuzzyRenames) {
+        _detectEditedRenames(added, deleted, renamed, prev.files, next.files);
+    }
+    if (!opts.skipSizeRenameFallback) {
+        _detectRenames(added, deleted, renamed, { allowSizeFallback: true });
+    }
 
     const byPath = (a, b) => a.path.localeCompare(b.path);
     modified.sort(byPath);
@@ -709,55 +902,63 @@ function formatWorkspaceChangeNotice(diff, max) {
 
     for (const item of shown) {
         const kindCol = item.kind.padEnd(8, ' ');
-        if (item.kind === 'renamed') {
-            lines.push(`  ${kindCol}  ${item.from} → ${item.to}`);
-            continue;
-        }
-
-        let detail = '';
         const rangeStr = item.hunks && !item.hunks.approximate ? _formatLineRanges(item.hunks.ranges) : '';
 
-        if (item.kind === 'modified') {
+        if (item.kind === 'renamed') {
+            const renameLabel = `${item.from} → ${item.to}`;
+            let detail = '';
             if (item.delta) {
                 const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
-                detail = rangeStr
-                    ? `(${counts}, ${rangeStr})  ${item.source}`
-                    : `(${counts})  ${item.source}`;
+                detail = rangeStr ? `(${counts}, ${rangeStr})` : `(${counts})`;
             } else if (item.lineEndingsOnly) {
-                detail = `(line endings changed)  ${item.source}`;
-            } else {
-                detail = _formatModifiedFallback(item);
+                detail = '(line endings changed)';
             }
-        } else if (item.kind === 'unsaved') {
-            if (item.delta) {
-                const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
-                detail = rangeStr
-                    ? `(${counts}, ${rangeStr})  open in editor with unsaved edits — tools see the unsaved version`
-                    : `(${counts})  open in editor with unsaved edits — tools see the unsaved version`;
-            } else if (item.lineEndingsOnly) {
-                detail = '(line endings changed)  open in editor with unsaved edits — tools see the unsaved version';
-            } else {
-                detail = '(open in editor with unsaved edits — tools see the unsaved version)';
-            }
-        } else if (item.kind === 'added') {
-            if (typeof item.lines === 'number') {
-                detail = `(${item.lines} ${item.lines === 1 ? 'line' : 'lines'})`;
-            } else if (item.isBinary) {
-                detail = typeof item.size === 'number'
-                    ? `(binary, ${_formatByteInt(item.size)} B)`
-                    : '(binary)';
-            } else if (typeof item.size === 'number') {
-                detail = `(${_formatByteInt(item.size)} B)`;
-            }
-        }
-
-        if (detail) {
-            lines.push(`  ${kindCol}  ${item.path.padEnd(padWidth, ' ')}  ${detail}`);
+            lines.push(detail ? `  ${kindCol}  ${renameLabel}  ${detail}` : `  ${kindCol}  ${renameLabel}`);
         } else {
-            lines.push(`  ${kindCol}  ${item.path}`);
+            let detail = '';
+
+            if (item.kind === 'modified') {
+                if (item.delta) {
+                    const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
+                    detail = rangeStr
+                        ? `(${counts}, ${rangeStr})  ${item.source}`
+                        : `(${counts})  ${item.source}`;
+                } else if (item.lineEndingsOnly) {
+                    detail = `(line endings changed)  ${item.source}`;
+                } else {
+                    detail = _formatModifiedFallback(item);
+                }
+            } else if (item.kind === 'unsaved') {
+                if (item.delta) {
+                    const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
+                    detail = rangeStr
+                        ? `(${counts}, ${rangeStr})  open in editor with unsaved edits — tools see the unsaved version`
+                        : `(${counts})  open in editor with unsaved edits — tools see the unsaved version`;
+                } else if (item.lineEndingsOnly) {
+                    detail = '(line endings changed)  open in editor with unsaved edits — tools see the unsaved version';
+                } else {
+                    detail = '(open in editor with unsaved edits — tools see the unsaved version)';
+                }
+            } else if (item.kind === 'added') {
+                if (typeof item.lines === 'number') {
+                    detail = `(${item.lines} ${item.lines === 1 ? 'line' : 'lines'})`;
+                } else if (item.isBinary) {
+                    detail = typeof item.size === 'number'
+                        ? `(binary, ${_formatByteInt(item.size)} B)`
+                        : '(binary)';
+                } else if (typeof item.size === 'number') {
+                    detail = `(${_formatByteInt(item.size)} B)`;
+                }
+            }
+
+            if (detail) {
+                lines.push(`  ${kindCol}  ${item.path.padEnd(padWidth, ' ')}  ${detail}`);
+            } else {
+                lines.push(`  ${kindCol}  ${item.path}`);
+            }
         }
 
-        if ((item.kind === 'modified' || item.kind === 'unsaved') &&
+        if ((item.kind === 'modified' || item.kind === 'unsaved' || item.kind === 'renamed') &&
             item.hunks && !item.hunks.approximate &&
             Array.isArray(item.hunks.snippets) && item.hunks.snippets.length > 0 &&
             snippetBytesUsed < NOTICE_MAX_SNIPPET_BYTES) {
@@ -800,7 +1001,10 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
         await window.ensureWorkspaceFresh();
     }
     const next = await takeWorkspaceSnapshot();
-    const diff = diffWorkspaceSnapshot(prev, next, sid, { skipSizeRenameFallback: true });
+    const diff = diffWorkspaceSnapshot(prev, next, sid, {
+        skipSizeRenameFallback: true,
+        skipFuzzyRenames: true
+    });
     if (!diff.total) return '';
 
     // Re-read externally modified files (whose prior text is cached) and candidate
@@ -818,29 +1022,52 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
             .slice(0, NOTICE_MAX_REFETCH_FILES);
 
         const remainingBudget = NOTICE_MAX_REFETCH_FILES - modToRefetch.length;
-        let addToHash = [];
+        const addToRead = [];
         if (remainingBudget > 0 && diff.added.length > 0 && diff.deleted.length > 0) {
+            const pickedAdd = new Set();
             const hashedDelSizes = new Set();
+            const delWithText = [];
             for (const d of diff.deleted) {
                 if (d.hash !== null && d.hash !== undefined && typeof d.size === 'number' && d.size > 0) {
                     hashedDelSizes.add(d.size);
                 }
+                const oldText = prev.files[d.path]?.text;
+                if (typeof oldText === 'string' && oldText.length > 0 && oldText.length <= SNAPSHOT_MAX_TEXT_BYTES) {
+                    delWithText.push({ d, oldText });
+                }
             }
+
+            // Priority 1: exact-size match against a hashed deleted file (unmodified rename check).
             if (hashedDelSizes.size > 0) {
-                addToHash = diff.added
-                    .filter(a =>
-                        (a.hash === null || a.hash === undefined) &&
-                        !a.isBinary &&
-                        typeof a.size === 'number' &&
-                        a.size > 0 &&
-                        a.size <= SNAPSHOT_MAX_TEXT_BYTES &&
-                        hashedDelSizes.has(a.size)
-                    )
-                    .slice(0, remainingBudget);
+                for (const a of diff.added) {
+                    if (addToRead.length >= remainingBudget) break;
+                    if (a.hash !== null && a.hash !== undefined) continue;
+                    if (a.isBinary) continue;
+                    if (typeof a.size !== 'number' || a.size <= 0 || a.size > SNAPSHOT_MAX_TEXT_BYTES) continue;
+                    if (!hashedDelSizes.has(a.size)) continue;
+                    addToRead.push(a);
+                    pickedAdd.add(a);
+                }
+            }
+
+            // Priority 2: rename + edit candidates (same dir or extension, size within ±50%).
+            if (addToRead.length < remainingBudget && delWithText.length > 0) {
+                for (const a of diff.added) {
+                    if (addToRead.length >= remainingBudget) break;
+                    if (pickedAdd.has(a) || a.isBinary) continue;
+                    if (typeof next.files[a.path]?.text === 'string') continue;
+                    if (typeof a.size === 'number' && (a.size <= 0 || a.size > SNAPSHOT_MAX_TEXT_BYTES)) continue;
+                    const hasCand = delWithText.some(({ d, oldText }) =>
+                        _isFuzzyRenameCandidate(d.path, d.size, oldText, a.path, a.size)
+                    );
+                    if (!hasCand) continue;
+                    addToRead.push(a);
+                    pickedAdd.add(a);
+                }
             }
         }
 
-        if (modToRefetch.length > 0 || addToHash.length > 0) {
+        if (modToRefetch.length > 0 || addToRead.length > 0) {
             let timedOut = false;
             let timerId = null;
             const deadline = new Promise(resolve => {
@@ -896,7 +1123,7 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
                 }
             });
 
-            const addTasks = addToHash.map(a => async () => {
+            const addTasks = addToRead.map(a => async () => {
                 try {
                     const content = await window.readFileContent(a.path, { force: true, throwOnError: true });
                     if (timedOut || typeof content !== 'string') return;
@@ -912,9 +1139,11 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
                     const lines = _countLines(content);
                     a.hash = h;
                     a.lines = lines;
+                    if (typeof metaNow?.size === 'number') a.size = metaNow.size;
                     if (nextEntry) {
                         nextEntry.hash = h;
                         nextEntry.lines = lines;
+                        if (typeof metaNow?.size === 'number') nextEntry.size = metaNow.size;
                         if (content.length <= SNAPSHOT_MAX_TEXT_BYTES) {
                             nextEntry.text = content;
                         }
@@ -937,7 +1166,9 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
         }
     }
 
-    // Complete rename detection now that any newly-fetched hashes are populated.
+    // Complete rename detection in order: exact hash, then rename+edit similarity, then size fallback.
+    _detectRenames(diff.added, diff.deleted, diff.renamed, { allowSizeFallback: false });
+    _detectEditedRenames(diff.added, diff.deleted, diff.renamed, prev.files, next.files);
     _detectRenames(diff.added, diff.deleted, diff.renamed, { allowSizeFallback: true });
     diff.renamed.sort((a, b) => a.from.localeCompare(b.from));
     diff.total = diff.modified.length + diff.unsaved.length + diff.renamed.length + diff.added.length + diff.deleted.length;
