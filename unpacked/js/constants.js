@@ -645,6 +645,208 @@ const TOOL_API_METHODS = {
             return null;
         }
     },
+    getSessionChanges: async (toolName, [targetPath, opts], sessionId) => {
+        const sid = sessionId || window.state?.activeSessionId;
+        const ctx = typeof window.sessionCtx === 'function' ? window.sessionCtx(sid) : null;
+        if (!ctx || ctx.deleted) {
+            return { files: [], totalFiles: 0, totalAdded: 0, totalRemoved: 0, allModifiedCount: 0 };
+        }
+
+        const normTarget = typeof targetPath === 'string'
+            ? targetPath.trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '')
+            : '';
+
+        if (normTarget) {
+            if (window.isSecurityProtectedPath?.(normTarget)) {
+                return { error: `ERROR: ${normTarget} is a protected path and cannot be inspected by a tool call.` };
+            }
+            if (window.isSensitiveUserFile?.(normTarget)) {
+                return { error: `ERROR: ${normTarget} is a private user settings file and cannot be inspected by a tool call.` };
+            }
+            if (window.shouldHideFromTools?.(normTarget)) {
+                return { error: `ERROR: ${normTarget} is inside .agent and hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.` };
+            }
+            if (window.isAgentPath?.(normTarget) &&
+                !window.isToolFilePath?.(normTarget) &&
+                !window.isVirtualAgentFile?.(normTarget) &&
+                !window.isSkillPath?.(normTarget)) {
+                return { error: `ERROR: ${normTarget} is inside .agent and cannot be inspected by a tool call.` };
+            }
+        }
+
+        const isVisible = (fp) => {
+            if (!fp || typeof fp !== 'string') return false;
+            if (window.isAttachmentPath?.(fp)) return false;
+            if (window.isSecurityProtectedPath?.(fp)) return false;
+            if (window.isSensitiveUserFile?.(fp)) return false;
+            if (window.shouldHideFromTools?.(fp)) return false;
+            if (window.isAgentPath?.(fp) &&
+                !window.isToolFilePath?.(fp) &&
+                !window.isVirtualAgentFile?.(fp) &&
+                !window.isSkillPath?.(fp)) {
+                return false;
+            }
+            return true;
+        };
+
+        const includeContent = !!(opts && opts.includeContent);
+        const rawMaxBytes = Number(opts && opts.maxContentBytes);
+        const maxContentBytes = Number.isFinite(rawMaxBytes) && rawMaxBytes > 0
+            ? Math.min(rawMaxBytes, 4 * 1024 * 1024)
+            : 1024 * 1024;
+
+        const candidateSet = new Set();
+        if (ctx.modifiedFiles) {
+            for (const fp of ctx.modifiedFiles) {
+                if (isVisible(fp)) candidateSet.add(fp);
+            }
+        }
+        if (ctx.isLive && window.state?.dirtyFiles) {
+            for (const fp of window.state.dirtyFiles) {
+                if (isVisible(fp)) candidateSet.add(fp);
+            }
+        }
+
+        const allPaths = Array.from(candidateSet).sort();
+        const filteredPaths = normTarget
+            ? allPaths.filter(fp => fp === normTarget || fp.startsWith(normTarget + '/'))
+            : allPaths;
+
+        const root = window.rootHandle || null;
+        if (root && filteredPaths.length > 0 && typeof window.refreshPathMeta === 'function') {
+            const BATCH = 16;
+            for (let i = 0; i < filteredPaths.length; i += BATCH) {
+                await Promise.all(filteredPaths.slice(i, i + BATCH).map(fp =>
+                    window.refreshPathMeta(fp).catch(() => {})
+                ));
+            }
+        }
+
+        const files = [];
+        let totalAdded = 0;
+        let totalRemoved = 0;
+
+        for (const fp of filteredPaths) {
+            const meta = window.registry?.meta?.[fp];
+            const dirty = !!(ctx.isLive &&
+                typeof window.isFileDirty === 'function' &&
+                window.isFileDirty(fp) &&
+                typeof window.monacoModels !== 'undefined' &&
+                window.monacoModels.has(fp));
+
+            const hasBaselineKey = Object.prototype.hasOwnProperty.call(ctx.baseline.originalFiles || {}, fp);
+            let baselineRaw = hasBaselineKey ? ctx.baseline.originalFiles[fp] : undefined;
+            if (!hasBaselineKey && dirty && window.state?.fileBase?.has(fp)) {
+                baselineRaw = window.state.fileBase.get(fp);
+            }
+            const hadBaseline = baselineRaw !== undefined && baselineRaw !== null;
+            const beforeText = hadBaseline ? String(baselineRaw) : '';
+
+            const exists = dirty ||
+                (meta && meta.kind === 'file') ||
+                (!root && window.registry?.files?.[fp] !== undefined) ||
+                (fp === window.PLAN_FILE && window.registry?.files?.[fp] !== undefined);
+
+            if (!hadBaseline && !exists) continue;
+
+            const status = !hadBaseline ? 'added' : (!exists ? 'deleted' : 'modified');
+
+            let isBinary = false;
+            if (!dirty) {
+                if (meta?.isBinary || window.BINARY_EXT_DEFINITE?.test(fp)) {
+                    isBinary = true;
+                } else if (hadBaseline && typeof window.isBinaryContent === 'function' && window.isBinaryContent(beforeText)) {
+                    isBinary = true;
+                }
+            }
+
+            let afterText = '';
+            if (exists && !isBinary) {
+                if (dirty) {
+                    afterText = window.monacoModels.get(fp).getValue();
+                } else {
+                    let forceRead = false;
+                    if (root && !root.isWebDAV && !root.isVirtual && meta && !meta.virtual && meta.handle && typeof meta.handle.getFile === 'function') {
+                        try {
+                            const f = await meta.handle.getFile();
+                            const diskMtime = f.lastModified ? f.lastModified / 1000 : null;
+                            if ((diskMtime !== null && meta._syncedMtime !== diskMtime) ||
+                                (typeof f.size === 'number' && meta._syncedSize !== f.size)) {
+                                forceRead = true;
+                            }
+                        } catch (_) {}
+                    }
+                    if (!forceRead && ctx.isLive && window.registry?.files?.[fp] !== undefined) {
+                        afterText = window.registry.files[fp];
+                    } else if (typeof window.readFileContent === 'function') {
+                        afterText = await window.readFileContent(fp, forceRead ? { force: true } : {});
+                    }
+                    if (typeof window.isBinaryContent === 'function' && window.isBinaryContent(afterText)) {
+                        isBinary = true;
+                    }
+                }
+            }
+
+            // Skip dirty-only entries that have been edited back to their baseline.
+            if (!ctx.modifiedFiles?.has(fp) && dirty && hadBaseline && !isBinary && afterText === beforeText) {
+                continue;
+            }
+
+            let added = 0;
+            let removed = 0;
+            if (!isBinary && typeof window.computeLineDiffCounts === 'function') {
+                const counts = window.computeLineDiffCounts(hadBaseline ? beforeText : '', exists ? afterText : '');
+                added = counts.added || 0;
+                removed = counts.removed || 0;
+            }
+            totalAdded += added;
+            totalRemoved += removed;
+
+            const ops = (ctx.baseline.opsLog && Array.isArray(ctx.baseline.opsLog[fp])) ? ctx.baseline.opsLog[fp] : [];
+            const sourceSet = new Set();
+            let lastOpTs = null;
+            for (const op of ops) {
+                if (!op) continue;
+                if (op.mode) sourceSet.add(op.mode);
+                if (typeof op.ts === 'number' && (lastOpTs === null || op.ts > lastOpTs)) {
+                    lastOpTs = op.ts;
+                }
+            }
+
+            const item = {
+                path: fp,
+                status,
+                added,
+                removed,
+                isBinary,
+                dirty,
+                sources: Array.from(sourceSet),
+                opCount: ops.length,
+                lastOpTs
+            };
+
+            if (includeContent) {
+                if (isBinary) {
+                    item.contentOmitted = 'binary';
+                } else if (beforeText.length > maxContentBytes || afterText.length > maxContentBytes) {
+                    item.contentOmitted = 'too_large';
+                } else {
+                    item.before = hadBaseline ? beforeText : null;
+                    item.after = exists ? afterText : null;
+                }
+            }
+
+            files.push(item);
+        }
+
+        return {
+            files,
+            totalFiles: files.length,
+            totalAdded,
+            totalRemoved,
+            allModifiedCount: allPaths.length
+        };
+    },
     isBinary: async (toolName, [fp]) => window.resolveIsBinary(fp),
     isSensitiveFile: async (toolName, [fp]) => window.isSensitiveUserFile(fp),
     getSetting: async (toolName, [key]) => {

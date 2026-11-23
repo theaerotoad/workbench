@@ -188,11 +188,18 @@ All paths are workspace-relative (e.g., src/index.js):
   - api.fileExists(filepath) -> Promise<boolean> Checks if a file exists and is
       accessible.
   - api.statFile(filepath) -> Promise<{ size: number, mtime: number | null,
-      isBinary: boolean } | null> Returns byte size, modification timestamp
-      (Unix seconds, or null if unavailable), and binary flag for an accessible
-      workspace file, or null if not found or inaccessible.
+        isBinary: boolean } | null> Returns byte size, modification timestamp
+        (Unix seconds, or null if unavailable), and binary flag for an accessible
+        workspace file, or null if not found or inaccessible.
+  - api.getSessionChanges(path?, opts?) -> Promise<{ files: Array<Object>,
+        totalFiles: number, totalAdded: number, totalRemoved: number,
+        allModifiedCount: number } | { error: string }> Returns files modified in
+        the active session (reusing session checkpoint baselines and dirty editor
+        state), optionally filtered to a file path or directory prefix. Pass
+        `{ includeContent: true, maxContentBytes? }` to include `before`/`after`
+        text snapshots for diffing.
   - api.isBinary(filepath) -> Promise<boolean> Checks whether a file contains
-      binary bytes.
+        binary bytes.
 
 Context & Configuration
 

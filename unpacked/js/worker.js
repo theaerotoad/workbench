@@ -71,6 +71,7 @@ async function runTool(runId, toolMeta, args) {
         listFiles: () => callApi(runId, 'listFiles', []),
         fileExists: (fp) => callApi(runId, 'fileExists', [fp]),
         statFile: (fp) => callApi(runId, 'statFile', [fp]),
+        getSessionChanges: (path, opts) => callApi(runId, 'getSessionChanges', [path, opts || {}]),
         isBinary: (fp) => callApi(runId, 'isBinary', [fp]),
         isSensitiveFile: (fp) => callApi(runId, 'isSensitiveFile', [fp]),
         cleanupText: (text) => cleanupText(text),
