@@ -370,7 +370,9 @@ RULES:
 CRITICAL RULES:
 1. FIRST call find(pattern="*") to list all files before acting.
 2. SURGICAL EDITS: ALWAYS use edit(filepath, search_block, replace_block) for existing code.
-3. PRESERVE INDENTATION: Never change tab/space styles.`,
+3. PRESERVE INDENTATION: Never change tab/space styles.
+
+For multi-step work, keep a short running log in '{{planFile}}': decisions made, findings, files touched, and open questions. Update it with edit as you go, so the context survives prompt compression. Keep it concise; it is notes, not a report.`,
         title: `You generate concise session titles. Reply with a single short title (5-8 words), no punctuation, no explanation.`
     };
 }

@@ -101,11 +101,17 @@ async function handler(args, api) {
     } catch (_) {}
 
     try {
-        const err = await api.deleteFile(normFp, { recursive });
-        if (err) {
-            const msg = String(err).replace(/^ERROR:\s*/, '');
+        const res = await api.deleteFile(normFp, { recursive, returnDetails: true });
+        if (typeof res === 'string' && res) {
+            const msg = res.replace(/^ERROR:\s*/, '');
             await api.showUI(errorHtml(normFp, msg));
             return { output: `ERROR: ${msg}`, summary: header };
+        }
+        if (res && typeof res === 'object') {
+            if (typeof res.isDir === 'boolean') isDir = res.isDir;
+            if (isDir && Array.isArray(res.deletedFiles) && res.deletedFiles.length > 0) {
+                dirFiles = Array.from(new Set([...dirFiles, ...res.deletedFiles])).sort();
+            }
         }
     } catch (e) {
         await api.showUI(errorHtml(normFp, e.message));

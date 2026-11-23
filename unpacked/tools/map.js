@@ -117,12 +117,24 @@ function summarizeJson(content) {
 async function summarizeYaml(content) {
     try {
         if (typeof globalThis.jsyaml === 'undefined') {
-            if (typeof importScripts === 'function') {
-                importScripts('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
-            } else {
-                const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
-                const scriptText = await scriptRes.text();
-                (new Function(scriptText))();
+            let initPromise = globalThis.__mapJsYamlInit;
+            if (!initPromise) {
+                initPromise = (async () => {
+                    if (typeof importScripts === 'function') {
+                        importScripts('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
+                    } else {
+                        const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
+                        const scriptText = await scriptRes.text();
+                        (new Function(scriptText))();
+                    }
+                })();
+                globalThis.__mapJsYamlInit = initPromise;
+            }
+            try {
+                await initPromise;
+            } catch (err) {
+                if (globalThis.__mapJsYamlInit === initPromise) globalThis.__mapJsYamlInit = null;
+                throw err;
             }
         }
         const data = globalThis.jsyaml.load(content);
@@ -203,7 +215,7 @@ const LANGUAGE_QUERIES = {
     `
 };
 
-const languageCache = {};
+const languageCache = (globalThis.__mapLanguageCache ||= {});
 
 function formatLineRange(s) {
     return (s.end_ln && s.end_ln > s.ln) ? `${s.ln}-${s.end_ln}` : `${s.ln}`;
@@ -282,7 +294,7 @@ async function handler(args, api) {
     });
 
     // --- Initialize Tree-sitter ---
-    if (hasAstFiles && typeof globalThis.TreeSitter === 'undefined') {
+    if (hasAstFiles && !globalThis.__mapTreeSitterReady) {
         await api.setHeaderMsg("Downloading Tree-sitter runtime...");
         await api.showUI(`
             <div class="tool-ui-wrap" style="padding: 12px; display:flex; align-items:center; gap:8px;">
@@ -291,25 +303,38 @@ async function handler(args, api) {
             </div>
         `, { live: true });
 
-        try {
-            if (typeof importScripts === 'function') {
-                importScripts('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
-            } else {
-                const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
-                const scriptText = await scriptRes.text();
-                (new Function(scriptText))();
-            }
-
-            await globalThis.TreeSitter.init({
-                locateFile: (path) => {
-                    if (path === 'tree-sitter.wasm') {
-                        return 'https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.wasm';
+        if (!globalThis.__mapTreeSitterReady) {
+            let initPromise = globalThis.__mapTreeSitterInit;
+            if (!initPromise) {
+                initPromise = (async () => {
+                    if (typeof globalThis.TreeSitter === 'undefined') {
+                        if (typeof importScripts === 'function') {
+                            importScripts('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
+                        } else {
+                            const scriptRes = await fetch('https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.js');
+                            const scriptText = await scriptRes.text();
+                            (new Function(scriptText))();
+                        }
                     }
-                    return path;
-                }
-            });
-        } catch (err) {
-            return { output: outFormat === 'json' ? `{"error": "Failed to initialize Tree-sitter: ${err.message}"}` : `Failed to initialize Tree-sitter: ${err.message}` };
+
+                    await globalThis.TreeSitter.init({
+                        locateFile: (path) => {
+                            if (path === 'tree-sitter.wasm') {
+                                return 'https://cdn.jsdelivr.net/npm/web-tree-sitter@0.20.8/tree-sitter.wasm';
+                            }
+                            return path;
+                        }
+                    });
+                    globalThis.__mapTreeSitterReady = true;
+                })();
+                globalThis.__mapTreeSitterInit = initPromise;
+            }
+            try {
+                await initPromise;
+            } catch (err) {
+                if (globalThis.__mapTreeSitterInit === initPromise) globalThis.__mapTreeSitterInit = null;
+                return { output: outFormat === 'json' ? `{"error": "Failed to initialize Tree-sitter: ${err.message}"}` : `Failed to initialize Tree-sitter: ${err.message}` };
+            }
         }
     }
 
@@ -342,21 +367,26 @@ async function handler(args, api) {
             </div>
         `, { live: true });
 
+        let lang = null;
         if (langName) {
-            // Load Grammar
-            if (!languageCache[langName]) {
-                try {
-                    let url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
-                    if (langName === 'matlab') {
-                        url = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
-                    }
-                    languageCache[langName] = await TreeSitter.Language.load(url);
-                } catch (e) {
-                    console.error(`Failed to load grammar ${langName}: `, e);
-                    continue;
+            // Load Grammar (cache the in-flight promise so parallel calls share one download)
+            let langPromise = languageCache[langName];
+            if (!langPromise) {
+                let url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
+                if (langName === 'matlab') {
+                    url = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
                 }
+                langPromise = Promise.resolve(TreeSitter.Language.load(url));
+                languageCache[langName] = langPromise;
             }
-            parser.setLanguage(languageCache[langName]);
+            try {
+                lang = await langPromise;
+            } catch (e) {
+                if (languageCache[langName] === langPromise) delete languageCache[langName];
+                console.error(`Failed to load grammar ${langName}: `, e);
+                continue;
+            }
+            parser.setLanguage(lang);
         }
 
         const content = await api.readFile(fp);
@@ -542,7 +572,7 @@ async function handler(args, api) {
 
         if (queryStr) {
             try {
-                const query = languageCache[langName].query(queryStr);
+                const query = lang.query(queryStr);
                 const matches = query.matches(tree.rootNode);
                 const rawSymbols = [];
                 
