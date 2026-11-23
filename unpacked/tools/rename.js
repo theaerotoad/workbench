@@ -1,17 +1,17 @@
 // rename - tool definition.
 const TOOL_META = {
     "name": "rename",
-    "description": "Rename a file to a new filename.",
+    "description": "Rename a file or move it to a different directory. Pass a bare filename for new_name to rename in place, or a workspace-relative path containing '/' (e.g. 'src/utils/foo.js', or './foo.js' to move to workspace root) to move across folders; missing parent directories are created automatically.",
     "parameters": {
         "type": "object",
         "properties": {
             "filepath": {
                 "type": "string",
-                "description": "The current file path to rename"
+                "description": "The current workspace-relative file path to rename or move"
             },
             "new_name": {
                 "type": "string",
-                "description": "The new filename"
+                "description": "New filename (keeps current directory) or workspace-relative destination path containing '/' (moves file and creates missing parent folders; use './name' to move to workspace root)"
             }
         },
         "required": [
@@ -43,7 +43,23 @@ function badge(text, colorVar) {
     return `<span class="tool-ui-badge" style="color:${colorVar}; background:color-mix(in srgb, ${colorVar} 15%, transparent);">${esc(text)}</span>`;
 }
 
-function errorHtml(fp, newName, msg) {
+function resolveTarget(fp, newName) {
+    const normFp = String(fp || '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+    const rawNew = String(newName || '').trim().replace(/\\/g, '/');
+    const oldDir = normFp.includes('/') ? normFp.slice(0, normFp.lastIndexOf('/')) : '';
+    const newPath = rawNew.includes('/')
+        ? rawNew.replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '')
+        : (oldDir ? `${oldDir}/${rawNew}` : rawNew);
+    const newDir = newPath.includes('/') ? newPath.slice(0, newPath.lastIndexOf('/')) : '';
+    return {
+        normFp,
+        newPath,
+        isMove: oldDir !== newDir,
+        unchanged: normFp === newPath
+    };
+}
+
+function errorHtml(fp, target, msg, isMove) {
     return `
         <div class="tool-ui-wrap">
             <div class="tool-ui-error-wrap">
@@ -51,8 +67,8 @@ function errorHtml(fp, newName, msg) {
                     <span class="icon" style="font-size:13px; color:var(--red); flex-shrink:0;">warning</span>
                     ${pathHtml(fp)}
                     <span class="icon" style="font-size:12px; color:var(--dim); flex-shrink:0;">arrow_forward</span>
-                    <span class="tool-ui-path" style="color:var(--dim);">${esc(newName)}</span>
-                    ${badge('Rename Failed', 'var(--red)')}
+                    ${isMove ? pathHtml(target) : `<span class="tool-ui-path" style="color:var(--dim);">${esc(target)}</span>`}
+                    ${badge(isMove ? 'Move Failed' : 'Rename Failed', 'var(--red)')}
                 </div>
                 <span style="color:var(--dim); font-size:10px;">no changes applied</span>
             </div>
@@ -68,25 +84,23 @@ function errorHtml(fp, newName, msg) {
 async function handler(args, api) {
     const fp = args.filepath;
     const newName = args.new_name;
+    const { normFp, newPath, isMove, unchanged } = resolveTarget(fp, newName);
 
-    const header = `${fp} → ${newName}`;
+    const displayTarget = isMove ? (newPath || newName) : newName;
+    const header = `${normFp || fp} → ${displayTarget}`;
     await api.setHeaderMsg(header);
 
     try {
         const err = await api.renameFile(fp, newName);
         if (err) {
             const msg = String(err).replace(/^ERROR:\s*/, '');
-            await api.showUI(errorHtml(fp, newName, msg));
+            await api.showUI(errorHtml(normFp || fp, displayTarget, msg, isMove));
             return { output: `ERROR: ${msg}`, summary: header };
         }
     } catch (e) {
-        await api.showUI(errorHtml(fp, newName, e.message));
+        await api.showUI(errorHtml(normFp || fp, displayTarget, e.message, isMove));
         return { output: `ERROR: ${e.message}`, summary: header };
     }
-
-    // The host keeps a renamed file in its original directory, so that is the path shown as the result.
-    const dir = fp.includes('/') ? fp.slice(0, fp.lastIndexOf('/') + 1) : '';
-    const newPath = newName.includes('/') ? newName : dir + newName;
 
     const row = (sign, colorVar, path) => `
         <div class="tool-ui-line-row" style="background:color-mix(in srgb, ${colorVar} 12%, transparent); color:${colorVar};">
@@ -94,29 +108,42 @@ async function handler(args, api) {
             <div class="tool-ui-line-content" style="color:inherit;">${esc(path)}</div>
         </div>`;
 
+    const actionIcon = isMove ? 'drive_file_move' : 'drive_file_rename_outline';
+    const badgeLabel = unchanged ? 'UNCHANGED' : (isMove ? 'MOVED' : 'RENAMED');
+    const badgeColor = unchanged ? 'var(--dim)' : 'var(--green)';
+    const footerText = unchanged
+        ? 'Source and target paths are identical'
+        : (isMove ? 'File moved' : 'File renamed');
+    const targetHeaderHtml = isMove
+        ? pathHtml(newPath)
+        : `<div class="tool-ui-path" style="color:var(--fg); font-weight:600;">${esc(newName)}</div>`;
+
     const displayHtml = `
         <div class="tool-ui-wrap">
             <div class="tool-ui-bar">
                 <div class="tool-ui-header-info">
-                    <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">drive_file_rename_outline</span>
-                    ${pathHtml(fp)}
+                    <span class="icon" style="font-size:13px; color:var(--primary); flex-shrink:0;">${actionIcon}</span>
+                    ${pathHtml(normFp)}
                     <span class="icon" style="font-size:12px; color:var(--dim); flex-shrink:0;">arrow_forward</span>
-                    <div class="tool-ui-path" style="color:var(--fg); font-weight:600;">${esc(newName)}</div>
+                    ${targetHeaderHtml}
                 </div>
                 <div class="tool-ui-header-stats">
-                    ${badge('RENAMED', 'var(--green)')}
+                    ${badge(badgeLabel, badgeColor)}
                 </div>
             </div>
             <div class="tool-ui-box">
-                ${row('-', 'var(--red)', fp)}
+                ${row('-', 'var(--red)', normFp)}
                 ${row('+', 'var(--green)', newPath)}
             </div>
             <div style="display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--dim); padding:0 2px;">
-                <span class="icon" style="font-size:12px; color:var(--green);">check_circle</span>
-                <span>File renamed</span>
+                <span class="icon" style="font-size:12px; color:${badgeColor};">check_circle</span>
+                <span>${esc(footerText)}</span>
             </div>
         </div>`;
 
     await api.showUI(displayHtml);
-    return { output: `Renamed ${fp} to ${newName}`, summary: header };
+    const output = unchanged
+        ? `No change: ${normFp} is already at ${newPath}`
+        : `${isMove ? 'Moved' : 'Renamed'} ${normFp} to ${newPath}`;
+    return { output, summary: header };
 }

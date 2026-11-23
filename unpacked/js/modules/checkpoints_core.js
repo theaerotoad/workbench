@@ -109,7 +109,7 @@ async function executeRevertPlan(actions, opts = {}) {
     for (const action of actions) {
         try {
             if (action.kind === 'rename') {
-                const res = await fs.rename(action.filepath, action.targetPath, { track: false });
+                const res = await fs.rename(action.filepath, action.targetPath, { track: false, exactPath: true });
                 if (res && res.error) {
                     showToast(`Revert error (${action.filepath}): ${res.error}`, 'error');
                     continue;

@@ -181,8 +181,12 @@ All paths are workspace-relative (e.g., src/index.js):
     sourceWidth, sourceHeight, crop } or { error }.
   - api.writeFile(filepath, content) -> Promise<string | null> Writes string or
     Uint8Array to workspace. Returns null on success or an error string.
-  - api.renameFile(oldPath, newPath) -> Promise<string | null> Renames a file
-    within the same directory. Returns null on success or an error string.
+  - api.renameFile(oldPath, newPath) -> Promise<string | null> Renames or moves
+    a file. If `newPath` is a bare filename (no `/`), the file stays in its
+    current directory. If `newPath` contains `/` (e.g. `src/utils/foo.js`, or
+    `./foo.js` for workspace root), it is treated as a workspace-relative target
+    path and missing parent directories are created automatically. Returns null
+    on success or an error string.
   - api.listFiles() -> Promise<string[]> Returns array of relative paths of all
     accessible files in the workspace.
   - api.fileExists(filepath) -> Promise<boolean> Checks if a file exists and is
