@@ -68,6 +68,7 @@ async function runTool(runId, toolMeta, args) {
         readImage: (fp, crop) => callApi(runId, 'readImage', [fp, crop || {}]),
         writeFile: (fp, content) => callApi(runId, 'writeFile', [fp, content]),
         renameFile: (oldPath, newPath) => callApi(runId, 'renameFile', [oldPath, newPath]),
+        deleteFile: (fp, opts) => callApi(runId, 'deleteFile', [fp, opts || {}]),
         listFiles: () => callApi(runId, 'listFiles', []),
         fileExists: (fp) => callApi(runId, 'fileExists', [fp]),
         statFile: (fp) => callApi(runId, 'statFile', [fp]),

@@ -902,7 +902,7 @@ window.addEventListener('beforeunload', (e) => {
 })();
 
 (function makeToolApiFresh() {
-    ['readFile', 'writeFile', 'readImage', 'readFileBytes', 'renameFile', 'fileExists', 'statFile', 'isBinary'].forEach(name => {
+    ['readFile', 'writeFile', 'readImage', 'readFileBytes', 'renameFile', 'deleteFile', 'fileExists', 'statFile', 'isBinary'].forEach(name => {
         const orig = TOOL_API_METHODS[name];
         TOOL_API_METHODS[name] = async (toolName, args, ...rest) => {
             const a = args || [];

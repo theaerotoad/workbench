@@ -519,7 +519,7 @@ function getToolIOKind(toolName) {
     if (TOOL_IO_READ_ONLY.has(toolName)) return 'read';
     const tool = toolRegistry[toolName];
     const code = tool && typeof tool.code === 'string' ? tool.code : '';
-    const writes = /api\.(writeFile|renameFile)\s*\(/.test(code);
+    const writes = /api\.(writeFile|renameFile|deleteFile)\s*\(/.test(code);
     const reads = /api\.(readFile|listFiles|isBinary|fileExists)\s*\(/.test(code);
     if (writes && reads) return 'mixed';
     if (writes) return 'write';
