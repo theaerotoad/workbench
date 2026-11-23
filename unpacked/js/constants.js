@@ -47,7 +47,8 @@ function toolsDefaults() {
             find: 'always',
             rename: 'ask',
             preview_image: 'always',
-            load_skill: 'always'
+            load_skill: 'always',
+            changes: 'always'
         },
         locks: {
             read: false,
@@ -57,7 +58,8 @@ function toolsDefaults() {
             find: false,
             rename: false,
             preview_image: false,
-            load_skill: false
+            load_skill: false,
+            changes: false
         },
         models: {},
         settings: {},
@@ -142,7 +144,7 @@ const BINARY_MAGIC = [
     [0x66, 0x4C, 0x61, 0x43],                        // fLaC
     [0x52, 0x49, 0x46, 0x46]                         // RIFF (wav, avi, webp)
 ];
-const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill', 'map'];
+const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill', 'map', 'changes'];
 const CLEARDATA_LS_KEYS = {
     models: ['models_json', 'selected_model'],
     customTools: ['tool_files_json', 'tool_lock_state', 'tool_deleted_names', 'tool_perm_state', 'tool_settings_state'],
@@ -1001,7 +1003,7 @@ const TOOL_API_METHODS = {
     }
 };
 
-const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'load_skill']);
+const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'load_skill', 'changes']);
 const TOOL_IO_WRITE = new Set(['edit', 'write', 'rename']);
 const TOOLS_DIR = '.agent/tools';
 const TOOL_SETTING_TYPES = ['number', 'text', 'boolean', 'select', 'model'];
