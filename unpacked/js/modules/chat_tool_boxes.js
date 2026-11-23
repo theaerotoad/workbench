@@ -92,6 +92,31 @@ function describeToolAction(name, args) {
             const isMove = String(target).replace(/\\/g, '/').includes('/');
             return `${isMove ? 'Move' : 'Rename'} ${fp} to ${target}`;
         }
+        case 'delete': {
+            const raw = String(args.filepath || '').trim().replace(/\\/g, '/');
+            const normFp = raw.replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
+            const displayPath = normFp || args.filepath || '';
+            const meta = normFp && window.registry?.meta?.[normFp];
+            const prefix = normFp ? normFp + '/' : '';
+            let fileCount = 0;
+            let hasChildren = false;
+            if (prefix && window.registry?.meta) {
+                for (const k of Object.keys(window.registry.meta)) {
+                    if (k.startsWith(prefix)) {
+                        hasChildren = true;
+                        if (window.registry.meta[k]?.kind === 'file') fileCount++;
+                    }
+                }
+            }
+            const isDir = (meta && meta.kind === 'directory') || (!meta && hasChildren);
+            if (isDir) {
+                const countText = `${fileCount} file${fileCount === 1 ? '' : 's'}`;
+                return args.recursive
+                    ? `Delete directory ${displayPath} (${countText}, recursive)`
+                    : `Delete directory ${displayPath} (${countText})`;
+            }
+            return args.recursive ? `Delete ${displayPath} (recursive)` : `Delete ${displayPath}`;
+        }
         case 'PreviewImage': {
             const hasCrop = [args.x, args.y, args.width, args.height].some(v => v !== undefined && v !== null);
             return `Preview ${args.filepath || ''}${hasCrop ? ` (region ${args.x || 0},${args.y || 0} ${args.width || '?'}x${args.height || '?'})` : ''}`;
@@ -240,7 +265,7 @@ window.getToolTimeoutMs = getToolTimeoutMs;
 function liveRenderToolBody(entry, html) {
     if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
         const tName = entry && entry.toolName;
-        if (tName && ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(tName)) return;
+        if (tName && ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(tName)) return;
     }
     const box = entry && entry.box;
     if (!box || !box.isConnected || !box.classList.contains('running-tool-box')) return;
@@ -459,7 +484,7 @@ function renderRunningToolBox(toolName, args, container = null, sessionId) {
     let summaryText = "";
 
 
-    const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName);
+    const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(toolName);
 
     box.innerHTML = normalizeBlockHTML(`
         <div class="tool-box-header" style="cursor:default;">
@@ -520,7 +545,7 @@ function renderToolCallBox(toolName, args, resultOutput, isDone = false, isError
         : (isError ? (summarizeToolError(resultOutput) || "") : "");
 
     if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
-        if (['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName)) {
+        if (['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(toolName)) {
             displayHtml = null;
         }
     }
@@ -540,7 +565,7 @@ function renderToolCallBox(toolName, args, resultOutput, isDone = false, isError
 
     const statusIcon = isError ? 'error' : 'check';
     const statusColor = isError ? 'var(--red)' : 'var(--dim)';
-    const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName);
+    const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(toolName);
 
     box.innerHTML = normalizeBlockHTML(`
         <div class="tool-box-header">
@@ -580,13 +605,13 @@ window.renderToolCallBox = renderToolCallBox;
 // --- safeRenderToolCallBox.js ---
 function safeRenderToolCallBox(toolName, args, resultOutput, isDone = false, isError = false, container = null, existingBox = null, sessionId, displayHtml = null, customSummary = null) {
     if (window.AppConfig && window.AppConfig.get('show-code-preview', 'true') === 'false') {
-        if (['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName)) {
+        if (['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(toolName)) {
             displayHtml = null;
         }
     }
     const sid = sessionId || state.activeSessionId;
     if (sid !== state.activeSessionId) {
-        const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename'].includes(toolName);
+        const isBuiltinBadge = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete'].includes(toolName);
         const errorIcon = isError ? '<span class="icon" style="font-size:14px; color:var(--red); margin-left:auto;">error</span>' : '';
         const fallbackSummary = typeof customSummary === 'string' && customSummary
             ? customSummary
