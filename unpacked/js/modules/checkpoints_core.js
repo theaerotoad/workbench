@@ -76,8 +76,109 @@ function computeLineDiffCounts(beforeText, afterText) {
     return { added: m - lcsLen, removed: n - lcsLen };
 }
 
+// Detailed line diff reusing the same trim + LCS strategy as computeLineDiffCounts.
+// Returns { added, removed, lineEndingsOnly, approximate, hunks } or null for non-text/binary input.
+// When approximate is true (large diffs), hunks is null so callers show counts only.
+function computeLineDiffHunks(beforeText, afterText) {
+    if (typeof beforeText !== 'string' || typeof afterText !== 'string') return null;
+    if (beforeText === afterText) {
+        return { added: 0, removed: 0, lineEndingsOnly: false, approximate: false, hunks: [] };
+    }
+    if (isBinaryContent(beforeText) || isBinaryContent(afterText)) return null;
+
+    const normA = beforeText.replace(/\r\n?/g, '\n');
+    const normB = afterText.replace(/\r\n?/g, '\n');
+    if (normA === normB) {
+        return { added: 0, removed: 0, lineEndingsOnly: true, approximate: false, hunks: [] };
+    }
+
+    const aFull = normA === '' ? [] : normA.split('\n');
+    const bFull = normB === '' ? [] : normB.split('\n');
+    const { a, b, start } = trimCommonLines(aFull, bFull);
+    const n = a.length, m = b.length;
+    if (n === 0 && m === 0) {
+        return { added: 0, removed: 0, lineEndingsOnly: true, approximate: false, hunks: [] };
+    }
+
+    const LCS_LINE_CAP = 4000;
+    if (n * m > LCS_LINE_CAP * LCS_LINE_CAP || n > LCS_LINE_CAP * 4 || m > LCS_LINE_CAP * 4) {
+        const aSet = new Set(a);
+        const bSet = new Set(b);
+        let aMatched = 0;
+        for (const line of a) if (bSet.has(line)) aMatched++;
+        let bMatched = 0;
+        for (const line of b) if (aSet.has(line)) bMatched++;
+        const matched = Math.min(aMatched, bMatched);
+        return {
+            added: m - matched,
+            removed: n - matched,
+            lineEndingsOnly: false,
+            approximate: true,
+            hunks: null
+        };
+    }
+
+    const dp = new Array(n + 1);
+    for (let i = 0; i <= n; i++) dp[i] = new Uint32Array(m + 1);
+    for (let i = 1; i <= n; i++) {
+        for (let j = 1; j <= m; j++) {
+            dp[i][j] = (a[i - 1] === b[j - 1]) ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+    const lcsLen = dp[n][m];
+
+    const ops = [];
+    let i = n, j = m;
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+            ops.push({ type: 'eq' });
+            i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            ops.push({ type: 'add', text: b[j - 1] });
+            j--;
+        } else {
+            ops.push({ type: 'del', text: a[i - 1] });
+            i--;
+        }
+    }
+    ops.reverse();
+
+    const hunks = [];
+    let oldLine = start + 1;
+    let newLine = start + 1;
+    let cur = null;
+    for (const op of ops) {
+        if (op.type === 'eq') {
+            if (cur) { hunks.push(cur); cur = null; }
+            oldLine++;
+            newLine++;
+        } else {
+            if (!cur) {
+                cur = { oldStart: oldLine, newStart: newLine, oldLines: [], newLines: [] };
+            }
+            if (op.type === 'del') {
+                cur.oldLines.push(op.text);
+                oldLine++;
+            } else {
+                cur.newLines.push(op.text);
+                newLine++;
+            }
+        }
+    }
+    if (cur) hunks.push(cur);
+
+    return {
+        added: m - lcsLen,
+        removed: n - lcsLen,
+        lineEndingsOnly: false,
+        approximate: false,
+        hunks
+    };
+}
+
 // --- AST_EXPORTS_START ---
 window.computeLineDiffCounts = computeLineDiffCounts;
+window.computeLineDiffHunks = computeLineDiffHunks;
 // --- AST_EXPORTS_END ---
 
 // --- ensureSessionBaseline.js ---
@@ -402,7 +503,7 @@ function trimCommonLines(a, b) {
     while (start < a.length && start < b.length && a[start] === b[start]) start++;
     let endA = a.length, endB = b.length;
     while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
-    return { a: a.slice(start, endA), b: b.slice(start, endB) };
+    return { a: a.slice(start, endA), b: b.slice(start, endB), start };
 }
 
 // --- AST_EXPORTS_START ---

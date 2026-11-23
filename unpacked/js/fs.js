@@ -24,6 +24,7 @@ async function readFileContent(filepath, opts = {}) {
     if (!root) return registry.files[filepath] !== undefined ? registry.files[filepath] : "";
 
     const force = fromDisk || !!(opts && opts.force === true);
+    const throwOnError = !!(opts && opts.throwOnError === true);
     if (!force && registry.files[filepath] !== undefined) {
         return registry.files[filepath];
     }
@@ -36,7 +37,10 @@ async function readFileContent(filepath, opts = {}) {
     const p = (async () => {
         try {
             const handle = await getHandleByPath(filepath, false, root);
-            if (!handle) return "";
+            if (!handle) {
+                if (throwOnError) throw new Error(`File not found: ${filepath}`);
+                return "";
+            }
             const file = await handle.getFile();
             let text;
             const sniffed = await readFileTextSniffed(file);
@@ -79,15 +83,18 @@ async function readFileContent(filepath, opts = {}) {
             }
             return text;
         } catch(e) {
+            if (throwOnError) throw e;
             return "";
         } finally {
             const cur = _inFlightReads.get(filepath);
-            if (cur && cur.p === p) _inFlightReads.delete(filepath);
+            if (cur && (cur.p === p || cur.raw === p)) _inFlightReads.delete(filepath);
         }
     })();
 
     if (!fromDisk) {
-        _inFlightReads.set(filepath, { root, p });
+        // Keep shared in-flight reads non-rejecting for callers that expect "" on error.
+        const sharedP = throwOnError ? p.catch(() => "") : p;
+        _inFlightReads.set(filepath, { root, p: sharedP, raw: p });
     }
     return p;
 }

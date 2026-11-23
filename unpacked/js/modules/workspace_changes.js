@@ -6,6 +6,158 @@ const SNAPSHOT_STAT_CAP = 5000;
 const SNAPSHOT_BATCH_SIZE = 32;
 const SNAPSHOT_MAX_TEXT_BYTES = 1024 * 1024;            // 1 MB per-file cap for line diffs
 const SNAPSHOT_MAX_TOTAL_TEXT_BYTES = 16 * 1024 * 1024; // 16 MB total text-ref budget per snapshot
+const NOTICE_MAX_REFETCH_FILES = 10;                    // Shared cap for external modified + rename-check reads
+const NOTICE_REFETCH_TIMEOUT_MS = 3000;                 // Max time to wait on refetch reads before falling back
+const NOTICE_SNIPPET_MAX_LINES = 6;                     // Show inline snippets when a file has <= 6 changed lines
+const NOTICE_SNIPPET_CONTEXT_CHARS = 60;                // Context kept on each side of an inline change
+const NOTICE_SNIPPET_MAX_CHANGE_CHARS = 160;            // Cap per-side removed/inserted text in a single snippet
+const NOTICE_MAX_SNIPPET_BYTES = 2048;                  // Total snippet budget across the entire notice
+const NOTICE_MAX_RANGES_PER_FILE = 6;                   // Cap displayed line ranges per file
+
+const _noticeTextEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+
+function _utf8ByteLength(str) {
+    return _noticeTextEncoder ? _noticeTextEncoder.encode(str).length : str.length;
+}
+
+function _formatByteInt(n) {
+    return Math.round(n).toLocaleString('en-US');
+}
+
+function _pathBasename(fp) {
+    const i = fp.lastIndexOf('/');
+    return i === -1 ? fp : fp.slice(i + 1);
+}
+
+function _pathExtname(fp) {
+    const base = _pathBasename(fp);
+    const dot = base.lastIndexOf('.');
+    return dot > 0 ? base.slice(dot).toLowerCase() : '';
+}
+
+function _sanitizeSnippetText(str) {
+    return String(str)
+        .replace(/\r\n/g, '\\r\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/\t/g, ' ')
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+        .replace(/[\[\]⟨⟩]/g, ch => '\\' + ch);
+}
+
+function _clipText(str, maxLen) {
+    return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
+}
+
+function _formatLineSnippet(lineNo, oldLine, newLine) {
+    if (oldLine === null) {
+        if (newLine === '') return `    L${lineNo}: ⟨+ (blank line)⟩`;
+        return `    L${lineNo}: ⟨+ ${_sanitizeSnippetText(_clipText(newLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
+    }
+    if (newLine === null) {
+        if (oldLine === '') return `    L${lineNo}: ⟨− (blank line)⟩`;
+        return `    L${lineNo}: ⟨− ${_sanitizeSnippetText(_clipText(oldLine, NOTICE_SNIPPET_MAX_CHANGE_CHARS))}⟩`;
+    }
+
+    let p = 0;
+    const minLen = Math.min(oldLine.length, newLine.length);
+    while (p < minLen && oldLine.charCodeAt(p) === newLine.charCodeAt(p)) p++;
+
+    let s = 0;
+    const maxSuffix = minLen - p;
+    while (s < maxSuffix && oldLine.charCodeAt(oldLine.length - 1 - s) === newLine.charCodeAt(newLine.length - 1 - s)) s++;
+
+    const prefix = oldLine.slice(0, p);
+    const suffix = s > 0 ? oldLine.slice(oldLine.length - s) : '';
+    const removed = oldLine.slice(p, oldLine.length - s);
+    const inserted = newLine.slice(p, newLine.length - s);
+
+    const prefixOut = prefix.length > NOTICE_SNIPPET_CONTEXT_CHARS
+        ? '…' + prefix.slice(-NOTICE_SNIPPET_CONTEXT_CHARS)
+        : prefix;
+    const suffixOut = suffix.length > NOTICE_SNIPPET_CONTEXT_CHARS
+        ? suffix.slice(0, NOTICE_SNIPPET_CONTEXT_CHARS) + '…'
+        : suffix;
+    const removedOut = _clipText(removed, NOTICE_SNIPPET_MAX_CHANGE_CHARS);
+    const insertedOut = _clipText(inserted, NOTICE_SNIPPET_MAX_CHANGE_CHARS);
+
+    let body = '';
+    if (prefixOut) body += _sanitizeSnippetText(prefixOut);
+    if (removedOut) body += `⟨− ${_sanitizeSnippetText(removedOut)}⟩`;
+    if (insertedOut) body += `⟨+ ${_sanitizeSnippetText(insertedOut)}⟩`;
+    if (suffixOut) body += _sanitizeSnippetText(suffixOut);
+    return `    L${lineNo}: ${body}`;
+}
+
+function _summarizeHunksFromDiff(diffRes) {
+    if (!diffRes) return null;
+    if (diffRes.approximate || !Array.isArray(diffRes.hunks)) {
+        return { ranges: [], snippets: [], approximate: true };
+    }
+    if (diffRes.hunks.length === 0) return null;
+
+    const ranges = [];
+    let totalChangedLines = 0;
+    for (const h of diffRes.hunks) {
+        const startLine = h.newStart;
+        const endLine = h.newLines.length > 0 ? h.newStart + h.newLines.length - 1 : h.newStart;
+        const prev = ranges[ranges.length - 1];
+        if (prev && startLine <= prev[1] + 1) {
+            if (endLine > prev[1]) prev[1] = endLine;
+        } else {
+            ranges.push([startLine, endLine]);
+        }
+        totalChangedLines += Math.max(h.oldLines.length, h.newLines.length);
+    }
+
+    const snippets = [];
+    if (totalChangedLines > 0 && totalChangedLines <= NOTICE_SNIPPET_MAX_LINES) {
+        for (const h of diffRes.hunks) {
+            const paired = Math.min(h.oldLines.length, h.newLines.length);
+            for (let i = 0; i < paired; i++) {
+                snippets.push({
+                    line: h.newStart + i,
+                    before: h.oldLines[i],
+                    after: h.newLines[i]
+                });
+            }
+            for (let i = paired; i < h.newLines.length; i++) {
+                snippets.push({
+                    line: h.newStart + i,
+                    before: null,
+                    after: h.newLines[i]
+                });
+            }
+            for (let i = paired; i < h.oldLines.length; i++) {
+                snippets.push({
+                    line: h.newStart + paired,
+                    before: h.oldLines[i],
+                    after: null
+                });
+            }
+        }
+    }
+
+    return { ranges, snippets, approximate: false };
+}
+
+function _summarizeHunks(beforeText, afterText) {
+    if (typeof beforeText !== 'string' || typeof afterText !== 'string') return null;
+    if (beforeText === afterText) return null;
+    if (beforeText.length > SNAPSHOT_MAX_TEXT_BYTES || afterText.length > SNAPSHOT_MAX_TEXT_BYTES) return null;
+    if (typeof window.computeLineDiffHunks !== 'function') return null;
+    return _summarizeHunksFromDiff(window.computeLineDiffHunks(beforeText, afterText));
+}
+
+function _formatLineRanges(ranges) {
+    if (!Array.isArray(ranges) || ranges.length === 0) return '';
+    const shown = ranges.slice(0, NOTICE_MAX_RANGES_PER_FILE);
+    const parts = shown.map(([s, e]) => (s === e ? `L${s}` : `L${s}–${e}`));
+    if (ranges.length > shown.length) {
+        parts.push(`… (+${ranges.length - shown.length} more)`);
+    }
+    return parts.join(', ');
+}
 
 function _getRootHandle() {
     if (typeof rootHandle !== 'undefined' && rootHandle) return rootHandle;
@@ -245,29 +397,147 @@ function _classifyModificationSource(fp, prevTs, sessionId) {
     return { source: 'on disk', opContent: null };
 }
 
-function _computeDeltaIfCached(beforeText, afterText) {
+function _analyzeTextChange(beforeText, afterText) {
     if (typeof beforeText !== 'string' || typeof afterText !== 'string') return null;
     if (beforeText === afterText) return null;
     if (beforeText.length > SNAPSHOT_MAX_TEXT_BYTES || afterText.length > SNAPSHOT_MAX_TEXT_BYTES) return null;
+
+    if (typeof window.computeLineDiffHunks === 'function') {
+        const res = window.computeLineDiffHunks(beforeText, afterText);
+        if (!res) return null;
+        if (res.lineEndingsOnly) {
+            return { delta: null, hunks: null, lineEndingsOnly: true };
+        }
+        if (res.added === 0 && res.removed === 0) {
+            return { delta: null, hunks: null, lineEndingsOnly: false };
+        }
+        return {
+            delta: { added: res.added, removed: res.removed },
+            hunks: _summarizeHunksFromDiff(res),
+            lineEndingsOnly: false
+        };
+    }
+
     if (typeof window.computeLineDiffCounts !== 'function') return null;
+    if (beforeText.replace(/\r\n?/g, '\n') === afterText.replace(/\r\n?/g, '\n')) {
+        return { delta: null, hunks: null, lineEndingsOnly: true };
+    }
     const d = window.computeLineDiffCounts(beforeText, afterText);
     if (!d || (d.added === 0 && d.removed === 0)) return null;
-    return d;
+    return { delta: d, hunks: null, lineEndingsOnly: false };
 }
 
-function diffWorkspaceSnapshot(prev, next, sessionId) {
-    const empty = { modified: [], unsaved: [], added: [], deleted: [], total: 0 };
+function _computeDeltaIfCached(beforeText, afterText) {
+    const analysis = _analyzeTextChange(beforeText, afterText);
+    return analysis ? analysis.delta : null;
+}
+
+// Pairs added & deleted entries into renames in-place.
+// Pass 1: unique 1-to-1 exact hash match.
+// Pass 2 (when allowSizeFallback is true): unique 1-to-1 size > 0 match with same basename or non-empty extension,
+// only when at least one side lacks a hash (so known unequal hashes are never paired).
+function _detectRenames(added, deleted, renamedOut, { allowSizeFallback = true } = {}) {
+    if (!added.length || !deleted.length) return;
+
+    const removeMatched = (matchedAdd, matchedDel) => {
+        if (matchedAdd.size > 0) {
+            for (let i = added.length - 1; i >= 0; i--) {
+                if (matchedAdd.has(added[i])) added.splice(i, 1);
+            }
+        }
+        if (matchedDel.size > 0) {
+            for (let i = deleted.length - 1; i >= 0; i--) {
+                if (matchedDel.has(deleted[i])) deleted.splice(i, 1);
+            }
+        }
+    };
+
+    // Pass 1: exact 1-to-1 hash match.
+    const addByHash = new Map();
+    const delByHash = new Map();
+    for (const a of added) {
+        if (a.hash !== null && a.hash !== undefined) {
+            const list = addByHash.get(a.hash) || [];
+            list.push(a);
+            addByHash.set(a.hash, list);
+        }
+    }
+    for (const d of deleted) {
+        if (d.hash !== null && d.hash !== undefined) {
+            const list = delByHash.get(d.hash) || [];
+            list.push(d);
+            delByHash.set(d.hash, list);
+        }
+    }
+
+    const matchedAdd1 = new Set();
+    const matchedDel1 = new Set();
+    for (const [h, delList] of delByHash.entries()) {
+        const addList = addByHash.get(h);
+        if (delList.length === 1 && addList && addList.length === 1) {
+            renamedOut.push({ from: delList[0].path, to: addList[0].path });
+            matchedDel1.add(delList[0]);
+            matchedAdd1.add(addList[0]);
+        }
+    }
+    removeMatched(matchedAdd1, matchedDel1);
+
+    if (!allowSizeFallback || !added.length || !deleted.length) return;
+
+    // Pass 2: unique 1-to-1 non-zero size match + same basename or non-empty extension.
+    const addBySize = new Map();
+    const delBySize = new Map();
+    for (const a of added) {
+        if (typeof a.size === 'number' && a.size > 0) {
+            const list = addBySize.get(a.size) || [];
+            list.push(a);
+            addBySize.set(a.size, list);
+        }
+    }
+    for (const d of deleted) {
+        if (typeof d.size === 'number' && d.size > 0) {
+            const list = delBySize.get(d.size) || [];
+            list.push(d);
+            delBySize.set(d.size, list);
+        }
+    }
+
+    const matchedAdd2 = new Set();
+    const matchedDel2 = new Set();
+    for (const [sz, delList] of delBySize.entries()) {
+        const addList = addBySize.get(sz);
+        if (delList.length !== 1 || !addList || addList.length !== 1) continue;
+        const d = delList[0];
+        const a = addList[0];
+        // If both hashes are known and didn't pair in Pass 1, they differ — never pair them.
+        if (d.hash !== null && d.hash !== undefined && a.hash !== null && a.hash !== undefined) continue;
+        const sameBase = _pathBasename(d.path) === _pathBasename(a.path);
+        const extD = _pathExtname(d.path);
+        const sameExt = extD !== '' && extD === _pathExtname(a.path);
+        if (sameBase || sameExt) {
+            renamedOut.push({ from: d.path, to: a.path });
+            matchedDel2.add(d);
+            matchedAdd2.add(a);
+        }
+    }
+    removeMatched(matchedAdd2, matchedDel2);
+}
+
+function diffWorkspaceSnapshot(prev, next, sessionId, opts = {}) {
+    const empty = { modified: [], unsaved: [], renamed: [], added: [], deleted: [], total: 0 };
     if (!prev || !next || !prev.files || !next.files) return empty;
     if (prev.wsKey && next.wsKey && prev.wsKey !== next.wsKey) return empty;
 
     const modified = [];
     const unsaved = [];
+    const renamed = [];
     const added = [];
     const deleted = [];
 
     for (const fp of Object.keys(prev.files)) {
         if (!next.files[fp]) {
-            deleted.push({ path: fp });
+            const old = prev.files[fp];
+            deleted.push({ path: fp, size: old.size, hash: old.hash });
         }
     }
 
@@ -277,9 +547,9 @@ function diffWorkspaceSnapshot(prev, next, sessionId) {
 
         if (!old) {
             if (cur.dirty) {
-                unsaved.push({ path: fp, delta: null, lines: cur.lines });
+                unsaved.push({ path: fp, delta: null, hunks: null, lineEndingsOnly: false, lines: cur.lines });
             } else {
-                added.push({ path: fp, lines: cur.lines, isBinary: cur.isBinary });
+                added.push({ path: fp, lines: cur.lines, size: cur.size, isBinary: cur.isBinary, hash: cur.hash });
             }
             continue;
         }
@@ -287,8 +557,14 @@ function diffWorkspaceSnapshot(prev, next, sessionId) {
         if (cur.dirty) {
             // Report when a buffer becomes dirty or its unsaved content changes since the last snapshot.
             if (!old.dirty || (cur.hash !== null && old.hash !== null && cur.hash !== old.hash)) {
-                const delta = _computeDeltaIfCached(old.text, cur.text);
-                unsaved.push({ path: fp, delta, lines: cur.lines });
+                const analysis = _analyzeTextChange(old.text, cur.text);
+                unsaved.push({
+                    path: fp,
+                    delta: analysis ? analysis.delta : null,
+                    hunks: analysis ? analysis.hunks : null,
+                    lineEndingsOnly: !!(analysis && analysis.lineEndingsOnly),
+                    lines: cur.lines
+                });
             }
             continue;
         }
@@ -311,10 +587,16 @@ function diffWorkspaceSnapshot(prev, next, sessionId) {
                 if (modInfo.source !== 'on disk') {
                     const afterText = cur.text ?? modInfo.opContent;
                     if (old.text === null || afterText === null || old.text !== afterText) {
+                        const analysis = _analyzeTextChange(old.text, afterText);
                         modified.push({
                             path: fp,
                             source: modInfo.source,
-                            delta: _computeDeltaIfCached(old.text, afterText)
+                            delta: analysis ? analysis.delta : null,
+                            hunks: analysis ? analysis.hunks : null,
+                            lineEndingsOnly: !!(analysis && analysis.lineEndingsOnly),
+                            oldSize: old.size,
+                            newSize: cur.size,
+                            isBinary: cur.isBinary
                         });
                     }
                 }
@@ -337,7 +619,16 @@ function diffWorkspaceSnapshot(prev, next, sessionId) {
             }
             cur.text = null;
             cur.hash = null;
-            modified.push({ path: fp, source: modInfo.source, delta: null });
+            modified.push({
+                path: fp,
+                source: modInfo.source,
+                delta: null,
+                hunks: null,
+                lineEndingsOnly: false,
+                oldSize: old.size,
+                newSize: cur.size,
+                isBinary: cur.isBinary
+            });
             continue;
         }
 
@@ -346,21 +637,47 @@ function diffWorkspaceSnapshot(prev, next, sessionId) {
             continue;
         }
 
+        const analysis = _analyzeTextChange(old.text, afterText);
         modified.push({
             path: fp,
             source: modInfo.source,
-            delta: _computeDeltaIfCached(old.text, afterText)
+            delta: analysis ? analysis.delta : null,
+            hunks: analysis ? analysis.hunks : null,
+            lineEndingsOnly: !!(analysis && analysis.lineEndingsOnly),
+            oldSize: old.size,
+            newSize: cur.size,
+            isBinary: cur.isBinary
         });
     }
+
+    _detectRenames(added, deleted, renamed, { allowSizeFallback: !opts.skipSizeRenameFallback });
 
     const byPath = (a, b) => a.path.localeCompare(b.path);
     modified.sort(byPath);
     unsaved.sort(byPath);
+    renamed.sort((a, b) => a.from.localeCompare(b.from));
     added.sort(byPath);
     deleted.sort(byPath);
 
-    const total = modified.length + unsaved.length + added.length + deleted.length;
-    return { modified, unsaved, added, deleted, total };
+    const total = modified.length + unsaved.length + renamed.length + added.length + deleted.length;
+    return { modified, unsaved, renamed, added, deleted, total };
+}
+
+function _formatModifiedFallback(item) {
+    const parts = [item.source];
+    if (item.isBinary) parts.push('binary');
+    const hasOld = typeof item.oldSize === 'number';
+    const hasNew = typeof item.newSize === 'number';
+    if (hasOld && hasNew) {
+        if (item.oldSize !== item.newSize) {
+            parts.push(`${_formatByteInt(item.oldSize)} → ${_formatByteInt(item.newSize)} B`);
+        } else {
+            parts.push(`${_formatByteInt(item.newSize)} B`);
+        }
+    } else if (hasNew) {
+        parts.push(`${_formatByteInt(item.newSize)} B`);
+    }
+    return `(${parts.join(', ')})`;
 }
 
 function formatWorkspaceChangeNotice(diff, max) {
@@ -373,6 +690,7 @@ function formatWorkspaceChangeNotice(diff, max) {
     const ordered = [
         ...diff.modified.map(item => ({ kind: 'modified', ...item })),
         ...diff.unsaved.map(item => ({ kind: 'unsaved', ...item })),
+        ...(diff.renamed || []).map(item => ({ kind: 'renamed', ...item })),
         ...diff.added.map(item => ({ kind: 'added', ...item })),
         ...diff.deleted.map(item => ({ kind: 'deleted', ...item }))
     ];
@@ -381,22 +699,43 @@ function formatWorkspaceChangeNotice(diff, max) {
 
     const shown = ordered.slice(0, limit);
     const remaining = ordered.length - shown.length;
-    const padWidth = Math.min(48, shown.reduce((m, item) => Math.max(m, item.path.length), 0));
+    const padWidth = Math.min(
+        48,
+        shown.reduce((m, item) => (item.kind === 'renamed' ? m : Math.max(m, item.path.length)), 0)
+    );
 
     const lines = ['[Workspace changes since your last turn — not made by you:'];
+    let snippetBytesUsed = 0;
+
     for (const item of shown) {
         const kindCol = item.kind.padEnd(8, ' ');
+        if (item.kind === 'renamed') {
+            lines.push(`  ${kindCol}  ${item.from} → ${item.to}`);
+            continue;
+        }
+
         let detail = '';
+        const rangeStr = item.hunks && !item.hunks.approximate ? _formatLineRanges(item.hunks.ranges) : '';
 
         if (item.kind === 'modified') {
             if (item.delta) {
-                detail = `(+${item.delta.added} / −${item.delta.removed} lines)  ${item.source}`;
+                const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
+                detail = rangeStr
+                    ? `(${counts}, ${rangeStr})  ${item.source}`
+                    : `(${counts})  ${item.source}`;
+            } else if (item.lineEndingsOnly) {
+                detail = `(line endings changed)  ${item.source}`;
             } else {
-                detail = `(${item.source})`;
+                detail = _formatModifiedFallback(item);
             }
         } else if (item.kind === 'unsaved') {
             if (item.delta) {
-                detail = `(+${item.delta.added} / −${item.delta.removed} lines)  open in editor with unsaved edits — tools see the unsaved version`;
+                const counts = `+${item.delta.added} / −${item.delta.removed} lines`;
+                detail = rangeStr
+                    ? `(${counts}, ${rangeStr})  open in editor with unsaved edits — tools see the unsaved version`
+                    : `(${counts})  open in editor with unsaved edits — tools see the unsaved version`;
+            } else if (item.lineEndingsOnly) {
+                detail = '(line endings changed)  open in editor with unsaved edits — tools see the unsaved version';
             } else {
                 detail = '(open in editor with unsaved edits — tools see the unsaved version)';
             }
@@ -404,7 +743,11 @@ function formatWorkspaceChangeNotice(diff, max) {
             if (typeof item.lines === 'number') {
                 detail = `(${item.lines} ${item.lines === 1 ? 'line' : 'lines'})`;
             } else if (item.isBinary) {
-                detail = '(binary)';
+                detail = typeof item.size === 'number'
+                    ? `(binary, ${_formatByteInt(item.size)} B)`
+                    : '(binary)';
+            } else if (typeof item.size === 'number') {
+                detail = `(${_formatByteInt(item.size)} B)`;
             }
         }
 
@@ -412,6 +755,18 @@ function formatWorkspaceChangeNotice(diff, max) {
             lines.push(`  ${kindCol}  ${item.path.padEnd(padWidth, ' ')}  ${detail}`);
         } else {
             lines.push(`  ${kindCol}  ${item.path}`);
+        }
+
+        if ((item.kind === 'modified' || item.kind === 'unsaved') &&
+            item.hunks && !item.hunks.approximate &&
+            Array.isArray(item.hunks.snippets) && item.hunks.snippets.length > 0 &&
+            snippetBytesUsed < NOTICE_MAX_SNIPPET_BYTES) {
+            const snippetLines = item.hunks.snippets.map(s => _formatLineSnippet(s.line, s.before, s.after));
+            const blockBytes = _utf8ByteLength(snippetLines.join('\n')) + 1;
+            if (snippetBytesUsed + blockBytes <= NOTICE_MAX_SNIPPET_BYTES) {
+                for (const sl of snippetLines) lines.push(sl);
+                snippetBytesUsed += blockBytes;
+            }
         }
     }
 
@@ -445,7 +800,147 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
         await window.ensureWorkspaceFresh();
     }
     const next = await takeWorkspaceSnapshot();
-    const diff = diffWorkspaceSnapshot(prev, next, sid);
+    const diff = diffWorkspaceSnapshot(prev, next, sid, { skipSizeRenameFallback: true });
+    if (!diff.total) return '';
+
+    // Re-read externally modified files (whose prior text is cached) and candidate
+    // rename targets within a shared 10-file cap and 3-second batch deadline.
+    if (typeof window.readFileContent === 'function') {
+        const modToRefetch = diff.modified
+            .filter(m => {
+                if (m.delta || m.lineEndingsOnly) return false;
+                if (typeof prev.files[m.path]?.text !== 'string') return false;
+                const nextEntry = next.files[m.path];
+                if (!nextEntry || nextEntry.isBinary) return false;
+                if (typeof nextEntry.size === 'number' && nextEntry.size > SNAPSHOT_MAX_TEXT_BYTES) return false;
+                return true;
+            })
+            .slice(0, NOTICE_MAX_REFETCH_FILES);
+
+        const remainingBudget = NOTICE_MAX_REFETCH_FILES - modToRefetch.length;
+        let addToHash = [];
+        if (remainingBudget > 0 && diff.added.length > 0 && diff.deleted.length > 0) {
+            const hashedDelSizes = new Set();
+            for (const d of diff.deleted) {
+                if (d.hash !== null && d.hash !== undefined && typeof d.size === 'number' && d.size > 0) {
+                    hashedDelSizes.add(d.size);
+                }
+            }
+            if (hashedDelSizes.size > 0) {
+                addToHash = diff.added
+                    .filter(a =>
+                        (a.hash === null || a.hash === undefined) &&
+                        !a.isBinary &&
+                        typeof a.size === 'number' &&
+                        a.size > 0 &&
+                        a.size <= SNAPSHOT_MAX_TEXT_BYTES &&
+                        hashedDelSizes.has(a.size)
+                    )
+                    .slice(0, remainingBudget);
+            }
+        }
+
+        if (modToRefetch.length > 0 || addToHash.length > 0) {
+            let timedOut = false;
+            let timerId = null;
+            const deadline = new Promise(resolve => {
+                timerId = setTimeout(() => { timedOut = true; resolve('timeout'); }, NOTICE_REFETCH_TIMEOUT_MS);
+            });
+
+            const checkBinContent = typeof window.isBinaryContent === 'function' ? window.isBinaryContent : null;
+            const modTasks = modToRefetch.map(m => async () => {
+                try {
+                    const after = await window.readFileContent(m.path, { force: true, throwOnError: true });
+                    if (timedOut || typeof after !== 'string') return;
+                    const metaNow = window.registry?.meta?.[m.path];
+                    const nowBinary = !!(metaNow?.isBinary || (checkBinContent && checkBinContent(after)));
+                    const nextEntry = next.files[m.path];
+                    if (nowBinary) {
+                        m.isBinary = true;
+                        if (nextEntry) {
+                            nextEntry.isBinary = true;
+                            nextEntry.text = null;
+                            nextEntry.hash = null;
+                            nextEntry.lines = null;
+                        }
+                        return;
+                    }
+                    if (nextEntry) {
+                        nextEntry.text = after.length <= SNAPSHOT_MAX_TEXT_BYTES ? after : null;
+                        nextEntry.hash = _fastHashString(after);
+                        nextEntry.lines = _countLines(after);
+                        if (typeof metaNow?.size === 'number') {
+                            nextEntry.size = metaNow.size;
+                            m.newSize = metaNow.size;
+                        }
+                    }
+                    const oldText = prev.files[m.path].text;
+                    if (after === oldText) {
+                        // Touch-only change (mtime bumped, identical content): omit from notice
+                        // and sync prev snapshot metadata so it isn't re-fetched on an aborted turn.
+                        m._unchanged = true;
+                        if (prev.files[m.path] && nextEntry) {
+                            prev.files[m.path].mtime = nextEntry.mtime;
+                            prev.files[m.path].size = nextEntry.size;
+                        }
+                        return;
+                    }
+                    const analysis = _analyzeTextChange(oldText, after);
+                    if (analysis) {
+                        m.delta = analysis.delta;
+                        m.hunks = analysis.hunks;
+                        m.lineEndingsOnly = analysis.lineEndingsOnly;
+                    }
+                } catch (_) {
+                    // Leave delta null so the notice falls back to byte sizes.
+                }
+            });
+
+            const addTasks = addToHash.map(a => async () => {
+                try {
+                    const content = await window.readFileContent(a.path, { force: true, throwOnError: true });
+                    if (timedOut || typeof content !== 'string') return;
+                    const metaNow = window.registry?.meta?.[a.path];
+                    const nowBinary = !!(metaNow?.isBinary || (checkBinContent && checkBinContent(content)));
+                    const nextEntry = next.files[a.path];
+                    if (nowBinary) {
+                        a.isBinary = true;
+                        if (nextEntry) nextEntry.isBinary = true;
+                        return;
+                    }
+                    const h = _fastHashString(content);
+                    const lines = _countLines(content);
+                    a.hash = h;
+                    a.lines = lines;
+                    if (nextEntry) {
+                        nextEntry.hash = h;
+                        nextEntry.lines = lines;
+                        if (content.length <= SNAPSHOT_MAX_TEXT_BYTES) {
+                            nextEntry.text = content;
+                        }
+                    }
+                } catch (_) {
+                    // Fall back to size-only rename matching / added size display.
+                }
+            });
+
+            try {
+                await Promise.race([
+                    Promise.all([...modTasks, ...addTasks].map(fn => fn())),
+                    deadline
+                ]);
+            } finally {
+                if (timerId !== null) clearTimeout(timerId);
+            }
+
+            diff.modified = diff.modified.filter(m => !m._unchanged);
+        }
+    }
+
+    // Complete rename detection now that any newly-fetched hashes are populated.
+    _detectRenames(diff.added, diff.deleted, diff.renamed, { allowSizeFallback: true });
+    diff.renamed.sort((a, b) => a.from.localeCompare(b.from));
+    diff.total = diff.modified.length + diff.unsaved.length + diff.renamed.length + diff.added.length + diff.deleted.length;
     if (!diff.total) return '';
 
     return formatWorkspaceChangeNotice(diff, _getChangeNotifyMax());
