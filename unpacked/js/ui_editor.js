@@ -58,6 +58,48 @@ window.openCheckpointDiff = (filepath, fromIdx, toIdx) => {
     switchTab(tabId);
 };
 
+async function _resolveExternalConflictsForRevert(actions, { skipConfirm = false } = {}) {
+    if (typeof detectExternalRevertConflicts !== 'function') {
+        return { cancelled: false, skipPaths: null, externalDiskText: null };
+    }
+    const { conflicts, conflictPaths, diskTextByPath } = await detectExternalRevertConflicts(actions);
+    if (!conflicts.length) {
+        return { cancelled: false, skipPaths: null, externalDiskText: null };
+    }
+
+    if (skipConfirm) {
+        const shown = conflicts.slice(0, 3).map(c => c.filepath).join(', ');
+        const more = conflicts.length > 3 ? ` (+${conflicts.length - 3} more)` : '';
+        showToast(`Kept external edits in ${shown}${more} (skipped during revert)`, 'info', 4500);
+        return { cancelled: false, skipPaths: conflictPaths, externalDiskText: diskTextByPath };
+    }
+
+    const lines = conflicts.slice(0, 8).map(c => `• ${c.filepath} (${c.reason})`);
+    if (conflicts.length > 8) {
+        lines.push(`• … and ${conflicts.length - 8} more`);
+    }
+    const msg = `The following file${conflicts.length === 1 ? ' has' : 's have'} changes made outside Workbench (or unsaved in the editor):\n\n${lines.join('\n')}\n\nKeep those edits or overwrite them with the checkpoint?`;
+    const choice = typeof confirmChoiceDialog === 'function'
+        ? await confirmChoiceDialog(msg, {
+            primaryLabel: 'Keep External Edits',
+            secondaryLabel: 'Overwrite',
+            cancelLabel: 'Cancel',
+            primaryValue: 'keep',
+            secondaryValue: 'overwrite',
+            cancelValue: 'cancel',
+            danger: false
+        })
+        : (await confirmDialog(msg, { confirmLabel: 'Overwrite', cancelLabel: 'Keep External Edits', danger: true }) ? 'overwrite' : 'keep');
+
+    if (choice === 'cancel') {
+        return { cancelled: true, skipPaths: null, externalDiskText: null };
+    }
+    if (choice === 'keep') {
+        return { cancelled: false, skipPaths: conflictPaths, externalDiskText: diskTextByPath };
+    }
+    return { cancelled: false, skipPaths: null, externalDiskText: null };
+}
+
 window.revertFileToCheckpoint = async (filepath, timelineIndex) => {
     const timeline = getFileTimeline(filepath);
     const target = timeline[timelineIndex];
@@ -77,6 +119,32 @@ window.revertFileToCheckpoint = async (filepath, timelineIndex) => {
     const label = labelMap[target.kind] || `the checkpoint from ${new Date(target.ts).toLocaleString()}`;
     if (!await confirmDialog(`Revert ${filepath} to ${label}? Later changes will be discarded.`, { confirmLabel: 'Revert', danger: true })) return;
     try {
+        // Build a kind-appropriate action for this single file before mutating opsLog.
+        const isDir = !!(target.op?.isDir || target.kind === 'mkdir' || registry.meta[filepath]?.kind === 'directory');
+        let action;
+        if (target.kind === 'delete') {
+            action = isDir ? { kind: 'delete-dir', filepath } : { kind: 'delete', filepath };
+        } else if (target.kind === 'rename-out') {
+            // The path no longer exists at this point (renamed away), so revert deletes it.
+            action = { kind: 'delete', filepath };
+        } else if (target.kind === 'mkdir') {
+            action = { kind: 'mkdir', filepath };
+        } else if (target.kind === 'rename-in') {
+            action = null;
+        } else if (target.kind === 'baseline') {
+            const original = registry.originalFiles[filepath];
+            action = (original === undefined || original === null)
+                ? { kind: 'delete', filepath }
+                : { kind: 'restore', filepath, content: target.content };
+        } else {
+            action = { kind: 'restore', filepath, content: target.content };
+        }
+
+        const conflictRes = action
+            ? await _resolveExternalConflictsForRevert([action], { skipConfirm: false })
+            : { cancelled: false, skipPaths: null, externalDiskText: null };
+        if (conflictRes.cancelled) return;
+
         // Truncate the op log: keep only ops strictly before this entry.
         const ops = registry.opsLog[filepath] || [];
         const kept = [];
@@ -85,28 +153,13 @@ window.revertFileToCheckpoint = async (filepath, timelineIndex) => {
             kept.push(op);
         }
         registry.opsLog[filepath] = kept;
-        // Build a kind-appropriate action for this single file.
-        let action;
-        if (target.kind === 'delete') {
-            action = { kind: 'delete', filepath };
-        } else if (target.kind === 'rename-out') {
-            // The path no longer exists at this point (renamed away), so revert deletes it.
-            action = { kind: 'delete', filepath };
-        } else if (target.kind === 'rename-in' || target.kind === 'mkdir') {
-            // Structural checkpoint: the log truncation already reflects the state.
-            action = null;
-        } else if (target.kind === 'baseline') {
-            const original = registry.originalFiles[filepath];
-            action = (original === undefined)
-                ? { kind: 'delete', filepath }
-                : { kind: 'restore', filepath, content: target.content };
-        } else {
-            action = { kind: 'restore', filepath, content: target.content };
-        }
+
         if (action) {
-            await executeRevertPlan([action], {});
+            await executeRevertPlan([action], {
+                skipPaths: conflictRes.skipPaths,
+                externalDiskText: conflictRes.externalDiskText
+            });
         } else {
-            // Defensive no-action path (rename-in / mkdir): just refresh state from the truncated log.
             recomputeAllModifiedFromOps();
             await recomputeLineStats(sessionCtx(state.activeSessionId), state.activeSessionId);
             await persistCheckpoint();
@@ -149,20 +202,54 @@ window.revertToBeforePrompt = async (promptId, promptLabel, opts) => {
             }
         }
     }
-    // Replay only ops before the cut from the baseline to get each file's pre-cut state.
+    // Replay only paths that actually have history entries at or after the cut.
     const actions = [];
     for (const filepath of files) {
         const timeline = getFileTimeline(filepath);
+        const touchedAtOrAfterCut = timeline.some(
+            e => e.kind !== 'baseline' && e.ts !== null && e.ts >= cutTs
+        );
+        if (!touchedAtOrAfterCut) continue;
+
+        const isDirPath = timeline.some(e => e.kind === 'mkdir' || (e.op && e.op.isDir === true)) ||
+            (registry.meta[filepath] && registry.meta[filepath].kind === 'directory');
+
         let present = false;
         let content = null;
+        let firstCutEntry = null;
         for (const entry of timeline) {
-            if (entry.kind === 'baseline') { present = entry.content !== null; content = entry.content; continue; }
+            if (entry.kind === 'baseline') {
+                present = entry.content !== null && entry.content !== undefined;
+                content = entry.content;
+                continue;
+            }
             if (entry.ts === null) continue;       // the synthetic 'current' entry
-            if (entry.ts >= cutTs) break;          // first op at/after the cut
+            if (entry.ts >= cutTs) {
+                firstCutEntry = entry;
+                break;                             // first op at/after the cut
+            }
             if (entry.kind === 'delete') { present = false; content = null; }
+            else if (entry.kind === 'mkdir') { present = true; }
             else if (entry.kind === 'rename-in' || entry.kind === 'rename-out') { present = true; }
             else if (entry.kind === 'checkpoint') { present = true; content = entry.content; }
         }
+
+        if (isDirPath) {
+            if (!present && firstCutEntry && firstCutEntry.kind === 'delete' && firstCutEntry.op?.existedBefore) {
+                present = true;
+            }
+            if (present) {
+                actions.push({ kind: 'mkdir', filepath });
+            } else {
+                actions.push({ kind: 'delete-dir', filepath });
+            }
+            continue;
+        }
+
+        if (present && (content === null || content === undefined) && firstCutEntry?.op?.previousContent !== undefined) {
+            content = firstCutEntry.op.previousContent;
+        }
+
         // A rename after the cut means the pre-cut path differs; move the file back first.
         const renameIdx = timeline.findIndex(e => e.kind === 'rename-in' && (e.ts || 0) >= cutTs);
         let moveBackTo = null;
@@ -172,22 +259,59 @@ window.revertToBeforePrompt = async (promptId, promptLabel, opts) => {
         }
         if (present) {
             const finalPath = moveBackTo || filepath;
-            if (moveBackTo) actions.push({ kind: 'rename', filepath, targetPath: moveBackTo });
-            actions.push({ kind: 'restore', filepath: finalPath, content });
+            if (moveBackTo && moveBackTo !== filepath) {
+                actions.push({ kind: 'rename', filepath, targetPath: moveBackTo });
+            }
+            if (content !== null && content !== undefined) {
+                actions.push({ kind: 'restore', filepath: finalPath, content });
+            }
         } else {
             actions.push({ kind: 'delete', filepath });
         }
     }
-    // Renames run first so restored content lands at its final path.
-    const renamed = actions.filter(a => a.kind === 'rename');
-    const rest = actions.filter(a => a.kind !== 'rename');
-    rest.sort((a, b) => (a.kind === 'restore' ? 0 : 1) - (b.kind === 'restore' ? 0 : 1));
-    const finalActions = [...renamed, ...rest];
+
     if (actions.length === 0) return;
-    const summary = actions.map(p => p.kind === 'delete' ? 'delete' : p.kind === 'rename' ? `rename ${p.filepath} → ${p.targetPath}` : `restore ${p.filepath}`).join(', ');
-    const shortLabel = (promptLabel || 'this prompt').slice(0, 120) + (promptLabel && promptLabel.length > 120 ? '…' : '');
-    if (!(opts && opts.skipConfirm) && !await confirmDialog(`Revert to right before "${shortLabel}"?\n\nThis will ${summary}. Later changes will be discarded.`, { confirmLabel: 'Revert', danger: true })) return;
-    await executeRevertPlan(finalActions, { forgetPromptIds: Array.from(forgetIds) });
+
+    const orderRank = { rename: 0, mkdir: 1, restore: 2, delete: 3, 'delete-dir': 4 };
+    const pathDepth = (p) => String(p || '').split('/').filter(Boolean).length;
+    const finalActions = actions.slice().sort((a, b) => {
+        const ra = orderRank[a.kind] ?? 9;
+        const rb = orderRank[b.kind] ?? 9;
+        if (ra !== rb) return ra - rb;
+        if (a.kind === 'mkdir') {
+            const dd = pathDepth(a.filepath) - pathDepth(b.filepath);
+            return dd !== 0 ? dd : a.filepath.localeCompare(b.filepath);
+        }
+        if (a.kind === 'delete-dir') {
+            const dd = pathDepth(b.filepath) - pathDepth(a.filepath);
+            return dd !== 0 ? dd : b.filepath.localeCompare(a.filepath);
+        }
+        return (a.filepath || '').localeCompare(b.filepath || '');
+    });
+
+    const skipConfirm = !!(opts && opts.skipConfirm);
+    if (!skipConfirm) {
+        const describeAction = (p) => {
+            if (p.kind === 'delete') return `delete ${p.filepath}`;
+            if (p.kind === 'delete-dir') return `remove folder ${p.filepath}/`;
+            if (p.kind === 'mkdir') return `recreate folder ${p.filepath}/`;
+            if (p.kind === 'rename') return `rename ${p.filepath} → ${p.targetPath}`;
+            return `restore ${p.filepath}`;
+        };
+        const preview = finalActions.slice(0, 8).map(describeAction).join(', ');
+        const more = finalActions.length > 8 ? ` (+${finalActions.length - 8} more)` : '';
+        const shortLabel = (promptLabel || 'this prompt').slice(0, 120) + (promptLabel && promptLabel.length > 120 ? '…' : '');
+        if (!await confirmDialog(`Revert to right before "${shortLabel}"?\n\nThis will ${preview}${more}. Later changes will be discarded.`, { confirmLabel: 'Revert', danger: true })) return;
+    }
+
+    const conflictRes = await _resolveExternalConflictsForRevert(finalActions, { skipConfirm });
+    if (conflictRes.cancelled) return;
+
+    await executeRevertPlan(finalActions, {
+        forgetPromptIds: Array.from(forgetIds),
+        skipPaths: conflictRes.skipPaths,
+        externalDiskText: conflictRes.externalDiskText
+    });
 };
 
 document.getElementById('graph-breadcrumb-back').addEventListener('click', () => window.showAllCheckpoints());
@@ -218,10 +342,16 @@ window.showCheckpointTimeline = async (filepath) => {
 window.discardFile = async (filepath) => {
     if (!await confirmDialog(`Discard all changes in ${filepath} and revert to session checkpoint?`, { confirmLabel: 'Discard', danger: true })) return;
     const original = registry.originalFiles[filepath];
-    const actions = (original === undefined)
+    const actions = (original === undefined || original === null)
         ? [{ kind: 'delete', filepath }]
         : [{ kind: 'restore', filepath, content: original }];
-    await executeRevertPlan(actions, { clearOpsFor: [filepath] });
+    const conflictRes = await _resolveExternalConflictsForRevert(actions, { skipConfirm: false });
+    if (conflictRes.cancelled) return;
+    await executeRevertPlan(actions, {
+        clearOpsFor: [filepath],
+        skipPaths: conflictRes.skipPaths,
+        externalDiskText: conflictRes.externalDiskText
+    });
     if (state.activeTab === `filediff:${filepath}`) closeTab(`filediff:${filepath}`);
 };
 
@@ -231,11 +361,17 @@ window.restoreAllModifiedFiles = async () => {
     const files = Array.from(state.modifiedFiles);
     const actions = files.map(fp => {
         const original = registry.originalFiles[fp];
-        return (original === undefined)
+        return (original === undefined || original === null)
             ? { kind: 'delete', filepath: fp }
             : { kind: 'restore', filepath: fp, content: original };
     });
-    await executeRevertPlan(actions, { clearOpsFor: files });
+    const conflictRes = await _resolveExternalConflictsForRevert(actions, { skipConfirm: false });
+    if (conflictRes.cancelled) return;
+    await executeRevertPlan(actions, {
+        clearOpsFor: files,
+        skipPaths: conflictRes.skipPaths,
+        externalDiskText: conflictRes.externalDiskText
+    });
 };
 
 document.getElementById('btn-discard-all').addEventListener('click', () => window.restoreAllModifiedFiles());

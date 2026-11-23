@@ -200,59 +200,402 @@ window.ensureSessionBaseline = ensureSessionBaseline;
 // --- AST_EXPORTS_END ---
 
 // --- executeRevertPlan.js ---
-// Single entry point for all reverts. Actions: {kind:'restore',filepath,content} | {kind:'delete',filepath} | {kind:'rename',filepath,targetPath}.
-// Options: forgetPromptIds drops ops by prompt id; clearOpsFor wipes a file's opsLog.
+function _normalizeRevertEol(s) {
+    return typeof s === 'string' ? s.replace(/\r\n?/g, '\n') : s;
+}
+
+function _pathDepth(p) {
+    return String(p || '').split('/').filter(Boolean).length;
+}
+
+function _orderRevertActions(actions) {
+    const orderRank = { rename: 0, mkdir: 1, restore: 2, delete: 3, 'delete-dir': 4 };
+    return actions.slice().sort((a, b) => {
+        const ra = orderRank[a.kind] ?? 9;
+        const rb = orderRank[b.kind] ?? 9;
+        if (ra !== rb) return ra - rb;
+        if (a.kind === 'mkdir') {
+            const dd = _pathDepth(a.filepath) - _pathDepth(b.filepath);
+            return dd !== 0 ? dd : a.filepath.localeCompare(b.filepath);
+        }
+        if (a.kind === 'delete-dir') {
+            const dd = _pathDepth(b.filepath) - _pathDepth(a.filepath);
+            return dd !== 0 ? dd : b.filepath.localeCompare(a.filepath);
+        }
+        return (a.filepath || '').localeCompare(b.filepath || '');
+    });
+}
+
+function _lastRecordedStateForPath(fp) {
+    const ops = (registry.opsLog && registry.opsLog[fp]) || [];
+    for (let i = ops.length - 1; i >= 0; i--) {
+        const op = ops[i];
+        if (!op) continue;
+        if (op.kind === 'delete') {
+            return op.isDir ? { kind: 'dir' } : { kind: 'deleted' };
+        }
+        if (op.kind === 'create' || op.kind === 'write' || op.kind === 'edit') {
+            return { kind: 'content', content: op.content };
+        }
+        if (op.kind === 'mkdir') {
+            return { kind: 'dir' };
+        }
+    }
+    if (fp in registry.originalFiles) {
+        const orig = registry.originalFiles[fp];
+        if (orig === null) return { kind: 'deleted' };
+        if (orig !== undefined) return { kind: 'content', content: orig };
+    }
+    return { kind: 'unknown' };
+}
+
+function _bytesEqual(a, b) {
+    if (!a || !b || a.byteLength !== b.byteLength) return false;
+    for (let i = 0; i < a.byteLength; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+async function _readDiskBytesForConflictCheck(fp) {
+    if (window.rootHandle) {
+        try {
+            const handle = registry.meta[fp]?.handle || await getHandleByPath(fp, false);
+            if (!handle || typeof handle.getFile !== 'function') return null;
+            const file = await handle.getFile();
+            return { bytes: new Uint8Array(await file.arrayBuffer()), size: file.size };
+        } catch (_) {
+            return null;
+        }
+    }
+    const cached = registry.files[fp];
+    if (cached instanceof Blob) {
+        return { bytes: new Uint8Array(await cached.arrayBuffer()), size: cached.size };
+    }
+    if (ArrayBuffer.isView(cached)) {
+        const u8 = new Uint8Array(cached.buffer, cached.byteOffset, cached.byteLength);
+        return { bytes: u8, size: u8.byteLength };
+    }
+    if (cached instanceof ArrayBuffer) {
+        const u8 = new Uint8Array(cached);
+        return { bytes: u8, size: u8.byteLength };
+    }
+    return null;
+}
+
+// Inspects files targeted by a revert plan against fresh disk state and unsaved Monaco buffers
+// to detect external edits that would otherwise be overwritten or deleted.
+async function detectExternalRevertConflicts(actions) {
+    const conflicts = [];
+    const conflictPaths = new Set();
+    const diskTextByPath = new Map();
+    const checked = new Set();
+
+    // Map rename target -> current on-disk path so paired rename+restore actions check the right file.
+    const renamedFromByTarget = new Map();
+    for (const a of actions) {
+        if (a.kind === 'rename' && a.filepath && a.targetPath) {
+            renamedFromByTarget.set(a.targetPath, a.filepath);
+        }
+    }
+
+    const addConflict = (fp, reason, extraPaths = []) => {
+        if (!conflictPaths.has(fp)) {
+            conflicts.push({ filepath: fp, reason });
+        }
+        conflictPaths.add(fp);
+        for (const ep of extraPaths) {
+            if (ep) conflictPaths.add(ep);
+        }
+    };
+
+    const checkFilePath = async (fp, actionKind, extraPaths = []) => {
+        if (!fp || checked.has(fp)) return;
+        checked.add(fp);
+
+        if (typeof isFileDirty === 'function' && isFileDirty(fp)) {
+            addConflict(fp, 'unsaved edits in editor', extraPaths);
+            return;
+        }
+
+        const recorded = _lastRecordedStateForPath(fp);
+        if (recorded.kind === 'unknown' || recorded.kind === 'dir') return;
+
+        const exists = window.rootHandle
+            ? await fileExistsOnDisk(fp)
+            : (registry.files[fp] !== undefined || !!(registry.meta[fp] && registry.meta[fp].kind === 'file'));
+
+        if (recorded.kind === 'deleted') {
+            if (exists) {
+                if (typeof readFileContent === 'function' && !registry.meta[fp]?.isBinary) {
+                    try {
+                        const dt = await readFileContent(fp, { fromDisk: true, throwOnError: true });
+                        if (typeof dt === 'string') diskTextByPath.set(fp, dt);
+                    } catch (_) {}
+                }
+                addConflict(fp, 'created externally on disk', extraPaths);
+            }
+            return;
+        }
+
+        if (!exists) {
+            // If the revert wants to delete this file anyway and it's already gone, there's no conflict.
+            if (actionKind === 'delete') return;
+            addConflict(fp, 'deleted externally on disk', extraPaths);
+            return;
+        }
+
+        const expected = recorded.content;
+        if (typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(expected)) {
+            const disk = await _readDiskBytesForConflictCheck(fp);
+            if (!disk) return;
+            if (expected.omitted) {
+                if (typeof expected.size === 'number' && disk.size !== expected.size) {
+                    addConflict(fp, 'modified externally on disk', extraPaths);
+                }
+                return;
+            }
+            const expBytes = typeof decodeBinaryBackupPayload === 'function' ? decodeBinaryBackupPayload(expected) : null;
+            if (expBytes && !_bytesEqual(disk.bytes, expBytes)) {
+                addConflict(fp, 'modified externally on disk', extraPaths);
+            }
+            return;
+        }
+
+        if (typeof expected === 'string') {
+            let diskText = null;
+            try {
+                diskText = await readFileContent(fp, { fromDisk: true, throwOnError: true });
+            } catch (_) {
+                return;
+            }
+            if (typeof diskText === 'string' && _normalizeRevertEol(diskText) !== _normalizeRevertEol(expected)) {
+                diskTextByPath.set(fp, diskText);
+                addConflict(fp, 'modified externally on disk', extraPaths);
+            }
+        }
+    };
+
+    for (const action of actions) {
+        if (action.kind === 'mkdir' || action.kind === 'delete-dir') continue;
+        if (action.kind === 'rename') {
+            await checkFilePath(action.filepath, 'rename', [action.targetPath]);
+            if (action.targetPath && action.targetPath !== action.filepath) {
+                const targetExists = window.rootHandle
+                    ? await fileExistsOnDisk(action.targetPath)
+                    : !!(registry.meta[action.targetPath] && registry.meta[action.targetPath].kind === 'file');
+                if (targetExists) {
+                    addConflict(action.targetPath, 'exists externally at rename target', [action.filepath]);
+                }
+            }
+        } else if (action.kind === 'restore') {
+            const diskPath = renamedFromByTarget.get(action.filepath) || action.filepath;
+            const extras = diskPath !== action.filepath ? [action.filepath] : [];
+            await checkFilePath(diskPath, 'restore', extras);
+        } else if (action.kind === 'delete' && !action.isDir) {
+            await checkFilePath(action.filepath, 'delete');
+        }
+    }
+
+    return { conflicts, conflictPaths, diskTextByPath };
+}
+
+function _fastHashSnapshotText(str) {
+    let h1 = 0xdeadbeef ^ str.length;
+    let h2 = 0x41c64e6d ^ str.length;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+async function _syncSnapshotAfterRevert(revertedOps) {
+    if (!revertedOps || revertedOps.length === 0) return;
+    const gen = typeof getGenState === 'function' ? getGenState(state.activeSessionId) : null;
+    const snap = gen && gen.lastWorkspaceSnapshot;
+    if (!snap || !snap.files) return;
+
+    for (const op of revertedOps) {
+        if (op.kind === 'delete') {
+            delete snap.files[op.filepath];
+            continue;
+        }
+        if (op.kind === 'rename') {
+            const moved = snap.files[op.filepath];
+            delete snap.files[op.filepath];
+            if (moved) snap.files[op.targetPath] = moved;
+            continue;
+        }
+        if (op.kind === 'restore') {
+            const fp = op.filepath;
+            const meta = registry.meta[fp];
+            let size = typeof meta?.size === 'number' ? meta.size : null;
+            let mtime = meta?.mtime !== undefined ? meta.mtime : null;
+            if (window.rootHandle && !window.rootHandle.isWebDAV) {
+                try {
+                    const h = meta?.handle || await getHandleByPath(fp, false);
+                    if (h && typeof h.getFile === 'function') {
+                        const f = await h.getFile();
+                        if (typeof f.size === 'number') { size = f.size; if (meta) meta.size = size; }
+                        if (f.lastModified) { mtime = f.lastModified / 1000; if (meta) meta.mtime = mtime; }
+                    }
+                } catch (_) {}
+            }
+            const isBin = !!(op.isBinary || meta?.isBinary);
+            if (isBin) {
+                snap.files[fp] = { size, mtime, hash: null, lines: null, text: null, dirty: false, isBinary: true };
+            } else {
+                const text = typeof op.text === 'string' ? op.text : (typeof registry.files[fp] === 'string' ? registry.files[fp] : null);
+                snap.files[fp] = {
+                    size: size !== null ? size : (text !== null ? text.length : null),
+                    mtime,
+                    hash: text !== null ? _fastHashSnapshotText(text) : null,
+                    lines: text !== null ? lineCount(text) : null,
+                    text: text !== null && text.length <= 1024 * 1024 ? text : null,
+                    dirty: false,
+                    isBinary: false
+                };
+            }
+        }
+    }
+    snap.fileCount = Object.keys(snap.files).length;
+}
+
+// Single entry point for all reverts.
+// Actions: {kind:'rename',filepath,targetPath} | {kind:'mkdir',filepath} | {kind:'restore',filepath,content}
+//        | {kind:'delete',filepath} | {kind:'delete-dir',filepath}.
+// Options: forgetPromptIds drops ops by prompt id; clearOpsFor wipes a file's opsLog;
+//          skipPaths skips disk mutations for externally modified files while still updating opsLog.
 async function executeRevertPlan(actions, opts = {}) {
     const forgetIds = opts.forgetPromptIds ? new Set(opts.forgetPromptIds) : null;
     const clearFor = opts.clearOpsFor ? new Set(opts.clearOpsFor) : null;
-    let applied = 0;
+    const skipPaths = opts.skipPaths ? new Set(opts.skipPaths) : null;
+    const externalDiskText = opts.externalDiskText instanceof Map ? opts.externalDiskText : null;
+    const ordered = _orderRevertActions(actions);
 
-    for (const action of actions) {
+    let applied = 0;
+    const keptDirs = [];
+    const omittedBinaries = [];
+    const revertedOps = [];
+
+    const migrateTrackedPath = (fromPath, toPath) => {
+        if (registry.opsLog[fromPath]) {
+            registry.opsLog[toPath] = registry.opsLog[fromPath];
+            delete registry.opsLog[fromPath];
+        }
+        if (fromPath in registry.originalFiles) {
+            registry.originalFiles[toPath] = registry.originalFiles[fromPath];
+            delete registry.originalFiles[fromPath];
+        }
+        if (state.openTabs.includes(fromPath)) {
+            state.openTabs[state.openTabs.indexOf(fromPath)] = toPath;
+        }
+        if (state.activeTab === fromPath) state.activeTab = toPath;
+        if (state.currentEditorPath === fromPath) state.currentEditorPath = toPath;
+        if (state.currentDiffFilepath === fromPath) state.currentDiffFilepath = toPath;
+        if (state.checkpointModalFile === fromPath) state.checkpointModalFile = toPath;
+        const model = monacoModels.get(fromPath);
+        if (model) {
+            monacoModels.delete(fromPath);
+            monacoModels.set(toPath, model);
+        }
+        if (state.fileBase && state.fileBase.has(fromPath)) {
+            state.fileBase.set(toPath, state.fileBase.get(fromPath));
+            state.fileBase.delete(fromPath);
+        }
+    };
+
+    for (const action of ordered) {
+        if (skipPaths && (skipPaths.has(action.filepath) || (action.targetPath && skipPaths.has(action.targetPath)))) {
+            continue;
+        }
         try {
             if (action.kind === 'rename') {
-                const res = await fs.rename(action.filepath, action.targetPath, { track: false, exactPath: true });
-                if (res && res.error) {
-                    showToast(`Revert error (${action.filepath}): ${res.error}`, 'error');
+                const exists = window.rootHandle
+                    ? await fileExistsOnDisk(action.filepath)
+                    : !!(registry.meta[action.filepath] && registry.meta[action.filepath].kind === 'file');
+                if (exists) {
+                    const res = await fs.rename(action.filepath, action.targetPath, { track: false, exactPath: true });
+                    if (res && res.error) {
+                        showToast(`Revert error (${action.filepath}): ${res.error}`, 'error');
+                        continue;
+                    }
+                }
+                migrateTrackedPath(action.filepath, action.targetPath);
+                revertedOps.push({ kind: 'rename', filepath: action.filepath, targetPath: action.targetPath });
+            } else if (action.kind === 'mkdir') {
+                const parts = String(action.filepath || '').split('/').filter(Boolean);
+                let built = '';
+                for (const seg of parts) {
+                    built = built ? `${built}/${seg}` : seg;
+                    if (!(await workspaceDirExists(built))) {
+                        await fs.mkdir(built, { track: false });
+                    }
+                }
+            } else if (action.kind === 'restore') {
+                if (typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(action.content)) {
+                    if (action.content.omitted) {
+                        omittedBinaries.push({
+                            filepath: action.filepath,
+                            size: action.content.size,
+                            reason: action.content.reason
+                        });
+                        continue;
+                    }
+                    const u8 = typeof decodeBinaryBackupPayload === 'function'
+                        ? decodeBinaryBackupPayload(action.content)
+                        : null;
+                    if (!u8) {
+                        omittedBinaries.push({ filepath: action.filepath, size: action.content.size, reason: 'decode-error' });
+                        continue;
+                    }
+                    await fs.write(action.filepath, u8, { track: false });
+                    if (typeof clearFileDirty === 'function') clearFileDirty(action.filepath);
+                    revertedOps.push({ kind: 'restore', filepath: action.filepath, isBinary: true });
+                } else if (typeof action.content === 'string') {
+                    await fs.write(action.filepath, action.content, { track: false });
+                    if (state.fileBase) state.fileBase.set(action.filepath, action.content);
+                    if (typeof clearFileDirty === 'function') clearFileDirty(action.filepath);
+                    const model = monacoModels.get(action.filepath);
+                    if (model) {
+                        if (typeof setModelFromDisk === 'function') {
+                            setModelFromDisk(action.filepath, model, action.content);
+                        } else {
+                            withDirtyTrackingSuppressed(() => model.setValue(action.content));
+                        }
+                    }
+                    revertedOps.push({ kind: 'restore', filepath: action.filepath, isBinary: false, text: action.content });
+                } else {
                     continue;
                 }
-                // rawRename skips tracking; carry the op log and baseline to the new path.
-                if (registry.opsLog[action.filepath]) {
-                    registry.opsLog[action.targetPath] = registry.opsLog[action.filepath];
-                    delete registry.opsLog[action.filepath];
+            } else if (action.kind === 'delete' && !action.isDir) {
+                const exists = window.rootHandle
+                    ? await fileExistsOnDisk(action.filepath)
+                    : !!(registry.meta[action.filepath] || registry.files[action.filepath] !== undefined);
+                if (exists) {
+                    await fs.del(action.filepath, { track: false });
+                } else {
+                    delete registry.meta[action.filepath];
+                    delete registry.files[action.filepath];
                 }
-                if (action.filepath in registry.originalFiles) {
-                    registry.originalFiles[action.targetPath] = registry.originalFiles[action.filepath];
-                    delete registry.originalFiles[action.filepath];
-                }
-                // Update open tabs and Monaco models to the new path.
-                if (state.openTabs.includes(action.filepath)) {
-                    state.openTabs[state.openTabs.indexOf(action.filepath)] = action.targetPath;
-                }
-                if (state.activeTab === action.filepath) state.activeTab = action.targetPath;
-                if (state.currentEditorPath === action.filepath) state.currentEditorPath = action.targetPath;
-                if (state.currentDiffFilepath === action.filepath) state.currentDiffFilepath = action.targetPath;
-                if (state.checkpointModalFile === action.filepath) state.checkpointModalFile = action.targetPath;
-                const model = monacoModels.get(action.filepath);
-                if (model) {
-                    monacoModels.delete(action.filepath);
-                    monacoModels.set(action.targetPath, model);
-                }
-                if (state.fileBase && state.fileBase.has(action.filepath)) {
-                    state.fileBase.set(action.targetPath, state.fileBase.get(action.filepath));
-                    state.fileBase.delete(action.filepath);
-                }
-            } else if (action.kind === 'delete') {
-                await fs.del(action.filepath, { track: false });
                 if (state.fileBase) state.fileBase.delete(action.filepath);
-            } else if (action.kind === 'restore') {
-                await fs.write(action.filepath, action.content, { track: false });
-                const model = monacoModels.get(action.filepath);
-                if (model) {
-                    if (typeof setModelFromDisk === 'function') {
-                        setModelFromDisk(action.filepath, model, action.content);
-                    } else {
-                        withDirtyTrackingSuppressed(() => model.setValue(action.content));
-                    }
+                if (typeof clearFileDirty === 'function') clearFileDirty(action.filepath);
+                revertedOps.push({ kind: 'delete', filepath: action.filepath });
+            } else if (action.kind === 'delete-dir' || (action.kind === 'delete' && action.isDir)) {
+                const check = typeof checkDirectoryOnDisk === 'function'
+                    ? await checkDirectoryOnDisk(action.filepath)
+                    : { status: 'error' };
+                if (check.status === 'missing') {
+                    delete registry.meta[action.filepath];
+                } else if (check.status === 'empty') {
+                    await fs.del(action.filepath, { track: false, isDir: true });
+                } else {
+                    keptDirs.push(action.filepath);
+                    continue;
                 }
             }
             applied++;
@@ -261,12 +604,26 @@ async function executeRevertPlan(actions, opts = {}) {
         }
     }
 
+    // For skipped external-edit files, refresh registry.files with disk content so modifiedFiles stays accurate.
+    if (skipPaths && externalDiskText) {
+        for (const fp of skipPaths) {
+            if (externalDiskText.has(fp) && !registry.meta[fp]?.isBinary) {
+                registry.files[fp] = externalDiskText.get(fp);
+            }
+        }
+    }
+
     // A prompt is a commit: forgetting its id drops all its ops from every file.
     if (forgetIds) {
         for (const fp of Object.keys(registry.opsLog)) {
             const kept = (registry.opsLog[fp] || []).filter(op => !(op.prompt && forgetIds.has(op.prompt.id)));
             if (kept.length) registry.opsLog[fp] = kept;
-            else delete registry.opsLog[fp];
+            else {
+                delete registry.opsLog[fp];
+                if (registry.originalFiles[fp] === null && !registry.meta[fp]) {
+                    delete registry.originalFiles[fp];
+                }
+            }
         }
     }
     // Full log reset for a file (per-file discard / discard-all).
@@ -278,8 +635,16 @@ async function executeRevertPlan(actions, opts = {}) {
     }
 
     recomputeAllModifiedFromOps();
+    if (skipPaths) {
+        for (const fp of skipPaths) {
+            const exists = !!(registry.meta[fp] && registry.meta[fp].kind === 'file');
+            if (exists) state.modifiedFiles.add(fp);
+        }
+    }
     await recomputeLineStats(sessionCtx(state.activeSessionId), state.activeSessionId);
     await persistCheckpoint();
+    await _syncSnapshotAfterRevert(revertedOps);
+
     renderChangesPanel();
     renderExplorerTree();
     updateStatusInfo();
@@ -289,11 +654,28 @@ async function executeRevertPlan(actions, opts = {}) {
     refreshChangesGraph();
     if (state.currentEditorPath && monacoEditor) scheduleGutterDiffUpdate();
 
+    if (!opts.silentNotices) {
+        if (keptDirs.length > 0) {
+            // Show the shallowest kept root folders when nested ancestors were kept for the same untracked files.
+            const keptSorted = keptDirs.slice().sort((a, b) => _pathDepth(a) - _pathDepth(b) || a.localeCompare(b));
+            const topKept = keptSorted.filter(d => !keptSorted.some(other => other !== d && d.startsWith(other + '/')));
+            const shown = topKept.slice(0, 3).map(d => `${d}/`).join(', ');
+            const more = topKept.length > 3 ? ` (+${topKept.length - 3} more)` : '';
+            showToast(`Kept ${shown}${more} (contains untracked files)`, 'info', 4500);
+        }
+        if (omittedBinaries.length > 0) {
+            const names = omittedBinaries.slice(0, 3).map(b => b.filepath).join(', ');
+            const more = omittedBinaries.length > 3 ? ` (+${omittedBinaries.length - 3} more)` : '';
+            showToast(`Couldn't restore ${names}${more} (over size limit)`, 'info', 5000);
+        }
+    }
+
     return applied;
 }
 
 // --- AST_EXPORTS_START ---
 window.executeRevertPlan = executeRevertPlan;
+window.detectExternalRevertConflicts = detectExternalRevertConflicts;
 // --- AST_EXPORTS_END ---
 
 // --- getFileTimeline.js ---
@@ -436,15 +818,28 @@ function recomputeAllModifiedFromOps() {
     ]);
     state.modifiedFiles.clear();
     for (const fp of all) {
-        const hasBaseline = registry.originalFiles[fp] !== undefined && registry.originalFiles[fp] !== null;
-        const fileExists = registry.files[fp] !== undefined;
+        const meta = registry.meta[fp];
         const ops = registry.opsLog[fp] || [];
+        const baselineVal = registry.originalFiles[fp];
+        const hasBaseline = baselineVal !== undefined && baselineVal !== null;
+        const isDirOnly = (meta && meta.kind === 'directory') ||
+            (!hasBaseline && ops.length > 0 && ops.every(o => o && (o.kind === 'mkdir' || o.isDir)));
+        if (isDirOnly) continue;
+
+        const isBin = !!(meta?.isBinary || (typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(baselineVal)));
+        const fileExists = isBin
+            ? !!(meta && meta.kind === 'file')
+            : (registry.files[fp] !== undefined || !!(meta && meta.kind === 'file'));
 
         let modified = false;
         if (hasBaseline) {
-            // Pre-existing file: modified if gone or its content differs from the baseline.
-            if (!fileExists) modified = true;
-            else if (registry.files[fp] !== registry.originalFiles[fp]) modified = true;
+            if (!fileExists) {
+                modified = true;
+            } else if (isBin) {
+                modified = ops.length > 0;
+            } else if (registry.files[fp] !== undefined && registry.files[fp] !== baselineVal) {
+                modified = true;
+            }
         } else if (fileExists && ops.length > 0) {
             // No baseline (created this session) and still present.
             modified = true;
@@ -465,6 +860,10 @@ async function recomputeLineStats(ctx, sid) {
     for (const fp of ctx.modifiedFiles) {
         // Baseline is the pre-session content; a null sentinel means created this session.
         const baselineRaw = ctx.baseline.originalFiles[fp];
+        if ((typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(baselineRaw)) ||
+            registry.meta[fp]?.isBinary) {
+            continue;
+        }
         const beforeText = (baselineRaw === undefined || baselineRaw === null) ? '' : baselineRaw;
 
         // Use live content for the active session, otherwise re-read from disk.

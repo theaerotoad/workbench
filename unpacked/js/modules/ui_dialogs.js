@@ -284,8 +284,67 @@ function confirmDialog(message, opts = {}) {
     });
 }
 
+function confirmChoiceDialog(message, opts = {}) {
+    const {
+        primaryLabel = 'OK',
+        secondaryLabel = 'Overwrite',
+        cancelLabel = 'Cancel',
+        primaryValue = 'primary',
+        secondaryValue = 'secondary',
+        cancelValue = 'cancel',
+        danger = false
+    } = opts;
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('yesno-modal-overlay');
+        const msgEl = document.getElementById('yesno-modal-message');
+        const primaryBtn = document.getElementById('yesno-modal-save');
+        const secondaryBtn = document.getElementById('yesno-modal-discard');
+        const cancelBtn = document.getElementById('yesno-modal-cancel');
+        const prev = {
+            primary: primaryBtn.textContent,
+            secondary: secondaryBtn.textContent,
+            cancel: cancelBtn.textContent,
+            secondaryDisplay: secondaryBtn.style.display
+        };
+        msgEl.innerText = message;
+        primaryBtn.textContent = primaryLabel;
+        secondaryBtn.textContent = secondaryLabel;
+        cancelBtn.textContent = cancelLabel;
+        secondaryBtn.style.display = '';
+        overlay.style.display = 'flex';
+        const finish = (val) => {
+            overlay.style.display = 'none';
+            primaryBtn.textContent = prev.primary;
+            secondaryBtn.textContent = prev.secondary;
+            cancelBtn.textContent = prev.cancel;
+            secondaryBtn.style.display = prev.secondaryDisplay;
+            primaryBtn.removeEventListener('click', onPrimary);
+            secondaryBtn.removeEventListener('click', onSecondary);
+            cancelBtn.removeEventListener('click', onCancel);
+            overlay.removeEventListener('click', onOverlay);
+            document.removeEventListener('keydown', onKey);
+            resolve(val);
+        };
+        const onPrimary = () => finish(primaryValue);
+        const onSecondary = () => finish(secondaryValue);
+        const onCancel = () => finish(cancelValue);
+        const onOverlay = (e) => { if (e.target === overlay) finish(cancelValue); };
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); finish(cancelValue); }
+            else if (e.key === 'Enter' && !danger) { e.preventDefault(); finish(primaryValue); }
+        };
+        primaryBtn.addEventListener('click', onPrimary);
+        secondaryBtn.addEventListener('click', onSecondary);
+        cancelBtn.addEventListener('click', onCancel);
+        overlay.addEventListener('click', onOverlay);
+        document.addEventListener('keydown', onKey);
+        (danger ? cancelBtn : primaryBtn).focus();
+    });
+}
+
 // --- AST_EXPORTS_START ---
 window.confirmDialog = confirmDialog;
+window.confirmChoiceDialog = confirmChoiceDialog;
 // --- AST_EXPORTS_END ---
 
 // --- confirmSaveDiscard.js ---
