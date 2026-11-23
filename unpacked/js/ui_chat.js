@@ -902,15 +902,17 @@ window.addEventListener('beforeunload', (e) => {
 })();
 
 (function makeToolApiFresh() {
+    const MUTATING_TOOL_APIS = new Set(['writeFile', 'renameFile', 'deleteFile']);
     ['readFile', 'writeFile', 'readImage', 'readFileBytes', 'renameFile', 'deleteFile', 'fileExists', 'statFile', 'isBinary'].forEach(name => {
         const orig = TOOL_API_METHODS[name];
+        const force = MUTATING_TOOL_APIS.has(name);
         TOOL_API_METHODS[name] = async (toolName, args, ...rest) => {
             const a = args || [];
-            await refreshPathMeta(a[0]);
+            await refreshPathMeta(a[0], { force });
             if (name === 'renameFile' && a[1]) {
                 const resolved = typeof resolveRenamePaths === 'function' ? resolveRenamePaths(a[0], a[1]) : null;
                 if (resolved && !resolved.error && resolved.newPath && resolved.newPath !== resolved.oldPath) {
-                    await refreshPathMeta(resolved.newPath);
+                    await refreshPathMeta(resolved.newPath, { force: true });
                 }
             }
             return orig(toolName, a, ...rest);

@@ -46,18 +46,36 @@ async function readFileContent(filepath, opts = {}) {
                 text = sniffed.text;
             }
             if (rootHandle === root && !fromDisk) {
-                if (!sniffed.binary && registry.meta[filepath]) {
-                    registry.meta[filepath].encoding = sniffed.encoding;
-                }
-                registry.files[filepath] = text;
-                if (registry.meta[filepath]) {
-                    registry.meta[filepath].size = file.size;
+                const meta = registry.meta[filepath];
+                if (meta) {
+                    meta.isBinary = !!sniffed.binary;
+                    if (!sniffed.binary) {
+                        meta.encoding = sniffed.encoding;
+                    }
+                    meta.size = file.size;
                     if (file.lastModified) {
-                        registry.meta[filepath].mtime = file.lastModified / 1000;
-                        registry.meta[filepath]._syncedMtime = registry.meta[filepath].mtime;
-                        registry.meta[filepath]._syncedSize = file.size;
+                        const fileMtimeSec = file.lastModified / 1000;
+                        // On WebDAV, keep high-res mtime from fetchFastTree when HTTP Last-Modified
+                        // matches the same second, preventing the next scan from evicting registry.files.
+                        if (!root.isWebDAV || meta.mtime === undefined || Math.abs(meta.mtime - fileMtimeSec) >= 1.5) {
+                            meta.mtime = fileMtimeSec;
+                        }
+                        meta._syncedMtime = meta.mtime;
+                        meta._syncedSize = file.size;
+                    }
+                    if (window.sniffCache) {
+                        const metaSig = (typeof meta.size === 'number' && meta.mtime !== undefined)
+                            ? `m:${meta.size}:${meta.mtime}`
+                            : null;
+                        window.sniffCache.set(filepath, {
+                            sig: `${file.size}:${file.lastModified}`,
+                            metaSig,
+                            binary: sniffed.binary,
+                            encoding: sniffed.encoding
+                        });
                     }
                 }
+                registry.files[filepath] = text;
             }
             return text;
         } catch(e) {

@@ -347,6 +347,12 @@ function mergeWorkspaceMeta(scanned, allowRemoval) {
             structChanged = true;
         } else {
             cur.handle = fresh.handle;   // refresh the handle, keep everything we have learned about the file
+            if (fresh._freshAt !== undefined) {
+                cur._freshAt = fresh._freshAt;
+                cur._freshEpoch = fresh._freshEpoch;
+                cur._freshExt = fresh._freshExt;
+                cur._freshRoot = fresh._freshRoot;
+            }
             if (fresh.mtime !== undefined) {
                 const changed = (cur.mtime !== undefined && cur.mtime !== fresh.mtime) ||
                                 (cur.size !== undefined && cur.size !== fresh.size);
@@ -387,8 +393,11 @@ window.pickFolderWithMemory = pickFolderWithMemory;
 // --- AST_EXPORTS_END ---
 
 // --- refreshPathMeta.js ---
+const WEBDAV_FRESH_TTL_MS = 5000;
+let _webdavExternalEpoch = 0;
+
 // Cheap per-path refresh straight from disk: used by tools so a single read/edit/exists never works from stale metadata.
-async function refreshPathMeta(fp) {
+async function refreshPathMeta(fp, opts = {}) {
     const root = rootHandle;
     if (!root || typeof fp !== 'string' || !fp) return;
     fp = fp.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
@@ -402,6 +411,20 @@ async function refreshPathMeta(fp) {
     if ((isAgentPath(fp) && !isSkillPath(fp)) || isToolFilePath(fp) || isAttachmentPath(fp) || fp === MODELS_FILE || fp === CONFIG_FILE || fp === TOOLS_FILE || isPromptFileMode(fp)) return;
     if (fp === PLAN_FILE || !isScanVisiblePath(fp)) return;   // the plan file can live only in memory
 
+    // On WebDAV, skip redundant PROPFINDs when the entry is already verified by a recent
+    // fast-tree scan or per-path stat and no local or SSE-reported mutations occurred since.
+    // Missing paths (!cur) and mutating calls (opts.force) still verify against the server.
+    const force = !!(opts && opts.force);
+    if (!force && root.isWebDAV && cur &&
+        cur._freshRoot === root &&
+        cur._freshEpoch === wsMutationEpoch &&
+        cur._freshExt === _webdavExternalEpoch &&
+        (Date.now() - cur._freshAt) < WEBDAV_FRESH_TTL_MS) {
+        return;
+    }
+
+    const checkEpoch = wsMutationEpoch;
+    const checkExt = _webdavExternalEpoch;
     let kind = null, handle = null;
     if (root.isWebDAV) {
         try {
@@ -480,6 +503,12 @@ async function refreshPathMeta(fp) {
         added = true;
     } else {
         liveCur.handle = handle;
+    }
+    if (root.isWebDAV && registry.meta[fp]) {
+        registry.meta[fp]._freshAt = Date.now();
+        registry.meta[fp]._freshEpoch = checkEpoch;
+        registry.meta[fp]._freshExt = checkExt;
+        registry.meta[fp]._freshRoot = root;
     }
     if (added) renderExplorerTree();
     if (isSkillPath(fp) && typeof window.scanWorkspaceSkills === 'function') {
@@ -728,6 +757,8 @@ async function runSyncWorkspace(silent = true) {
 
             if (fastData && Array.isArray(fastData.entries)) {
                 newMeta = {};
+                const scanFreshAt = Date.now();
+                const scanFreshExt = _webdavExternalEpoch;
                 // Register .gitignore files and cache inlined .agent text files
                 for (const entry of fastData.entries) {
                     if (entry.content !== undefined) {
@@ -758,7 +789,11 @@ async function runSyncWorkspace(silent = true) {
                             size: entry.size || 0,
                             mtime: entry.mtime,
                             isBinary: typeof isBinaryByExtension === 'function' ? isBinaryByExtension(name) : false,
-                            handle: fileHandle
+                            handle: fileHandle,
+                            _freshAt: scanFreshAt,
+                            _freshEpoch: epoch,
+                            _freshExt: scanFreshExt,
+                            _freshRoot: root
                         };
                     } else if (entry.kind === 'directory') {
                         const dirWebdavPath = root.path + entry.path + '/';
@@ -767,7 +802,11 @@ async function runSyncWorkspace(silent = true) {
                             kind: 'directory',
                             size: 0,
                             isBinary: false,
-                            handle: dirHandle
+                            handle: dirHandle,
+                            _freshAt: scanFreshAt,
+                            _freshEpoch: epoch,
+                            _freshExt: scanFreshExt,
+                            _freshRoot: root
                         };
                     }
                 }
@@ -1444,6 +1483,7 @@ let _webdavEventSource = null;
 let _webdavSseDebounce = null;
 
 function closeWebDAVEvents() {
+    _webdavExternalEpoch++;
     if (_webdavEventSource) {
         try { _webdavEventSource.close(); } catch(e) {}
         _webdavEventSource = null;
@@ -1485,6 +1525,7 @@ function setupWebDAVEvents(handle) {
             // If reconnecting after a drop or server restart, catch up on changes immediately
             if (hadDisconnect) {
                 hadDisconnect = false;
+                _webdavExternalEpoch++;
                 if (rootHandle === handle && !state.isSaving) {
                     syncWorkspace(true);
                 }
@@ -1492,6 +1533,7 @@ function setupWebDAVEvents(handle) {
         };
 
         es.addEventListener('change', () => {
+            _webdavExternalEpoch++;
             clearTimeout(_webdavSseDebounce);
             _webdavSseDebounce = setTimeout(() => {
                 if (rootHandle === handle && !state.isSaving) {
