@@ -1,14 +1,18 @@
 // map - tool definition.
 const TOOL_META = {
     name: "map",
-    description: "Map the structure of the codebase using Tree-sitter AST parsing. Extracts accurate function signatures, classes, async/export markers, and line numbers to build a precise navigation index.",
+    description: "Map the structure of a directory or single file using Tree-sitter AST parsing. Extracts function signatures, classes, async/export markers, and start-end line ranges. Pass `symbol` to look up specific definitions with line ranges ready for `read`.",
     parameters: {
         type: "object",
         properties: {
             path: {
                 type: "string",
-                description: "Directory path to map (e.g., 'src' or ''). Defaults to root.",
+                description: "Directory or single file path to map (e.g., 'src', 'src/app.py', or '' / '.' for workspace root). Defaults to root.",
                 allowEmpty: true
+            },
+            symbol: {
+                type: "string",
+                description: "Optional symbol name (or 'Class.method') to look up. Returns only matching definitions with start-end line ranges ready to pass to read."
             },
             extensions: {
                 type: "array",
@@ -21,7 +25,7 @@ const TOOL_META = {
                 description: "Output format for the LLM. JSON is strictly preferred for programmatic consumption; text is human-readable."
             }
         },
-        required: ["path"]
+        required: []
     },
     modes: ["plan", "ask", "code"],
     permission: "always",
@@ -201,22 +205,60 @@ const LANGUAGE_QUERIES = {
 
 const languageCache = {};
 
+function formatLineRange(s) {
+    return (s.end_ln && s.end_ln > s.ln) ? `${s.ln}-${s.end_ln}` : `${s.ln}`;
+}
+
+function flattenSymbols(syms, file, parentName = '') {
+    const out = [];
+    for (const s of syms || []) {
+        const qname = parentName ? `${parentName}.${s.name}` : s.name;
+        const entry = {
+            file,
+            kind: s.kind,
+            name: s.name,
+            qualified_name: qname,
+            start_line: s.ln,
+            end_line: s.end_ln || s.ln
+        };
+        if (s.params) entry.params = s.params;
+        if (s.async) entry.async = true;
+        if (s.export) entry.export = true;
+        out.push(entry);
+        if (s.members && s.members.length) {
+            out.push(...flattenSymbols(s.members, file, qname));
+        }
+    }
+    return out;
+}
+
 // --- Handler -----------------------------------------------------------------
 async function handler(args, api) {
-    const targetPath = (args.path || '').replace(/^\/+/, '');
+    let targetPath = String(args.path || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^(\.\/)+/, '')
+        .replace(/^\/+|\/+$/g, '');
+    if (targetPath === '.') targetPath = '';
+
+    const symbolQuery = typeof args.symbol === 'string' ? args.symbol.trim() : '';
     const outFormat = args.format || 'json';
-    
-    let allowedExts = Array.isArray(args.extensions) && args.extensions.length > 0 
-        ? args.extensions.map(e => e.toLowerCase())
-        : [...Object.keys(EXT_TO_LANG), ...Object.keys(NON_AST_EXTS)];
+
+    let allowedExts = Array.isArray(args.extensions) && args.extensions.length > 0
+        ? args.extensions.map(e => {
+            const s = String(e || '').trim().toLowerCase();
+            return s && !s.startsWith('.') ? '.' + s : s;
+        }).filter(Boolean)
+        : (symbolQuery ? Object.keys(EXT_TO_LANG) : [...Object.keys(EXT_TO_LANG), ...Object.keys(NON_AST_EXTS)]);
 
     await api.setHeaderMsg("Scanning workspace...");
-    
+
     const allFiles = await api.listFiles();
     let filesToMap = allFiles.filter(fp => {
         if (targetPath && !fp.startsWith(targetPath + '/') && fp !== targetPath) return false;
         const extMatch = fp.match(/\.[0-9a-z_]+$/i);
         const ext = extMatch ? extMatch[0].toLowerCase() : '';
+        if (symbolQuery && !EXT_TO_LANG[ext]) return false;
         return allowedExts.includes(ext) && (!!EXT_TO_LANG[ext] || !!NON_AST_EXTS[ext]);
     });
 
@@ -300,22 +342,23 @@ async function handler(args, api) {
             </div>
         `, { live: true });
 
-        // Load Grammar
-        if (!languageCache[langName]) {
-            try {
-                let url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
-                if (langName === 'matlab') {
-                    url = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
+        if (langName) {
+            // Load Grammar
+            if (!languageCache[langName]) {
+                try {
+                    let url = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms/out/tree-sitter-${langName}.wasm`;
+                    if (langName === 'matlab') {
+                        url = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
+                    }
+                    languageCache[langName] = await TreeSitter.Language.load(url);
+                } catch (e) {
+                    console.error(`Failed to load grammar ${langName}: `, e);
+                    continue;
                 }
-                languageCache[langName] = await TreeSitter.Language.load(url);
-            } catch (e) {
-                console.error(`Failed to load grammar ${langName}: `, e);
-                continue;
             }
+            parser.setLanguage(languageCache[langName]);
         }
 
-        parser.setLanguage(languageCache[langName]);
-        
         const content = await api.readFile(fp);
         if (typeof content !== 'string' || content.startsWith('ERROR:')) {
             continue;
@@ -394,7 +437,13 @@ async function handler(args, api) {
                 let nameNode = node.childForFieldName('name') || node.children.find(c => c.type === 'identifier' || c.type === 'type_identifier');
                 if (nameNode) {
                     if (exportedNames.has(nameNode.text)) isExp = true;
-                    return { kind: 'class', name: nameNode.text, ln: nameNode.startPosition.row + 1, export: !!isExp };
+                    return {
+                        kind: 'class',
+                        name: nameNode.text,
+                        ln: nameNode.startPosition.row + 1,
+                        end_ln: node.endPosition.row + 1,
+                        export: !!isExp
+                    };
                 }
             }
 
@@ -447,7 +496,7 @@ async function handler(args, api) {
                     if (params.length > 50) params = params.slice(0, 49) + '…';
                 }
 
-                let res = { kind, name, ln: node.startPosition.row + 1 };
+                let res = { kind, name, ln: node.startPosition.row + 1, end_ln: node.endPosition.row + 1 };
                 if (params) res.params = params;
                 if (isAsync) res.async = true;
                 if (isExp) res.export = true;
@@ -456,7 +505,7 @@ async function handler(args, api) {
 
             if (isVar) {
                 if (exportedNames.has(assignedName)) isExp = true;
-                let res = { kind: declToken, name: assignedName, ln: node.startPosition.row + 1 };
+                let res = { kind: declToken, name: assignedName, ln: node.startPosition.row + 1, end_ln: node.endPosition.row + 1 };
                 if (isExp) res.export = true;
                 return res;
             }
@@ -557,7 +606,8 @@ async function handler(args, api) {
                             params = params.replace(/^\(\s*(?:self|cls)\b[^,)]*(?:,\s*)?/, '(');
                         }
                         
-                        let sym = { kind, name, ln, _node: mainNode };
+                        const end_ln = mainNode ? mainNode.endPosition.row + 1 : ln;
+                        let sym = { kind, name, ln, end_ln, _node: mainNode };
                         if (params) sym.params = params;
                         if (isAsync) sym.async = true;
                         
@@ -633,14 +683,15 @@ async function handler(args, api) {
             
             function renderSym(s, indent) {
                 let line = `${indent}`;
+                const rangeStr = formatLineRange(s);
                 const isVarKind = s.kind === 'const' || s.kind === 'let' || s.kind === 'var';
                 if (s.kind === 'class' || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media') {
-                    line += `${s.kind} ${s.name} :${s.ln}`;
+                    line += `${s.kind} ${s.name} :${rangeStr}`;
                 } else if (isVarKind) {
-                    line += `${s.kind} ${s.name} :${s.ln}`;
+                    line += `${s.kind} ${s.name} :${rangeStr}`;
                 } else {
                     let p = s.params || '()';
-                    line += `${s.name}${p} :${s.ln}`;
+                    line += `${s.name}${p} :${rangeStr}`;
                     if (s.async) line += `  async`;
                 }
                 if (s.export) line += `  (export)`;
@@ -680,6 +731,91 @@ async function handler(args, api) {
 
     if (parser) parser.delete(); // Cleanup parser memory
 
+    let hiddenNotice = '';
+    if (hiddenCount > 0) {
+        hiddenNotice = `<div style="padding:8px; text-align:center; color:var(--yellow); font-size:11px; border-bottom:1px solid var(--border);">... and ${hiddenCount} more files omitted (Max Files limit reached, consider scoping the 'path' parameter).</div>`;
+    }
+
+    // --- Symbol lookup mode ---
+    if (symbolQuery) {
+        const q = symbolQuery.toLowerCase();
+        const hasDot = q.includes('.');
+        const allFlat = [];
+        for (const fd of results) {
+            if (fd.symbols && fd.symbols.length) {
+                allFlat.push(...flattenSymbols(fd.symbols, fd.file));
+            }
+        }
+
+        let matches = allFlat.filter(s => {
+            const nameL = s.name.toLowerCase();
+            const qnameL = s.qualified_name.toLowerCase();
+            return hasDot ? (qnameL === q || qnameL.endsWith('.' + q)) : nameL === q;
+        });
+        if (matches.length === 0) {
+            matches = allFlat.filter(s =>
+                s.name.toLowerCase().includes(q) || s.qualified_name.toLowerCase().includes(q)
+            );
+        }
+
+        let finalOutput = '';
+        if (outFormat === 'json') {
+            finalOutput = JSON.stringify(matches);
+        } else if (matches.length === 0) {
+            finalOutput = `No definitions matching "${symbolQuery}" found in ${targetPath || 'root'} (${parsedCount} files scanned).`;
+        } else {
+            finalOutput = matches.map(m => {
+                const isVarKind = m.kind === 'const' || m.kind === 'let' || m.kind === 'var';
+                const isNoParens = m.kind === 'class' || isVarKind || m.kind === 'tag' || m.kind === 'rule' || m.kind === 'media';
+                const p = m.params || (isNoParens ? '' : '()');
+                const range = m.end_line > m.start_line ? `L${m.start_line}-${m.end_line}` : `L${m.start_line}`;
+                return `${m.file}  ${range}  ${m.kind} ${m.qualified_name}${p}${m.async ? '  async' : ''}${m.export ? '  (export)' : ''}`;
+            }).join('\n');
+        }
+
+        const symRows = matches.length
+            ? matches.map(m => {
+                const range = m.end_line > m.start_line ? `L${m.start_line}-${m.end_line}` : `L${m.start_line}`;
+                const p = m.params || '';
+                return `
+                    <div style="border-bottom: 1px solid var(--border); padding: 7px 10px; display:flex; justify-content:space-between; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11.5px;">
+                        <div style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            <span style="color:var(--magenta);">${esc(m.kind)}</span>
+                            <span style="color:var(--fg); font-weight:600; margin-left:4px;">${esc(m.qualified_name)}</span><span class="dim">${esc(p)}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                            <span>${pathHtml(m.file)}</span>
+                            <span style="font-size:10px; padding:1px 6px; border-radius:4px; background:var(--bg-input); color:var(--green); border:1px solid var(--border);">${esc(range)}</span>
+                        </div>
+                    </div>`;
+            }).join('')
+            : `<div class="tool-ui-empty" style="padding:12px; color:var(--dim);">No definitions matching "${esc(symbolQuery)}" in ${esc(targetPath || 'root')}.</div>`;
+
+        const displayHtml = `
+            <div class="tool-ui-wrap">
+                <div class="tool-ui-bar">
+                    <div class="tool-ui-header-info">
+                        <span class="icon" style="font-size:13px; color:var(--magenta); flex-shrink:0;">search</span>
+                        <span style="font-size:12px; font-weight:600; color:var(--fg);">Symbol: ${esc(symbolQuery)}</span>
+                    </div>
+                    <div class="tool-ui-header-stats">
+                        <span style="color:${matches.length ? 'var(--green)' : 'var(--dim)'}; font-weight:600;">${matches.length} match${matches.length === 1 ? '' : 'es'}</span>
+                    </div>
+                </div>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    ${hiddenNotice}
+                    ${symRows}
+                </div>
+            </div>
+        `;
+
+        await api.showUI(displayHtml);
+        return {
+            output: finalOutput,
+            summary: `Map symbol "${symbolQuery}": ${matches.length} match${matches.length === 1 ? '' : 'es'}`
+        };
+    }
+
     // Generate output for LLM
     let finalOutput = '';
     if (outFormat === 'json') {
@@ -700,7 +836,7 @@ async function handler(args, api) {
                 const isNoParens = s.kind === 'class' || isVarKind || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media';
                 let p = s.params || (isNoParens ? '' : '()');
                 let kindStr = (s.kind === 'class' || s.kind === 'tag' || s.kind === 'rule' || s.kind === 'media') ? `${s.kind} ` : (isVarKind ? `${s.kind} ` : '');
-                let line = `${indent}${kindStr}${s.name}${p} :${s.ln}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
+                let line = `${indent}${kindStr}${s.name}${p} :${formatLineRange(s)}${s.async ? '  async' : ''}${s.export ? '  (export)' : ''}`;
                 out.push(line);
                 if (s.members) s.members.forEach(c => recurseText(c, indent + '  '));
             }
@@ -709,11 +845,6 @@ async function handler(args, api) {
             return out.join('\n');
         });
         finalOutput = textBlocks.join('\n\n');
-    }
-    
-    let hiddenNotice = '';
-    if (hiddenCount > 0) {
-        hiddenNotice = `<div style="padding:8px; text-align:center; color:var(--yellow); font-size:11px; border-bottom:1px solid var(--border);">... and ${hiddenCount} more files omitted (Max Files limit reached, consider scoping the 'path' parameter).</div>`;
     }
 
     const displayHtml = `
