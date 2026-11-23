@@ -142,9 +142,14 @@ async function rawWrite(path, content) {
 async function rawDelete(path) {
     if (window.isWorkspaceReadOnly?.()) throw new Error('Workspace is read-only');
     wsMutationEpoch++;
+    const prefix = path + '/';
     if (!rootHandle) {
+        for (const k of Object.keys(registry.meta)) {
+            if (k === path || k.startsWith(prefix)) { delete registry.meta[k]; delete registry.files[k]; }
+        }
         delete registry.meta[path];
         delete registry.files[path];
+        wsMutationEpoch++;
         return;
     }
     const parts = path.split('/').filter(Boolean);
@@ -155,7 +160,6 @@ async function rawDelete(path) {
     }
     await parentHandle.removeEntry(targetName, { recursive: true });
     // Folders: drop everything beneath the path too, not just the folder entry.
-    const prefix = path + '/';
     for (const k of Object.keys(registry.meta)) {
         if (k === path || k.startsWith(prefix)) { delete registry.meta[k]; delete registry.files[k]; }
     }

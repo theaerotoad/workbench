@@ -46,6 +46,7 @@ function toolsDefaults() {
             grep: 'always',
             find: 'always',
             rename: 'ask',
+            delete: 'ask',
             preview_image: 'always',
             load_skill: 'always',
             changes: 'always'
@@ -57,6 +58,7 @@ function toolsDefaults() {
             grep: false,
             find: false,
             rename: false,
+            delete: false,
             preview_image: false,
             load_skill: false,
             changes: false
@@ -144,7 +146,7 @@ const BINARY_MAGIC = [
     [0x66, 0x4C, 0x61, 0x43],                        // fLaC
     [0x52, 0x49, 0x46, 0x46]                         // RIFF (wav, avi, webp)
 ];
-const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'preview_image', 'load_skill', 'map', 'changes'];
+const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete', 'preview_image', 'load_skill', 'map', 'changes'];
 const CLEARDATA_LS_KEYS = {
     models: ['models_json', 'selected_model'],
     customTools: ['tool_files_json', 'tool_lock_state', 'tool_deleted_names', 'tool_perm_state', 'tool_settings_state'],
@@ -603,6 +605,123 @@ const TOOL_API_METHODS = {
         const res = await window.fs.rename(src, dst, { mode: 'tool', sessionId, exactPath: true });
         return (res && res.error) ? res.error : null;
     },
+    deleteFile: async (toolName, [fp, opts], sessionId) => {
+        const raw = String(fp || '').trim().replace(/\\/g, '/');
+        const normFp = raw.replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
+        if (!normFp) return `ERROR: Invalid filepath.`;
+        if (normFp.split('/').some(seg => !seg || seg === '.' || seg === '..')) {
+            return `ERROR: Path cannot contain "." or ".." segments.`;
+        }
+        if (window.isSecurityProtectedPath(normFp)) {
+            return `ERROR: ${normFp} is a protected path and cannot be deleted by a tool call.`;
+        }
+        if (window.isSensitiveUserFile(normFp)) {
+            return `ERROR: ${normFp} is a private user settings file and cannot be deleted by a tool call.`;
+        }
+        if (window.isAttachmentPath?.(normFp)) {
+            return `ERROR: ${normFp} is a read-only session attachment and cannot be deleted by a tool call.`;
+        }
+        if (window.isToolOrAgentPath(normFp) || window.isAgentPath(normFp)) {
+            return `ERROR: ${normFp} is inside .agent and cannot be deleted by a tool call.`;
+        }
+        if (window.shouldHideFromTools(normFp)) {
+            return `ERROR: ${normFp} has .agent extension and is hidden from tool access. You can enable access in Settings > Explorer > Show .agent files to tools.`;
+        }
+
+        const meta = window.registry?.meta?.[normFp];
+        let isDir = !!(meta && meta.kind === 'directory');
+        if (!meta) {
+            const diskFile = typeof window.fileExistsOnDisk === 'function' ? await window.fileExistsOnDisk(normFp) : false;
+            if (!diskFile) {
+                const diskDir = typeof window.workspaceDirExists === 'function' ? await window.workspaceDirExists(normFp) : false;
+                if (diskDir) {
+                    isDir = true;
+                } else if (window.registry?.files?.[normFp] === undefined) {
+                    return `ERROR: ${normFp} not found`;
+                }
+            }
+        }
+
+        const recursive = !!(opts && opts.recursive === true);
+        if (isDir) {
+            if (!recursive) {
+                return `ERROR: ${normFp} is a directory. Pass recursive: true to delete a directory and its contents.`;
+            }
+            const prefix = normFp + '/';
+            for (const k of Object.keys(window.registry?.meta || {})) {
+                if (k.startsWith(prefix) && (window.isSecurityProtectedPath(k) || window.isSensitiveUserFile(k) || window.isAgentPath(k))) {
+                    return `ERROR: Cannot delete directory ${normFp}: contains protected path ${k}.`;
+                }
+            }
+            if (window.rootHandle && typeof window.getDirectoryHandleByPath === 'function') {
+                try {
+                    const dirHandle = await window.getDirectoryHandleByPath(normFp, false);
+                    if (dirHandle && typeof dirHandle.entries === 'function') {
+                        const findProtected = async (h, cur) => {
+                            for await (const [name, entry] of h.entries()) {
+                                const child = cur ? `${cur}/${name}` : name;
+                                if (window.isSecurityProtectedPath(child) || window.isSensitiveUserFile(child) || window.isAgentPath(child)) {
+                                    return child;
+                                }
+                                if (entry.kind === 'directory') {
+                                    const hit = await findProtected(entry, child);
+                                    if (hit) return hit;
+                                }
+                            }
+                            return null;
+                        };
+                        const blocked = await findProtected(dirHandle, normFp);
+                        if (blocked) {
+                            return `ERROR: Cannot delete directory ${normFp}: contains protected path ${blocked}.`;
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+
+        try {
+            const res = await window.fs.del(normFp, { mode: 'tool', sessionId });
+            if (res && res.error) return res.error;
+        } catch (e) {
+            return `ERROR: ${e.message || String(e)}`;
+        }
+
+        const matchesDeleted = (p) => p === normFp || (isDir && p.startsWith(normFp + '/'));
+        if (window.state?.dirtyFiles) {
+            for (const p of Array.from(window.state.dirtyFiles)) {
+                if (matchesDeleted(p)) window.state.dirtyFiles.delete(p);
+            }
+        }
+        if (window.state?.fileBase) {
+            for (const p of Array.from(window.state.fileBase.keys())) {
+                if (matchesDeleted(p)) window.state.fileBase.delete(p);
+            }
+        }
+        if (window.sniffCache) {
+            for (const p of Array.from(window.sniffCache.keys())) {
+                if (matchesDeleted(p)) window.sniffCache.delete(p);
+            }
+        }
+        if (Array.isArray(window.state?.openTabs)) {
+            const toClose = window.state.openTabs.filter(t => {
+                const base = t.startsWith('filediff:') ? t.slice('filediff:'.length)
+                    : (t.startsWith('render:') ? t.slice('render:'.length) : t);
+                return matchesDeleted(base);
+            });
+            for (const t of toClose) {
+                if (typeof window.closeTabNoConfirm === 'function') window.closeTabNoConfirm(t);
+            }
+        }
+        if (window.monacoModels) {
+            for (const [p, model] of Array.from(window.monacoModels.entries())) {
+                if (matchesDeleted(p)) {
+                    try { model.dispose(); } catch (_) {}
+                    window.monacoModels.delete(p);
+                }
+            }
+        }
+        return null;
+    },
     listFiles: async () => Object.keys(window.registry.meta).filter(f =>
         window.registry.meta[f]?.kind === 'file' &&
         !window.isSecurityProtectedPath(f) &&
@@ -1011,7 +1130,7 @@ const TOOL_API_METHODS = {
 };
 
 const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'load_skill', 'changes']);
-const TOOL_IO_WRITE = new Set(['edit', 'write', 'rename']);
+const TOOL_IO_WRITE = new Set(['edit', 'write', 'rename', 'delete']);
 const TOOLS_DIR = '.agent/tools';
 const TOOL_SETTING_TYPES = ['number', 'text', 'boolean', 'select', 'model'];
 const TOOL_TIMEOUT_DEFAULT_MS = 120000;

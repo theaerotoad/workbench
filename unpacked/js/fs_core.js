@@ -949,7 +949,14 @@ export const fs = (() => {
             ensureLog(p, sid).push(op);
 
             if (op.kind === 'delete') {
-                ctx.modifiedFiles.delete(p);
+                if (b.originalFiles[p] === undefined && op.previousContent !== undefined) {
+                    b.originalFiles[p] = op.previousContent;
+                }
+                if (b.originalFiles[p] !== undefined && b.originalFiles[p] !== null) {
+                    ctx.modifiedFiles.add(p);
+                } else {
+                    ctx.modifiedFiles.delete(p);
+                }
             } else if (op.kind === 'create') {
                 if (b.originalFiles[p] === undefined) b.originalFiles[p] = null;
                 ctx.modifiedFiles.add(p);
@@ -1088,9 +1095,51 @@ export const fs = (() => {
             return { error: `ERROR: ${path} is a virtual settings file/folder and can't be deleted.` };
         }
         if (isSecurityProtectedPath(path)) return { error: `ERROR: ${path} is a protected path.` };
-        await window.rawDelete(path);
+
+        const meta = registry.meta[path];
+        const isDir = !!(meta && meta.kind === 'directory');
+        const affectedFiles = [];
+        const prevByPath = new Map();
+
         if (opts.track !== false) {
-            await record({ kind: 'delete', path, mode: opts.mode || 'ui' }, sid);
+            const ctx = window.sessionCtx(sid);
+            const origFiles = (ctx && !ctx.deleted && ctx.baseline && ctx.baseline.originalFiles) || {};
+
+            if (isDir) {
+                const prefix = path + '/';
+                for (const k of Object.keys(registry.meta).sort()) {
+                    if (k.startsWith(prefix) && registry.meta[k]?.kind === 'file') {
+                        affectedFiles.push(k);
+                    }
+                }
+            } else {
+                affectedFiles.push(path);
+            }
+
+            for (const fp of affectedFiles) {
+                if (origFiles[fp] !== undefined) continue;
+                const fpMeta = registry.meta[fp];
+                const isBin = !!(fpMeta?.isBinary || window.BINARY_EXT_DEFINITE?.test(fp));
+                if (isBin) continue;
+                const onDisk = await fileExistsOnDisk(fp);
+                if (onDisk) {
+                    prevByPath.set(fp, await window.readFileContent(fp, { fromDisk: true }));
+                } else if (registry.files[fp] !== undefined) {
+                    prevByPath.set(fp, registry.files[fp]);
+                }
+            }
+        }
+
+        await window.rawDelete(path);
+
+        if (opts.track !== false) {
+            if (isDir && affectedFiles.length > 0) {
+                for (const fp of affectedFiles) {
+                    await record({ kind: 'delete', path: fp, previousContent: prevByPath.get(fp), mode: opts.mode || 'ui' }, sid);
+                }
+            } else {
+                await record({ kind: 'delete', path, previousContent: prevByPath.get(path), mode: opts.mode || 'ui' }, sid);
+            }
         }
         return { ok: true };
     }
