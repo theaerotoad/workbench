@@ -1,7 +1,7 @@
 // py_exec_file - tool definition
 const TOOL_META = {
     name: "py_run",
-    description: "Execute Python code directly (via 'code') or run an existing script from the workspace (via 'filepath') in an in-browser Pyodide (WebAssembly) sandbox.\n\nENVIRONMENT & PYODIDE CONSTRAINTS (NOT full native Python):\n- Client-Side Wasm Sandbox: Runs in Pyodide on WebAssembly inside the browser, NOT on a native operating system or server.\n- Single-Threaded / CPU Only: No multiprocessing, threading, or OS signals. GPU/CUDA acceleration is not available.\n- No Subprocesses / Shell: Commands like `subprocess`, `os.system`, or shell pipelines will fail.\n- Supported Packages: Out-of-the-box support for Pyodide-compiled packages including numpy, scipy, pandas, matplotlib, scikit-learn, sympy (auto-loaded on import). Pure-Python packages can be installed via micropip if network access is enabled.\n- Unsupported Packages: Native C-extensions not ported to Pyodide (e.g., native TensorFlow, OpenCV) are NOT supported.\n- Network: Python has no network access by default.\n- File & Figure Sync: Files written to the virtual filesystem and matplotlib plots are automatically captured and synced.\n- Figures: Matplotlib figures are shown to the user, but you cannot see them. The output log lists which images were displayed; print key values (numbers, summaries) if you need to reason about a plot.",
+    description: "Execute Python code directly (via 'code') or run an existing script from the workspace (via 'filepath') in an in-browser Pyodide (WebAssembly) sandbox.\n\nENVIRONMENT & PYODIDE CONSTRAINTS (NOT full native Python):\n- Client-Side Wasm Sandbox: Runs in Pyodide on WebAssembly inside the browser, NOT on a native operating system or server.\n- Single-Threaded / CPU Only: No multiprocessing, threading, or OS signals. GPU/CUDA acceleration is not available.\n- No Subprocesses / Shell: Commands like `subprocess`, `os.system`, or shell pipelines will fail.\n- Supported Packages: Out-of-the-box support for Pyodide-compiled packages including numpy, scipy, pandas, matplotlib, scikit-learn, sympy (auto-loaded on import). Pure-Python packages can be installed via micropip if network access is enabled.\n- Unsupported Packages: Native C-extensions not ported to Pyodide (e.g., native TensorFlow, OpenCV) are NOT supported.\n- Network: Python has no network access by default.\n- File & Figure Sync: Files written to or deleted from the virtual filesystem and matplotlib plots are automatically captured and synced.\n- Figures: Matplotlib figures are shown to the user, but you cannot see them. The output log lists which images were displayed; print key values (numbers, summaries) if you need to reason about a plot.",
     parameters: {
         type: "object",
         properties: {
@@ -53,6 +53,12 @@ const TOOL_META = {
         {
             key: "torchShim",
             label: "Enable the embedded CPU-only PyTorch-compatible shim (import torch)",
+            type: "boolean",
+            default: true
+        },
+        {
+            key: "syncDeletions",
+            label: "Sync file deletions back to the workspace (os.remove / shutil.rmtree)",
             type: "boolean",
             default: true
         }
@@ -1613,7 +1619,9 @@ function __pyWorkerMain() {
         const MAXF = 32 * 1024 * 1024;
         const skipped = [];
         const changed = [];
-        for (const p of JSON.parse(py.globals.get('_ion_list')())) {
+        const afterPaths = JSON.parse(py.globals.get('_ion_list')());
+        const afterSet = new Set(afterPaths);
+        for (const p of afterPaths) {
             const data = FS.readFile('/workspace/' + p);
             if (data.length > MAXF) { skipped.push(p); continue; }
             const prev = before.get(p);
@@ -1621,8 +1629,12 @@ function __pyWorkerMain() {
                 changed.push({ path: p, data });
             }
         }
+        const deleted = [];
+        for (const p of before.keys()) {
+            if (!afterSet.has(p)) deleted.push(p);
+        }
         py.globals.get('_ion_reset')();
-        post({ id: m.id, type: 'result', res, files: changed, shown, skipped }, changed.map(c => c.data.buffer));
+        post({ id: m.id, type: 'result', res, files: changed, deleted, shown, skipped }, changed.map(c => c.data.buffer));
     }
 
     self.onmessage = async (e) => {
@@ -1706,6 +1718,7 @@ async function gatherWorkspace(api, targetPath, code, notes) {
     const files = new Map();
     let total = 0;
     const paths = (typeof api?.listFiles === 'function') ? await api.listFiles() : [];
+    const targetExisted = paths.includes(targetPath);
     const wanted = paths.filter(p => typeof p === 'string' && p !== targetPath &&
         !p.startsWith('.agent') && !p.startsWith('.ion') && !p.startsWith('.git/') && !p.includes('node_modules/'));
 
@@ -1731,7 +1744,7 @@ async function gatherWorkspace(api, targetPath, code, notes) {
     };
     for (let i = 0; i < wanted.length; i += 6) await Promise.all(wanted.slice(i, i + 6).map(load));
     files.set(targetPath, enc.encode(code));
-    return files;
+    return { files, targetExisted };
 }
 
 async function ensureParentDir(api, filePath) {
@@ -1950,11 +1963,13 @@ async function handler(args, api) {
     const allowNetwork = !!(await api?.getSetting?.('allowNetwork'));
     const saveFigures = !!(await api?.getSetting?.('saveFigures'));
     const torchShimEnabled = (await api?.getSetting?.('torchShim')) !== false;
+    const syncDeletions = (await api?.getSetting?.('syncDeletions')) !== false;
     const argv = [targetPath, ...(Array.isArray(args.args) ? args.args.map(String) : [])];
 
     updateStatus('Collecting workspace files...', true);
     const notes = [];
-    const files = await gatherWorkspace(api, targetPath, code, notes);
+    const { files, targetExisted } = await gatherWorkspace(api, targetPath, code, notes);
+    const targetWasInWorkspace = inlineCode === null || targetExisted;
     const fileList = [...files.entries()].map(([path, data]) => ({ path, data }));
 
     let out = '';
@@ -2008,15 +2023,16 @@ async function handler(args, api) {
         out += (out && !out.endsWith('\n') ? '\n' : '') + r.result;
     }
     for (const s of outcome.skipped || []) notes.push(`not synced back: ${s} (larger than 32 MB)`);
-    return finish(out, outcome.files || [], outcome.shown || [], r, notes, targetPath, api, startedAt, r.status || 'ok', updateStatus, args, code);
+    return finish(out, outcome.files || [], outcome.deleted || [], outcome.shown || [], r, notes, targetPath, targetWasInWorkspace, syncDeletions, api, startedAt, r.status || 'ok', updateStatus, args, code);
 }
 
-async function finish(out, changedFiles, shownImages, r, notes, targetPath, api, startedAt, status, updateStatus, args, code) {
+async function finish(out, changedFiles, deletedFiles, shownImages, r, notes, targetPath, targetWasInWorkspace, syncDeletions, api, startedAt, status, updateStatus, args, code) {
     updateStatus('Syncing files...', true);
     const images = [];
     const seenImages = new Set();
     const imgKey = (u8) => { let h = 2166136261; for (let i = 0; i < u8.length; i++) { h ^= u8[i]; h = Math.imul(h, 16777619); } return u8.length + ':' + (h >>> 0); };
     const synced = [];
+    const deleted = [];
     const dec = new TextDecoder('utf-8', { fatal: true });
 
     for (const f of changedFiles) {
@@ -2086,10 +2102,29 @@ async function finish(out, changedFiles, shownImages, r, notes, targetPath, api,
         }
     }
 
+    if (syncDeletions && Array.isArray(deletedFiles) && deletedFiles.length && typeof api?.deleteFile === 'function') {
+        const changedSet = new Set(changedFiles.map(f => f.path));
+        for (const fp of deletedFiles) {
+            if (changedSet.has(fp)) continue;
+            if (fp === targetPath && !targetWasInWorkspace) continue;
+            try {
+                const res = await api.deleteFile(fp);
+                if (typeof res === 'string' && res.startsWith('ERROR:')) {
+                    notes.push(`could not delete ${fp}: ${res.replace(/^ERROR:\s*/, '')}`);
+                } else {
+                    deleted.push(fp);
+                }
+            } catch (err) {
+                notes.push(`delete error on ${fp}: ${err.message || err}`);
+            }
+        }
+    }
+
     updateStatus('Done', true);
     const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
     let text = clip(out.trim() || '(no output)');
     if (synced.length) text += `\n[files synced to explorer: ${synced.join(', ')}]`;
+    if (deleted.length) text += `\n[files deleted: ${deleted.join(', ')}]`;
     if (notes.length) text += `\n[${notes.join('; ')}]`;
 
     const badge = status === 'timeout' ? ['TIMED OUT', '#e5c07b', 'rgba(229,192,123,0.18)']
