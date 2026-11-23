@@ -1,3 +1,5 @@
+import './workspace_changes.js';
+
 // --- runTask.js ---
 async function runTask(task, msgId, imageUrls, sessionId) {
     if (window.isWorkspaceReadOnly?.()) {
@@ -17,18 +19,36 @@ async function runTask(task, msgId, imageUrls, sessionId) {
     const mySeq = runGen.runSeq = (runGen.runSeq || 0) + 1;
     const isSuperseded = () => runGen.runSeq !== mySeq;
 
+    runGen.isRunning = true;
+    runGen.retryCancelled = false;
+    if (isRunLive()) updatePromptSendButton();
+
+    let taskForModel = task;
+    if (typeof window.buildWorkspaceChangeNoticeForTurn === 'function') {
+        try {
+            const notice = await window.buildWorkspaceChangeNoticeForTurn(runSessionId);
+            if (notice) taskForModel = `${task}\n\n${notice}`;
+        } catch (e) {
+            console.warn('Workspace change check failed:', e);
+        }
+    }
+
+    if (isSuperseded() || runGen.retryCancelled) {
+        if (!isSuperseded()) {
+            runGen.isRunning = false;
+            if (isRunLive()) updatePromptSendButton();
+        }
+        return;
+    }
+
     const userContent = (imageUrls && imageUrls.length > 0)
-        ? [{ type: "text", text: task }, ...imageUrls.map(url => ({ type: "image_url", image_url: { url } }))]
-        : task;
+        ? [{ type: "text", text: taskForModel }, ...imageUrls.map(url => ({ type: "image_url", image_url: { url } }))]
+        : taskForModel;
 
     const resolvedMsgId = msgId || genMessageId();
     runCtx.messages.push({ id: resolvedMsgId, role: "user", content: userContent });
     if (isRunLive()) updateWelcomeVisibility();
     maybeUpdateSessionTitleFromPrompt(task, runSessionId).catch(() => {});
-
-    runGen.isRunning = true;
-    runGen.retryCancelled = false;
-    if (isRunLive()) updatePromptSendButton();
 
     try {
         await maybeAutoCompress(runSessionId);
@@ -835,6 +855,12 @@ async function runTask(task, msgId, imageUrls, sessionId) {
     }
     await saveSession(runSessionId);
     if (isRunLive()) focusPrompt();
+    if (typeof window.captureWorkspaceSnapshotForSession === 'function') {
+        const snapPromise = window.captureWorkspaceSnapshotForSession(runSessionId);
+        if (state.queuedPrompts && state.queuedPrompts[runSessionId]) {
+            await snapPromise;
+        }
+    }
     drainQueuedPrompt(runSessionId);
 }
 

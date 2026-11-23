@@ -28,7 +28,9 @@ const CONFIG_DEFAULTS = {
     'bg-image-enabled': 'false',
     'bg-image-path': '',
     'bg-image-blur': '10',
-    'bg-image-brightness': '100'
+    'bg-image-brightness': '100',
+    'notify-workspace-changes': 'true',
+    'notify-workspace-changes-max': '25'
    };
 
 const CONFIG_FILE = '.agent/config.json';
