@@ -130,6 +130,8 @@ function buildContextHunks(totalLines, hitIndices, context) {
     return hunks;
 }
 
+const GREP_BINARY_EXT = /\.(png|jpg|jpeg|gif|ico|bmp|webp|tif|tiff|heic|avif|psd|pdf|zip|tar|gz|xz|bz2|zst|lzma|7z|rar|exe|dll|so|dylib|mp4|mkv|webm|mp3|m4a|aac|wav|flac|ogg|avi|mov|pyc|pyo|ttf|otf|woff|woff2|eot|sqlite|sqlite3|gguf|ggml|ppu|o|a|lib|class|jar|wasm|node|swf|iso|apk|dmg|pkl|npy|npz|parquet|onnx|safetensors|docx|xlsx|pptx|odt|ods|odp|mdb|accdb|dds|tga|pdb)$/i;
+
 function isErrorResult(txt) {
     return typeof txt !== 'string' || (txt.length < 500 && /^ERROR: [^\n]*$/.test(txt));
 }
@@ -180,9 +182,10 @@ async function handler(args, api) {
     const pathFilter = args.path ? String(args.path).replace(/\\/g, '/') : '';
     const includeFilter = compileIncludeFilter(args.include);
 
-    // Filter by path & include BEFORE checking binary to avoid sniffing irrelevant files.
+    // Filter by path, include, and known-binary extensions BEFORE hitting api.isBinary/readFile.
     const allFiles = await api.listFiles();
     const candidates = allFiles.filter(fp => {
+        if (GREP_BINARY_EXT.test(fp)) return false;
         if (pathFilter && !fp.includes(pathFilter)) return false;
         if (includeFilter && !includeFilter(fp)) return false;
         return true;
@@ -202,70 +205,82 @@ async function handler(args, api) {
     let truncated = false;
     let searched = 0;
 
-    for (const fp of candidates) {
-        if (await api.isBinary(fp)) continue;
-        searched++;
-        if (searched % 10 === 0) await api.setHeaderMsg(`${header} (${searched} files scanned)`);
+    const BATCH = 20;
+    for (let start = 0; start < candidates.length && !truncated; start += BATCH) {
+        const slice = candidates.slice(start, start + BATCH);
+        const batchData = await Promise.all(slice.map(async (fp) => {
+            if (await api.isBinary(fp)) return { fp, skip: true };
+            const txt = await api.readFile(fp);
+            if (isErrorResult(txt)) return { fp, skip: true };
+            return { fp, skip: false, txt };
+        }));
 
-        const txt = await api.readFile(fp);
-        if (isErrorResult(txt)) continue;
-        const lines = txt.split('\n');
+        for (const item of batchData) {
+            if (item.skip) continue;
+            const { fp, txt } = item;
+            searched++;
+            const lines = txt.split('\n');
 
-        if (filesOnly) {
-            let count = 0;
+            if (filesOnly) {
+                let count = 0;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
+                    if (re.test(line)) count++;
+                }
+                if (count > 0) {
+                    if (fileGroups.length >= maxLines) {
+                        truncated = true;
+                        break;
+                    }
+                    fileGroups.push({ fp, count, capped: false, hunks: [] });
+                    fileCounts.set(fp, count);
+                    totalMatches += count;
+                }
+                continue;
+            }
+
+            const hitIndices = [];
+            let capped = false;
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
-                if (re.test(line)) count++;
-            }
-            if (count > 0) {
-                if (fileGroups.length >= maxLines) {
-                    truncated = true;
-                    break;
-                }
-                fileGroups.push({ fp, count, capped: false, hunks: [] });
-                fileCounts.set(fp, count);
-                totalMatches += count;
-            }
-            continue;
-        }
-
-        const hitIndices = [];
-        let capped = false;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
-            if (re.test(line)) {
-                if (totalMatches >= maxLines) {
-                    truncated = true;
-                    break;
-                }
-                if (hitIndices.length >= maxPerFile) {
-                    capped = true;
-                    break;
-                }
-                hitIndices.push(i);
-                totalMatches++;
-                matches.push({ fp, n: i + 1, text: line.trim() });
-            }
-        }
-
-        if (hitIndices.length > 0) {
-            fileCounts.set(fp, hitIndices.length);
-            if (contextLines > 0) {
-                const hunks = buildContextHunks(lines.length, hitIndices, contextLines).map(h => {
-                    const hunkLines = [];
-                    for (let idx = h.start; idx <= h.end; idx++) {
-                        const raw = lines[idx].endsWith('\r') ? lines[idx].slice(0, -1) : lines[idx];
-                        hunkLines.push({ n: idx + 1, text: raw, isMatch: h.hits.has(idx) });
+                if (re.test(line)) {
+                    if (totalMatches >= maxLines) {
+                        truncated = true;
+                        break;
                     }
-                    return { lines: hunkLines };
-                });
-                fileGroups.push({ fp, count: hitIndices.length, capped, hunks });
-            } else {
-                fileGroups.push({ fp, count: hitIndices.length, capped, hunks: [] });
+                    if (hitIndices.length >= maxPerFile) {
+                        capped = true;
+                        break;
+                    }
+                    hitIndices.push(i);
+                    totalMatches++;
+                    matches.push({ fp, n: i + 1, text: line.trim() });
+                }
             }
+
+            if (hitIndices.length > 0) {
+                fileCounts.set(fp, hitIndices.length);
+                if (contextLines > 0) {
+                    const hunks = buildContextHunks(lines.length, hitIndices, contextLines).map(h => {
+                        const hunkLines = [];
+                        for (let idx = h.start; idx <= h.end; idx++) {
+                            const raw = lines[idx].endsWith('\r') ? lines[idx].slice(0, -1) : lines[idx];
+                            hunkLines.push({ n: idx + 1, text: raw, isMatch: h.hits.has(idx) });
+                        }
+                        return { lines: hunkLines };
+                    });
+                    fileGroups.push({ fp, count: hitIndices.length, capped, hunks });
+                } else {
+                    fileGroups.push({ fp, count: hitIndices.length, capped, hunks: [] });
+                }
+            }
+
+            if (truncated) break;
         }
 
-        if (truncated) break;
+        if (!truncated && start + BATCH < candidates.length) {
+            await api.setHeaderMsg(`${header} (${searched}/${candidates.length} files scanned)`);
+        }
     }
 
     // --- Format output for model ----------------------------------------------

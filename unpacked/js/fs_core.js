@@ -710,16 +710,62 @@ export function sniffBytes(u8, partial) {
 }
 
 export async function sniffWorkspaceFile(fp) {
-    const handle = registry.meta[fp]?.handle || await getHandleByPath(fp);
+    const root = window.rootHandle;
+    const meta = registry.meta[fp];
+    const hasFreshMetaSig = !!(
+        root && root.isWebDAV && meta &&
+        typeof meta.size === 'number' && meta.mtime !== undefined &&
+        meta._freshRoot === root && meta._freshEpoch === window.wsMutationEpoch
+    );
+    const metaSig = hasFreshMetaSig ? `m:${meta.size}:${meta.mtime}` : null;
+    if (metaSig) {
+        const cached = window.sniffCache.get(fp);
+        if (cached && cached.metaSig === metaSig) return cached;
+    }
+
+    const handle = meta?.handle || await getHandleByPath(fp);
     if (!handle) throw new Error('no handle');
     const file = await handle.getFile();
     const sig = `${file.size}:${file.lastModified}`;
     const hit = window.sniffCache.get(fp);
-    if (hit && hit.sig === sig) return hit;
+    if (hit && hit.sig === sig) {
+        if (metaSig && hit.metaSig !== metaSig) hit.metaSig = metaSig;
+        return hit;
+    }
     const head = new Uint8Array(await file.slice(0, window.SNIFF_BYTES).arrayBuffer());
     const s = sniffBytes(head, file.size > head.length);
-    const res = { sig, binary: s.binary, encoding: s.encoding };
+    const res = { sig, metaSig, binary: s.binary, encoding: s.encoding };
     window.sniffCache.set(fp, res);
+
+    // On WebDAV, handle.getFile() already fetched the full response; cache decoded text
+    // so an immediately following readFile() doesn't perform a second HTTP GET.
+    if (handle.isWebDAV && !s.binary && window.rootHandle === root &&
+        registry.files[fp] === undefined &&
+        (typeof window.isFileDirty !== 'function' || !window.isFileDirty(fp)) &&
+        file.size <= 16 * 1024 * 1024) {
+        try {
+            const label = window.encodingLabel(s.encoding);
+            const text = label === 'utf-8'
+                ? await file.text()
+                : new TextDecoder(label).decode(await file.arrayBuffer());
+            if (window.rootHandle === root && registry.files[fp] === undefined) {
+                registry.files[fp] = text;
+                if (meta) {
+                    meta.isBinary = false;
+                    meta.encoding = s.encoding;
+                    meta.size = file.size;
+                    if (file.lastModified) {
+                        const fileMtimeSec = file.lastModified / 1000;
+                        if (meta.mtime === undefined || Math.abs(meta.mtime - fileMtimeSec) >= 1.5) {
+                            meta.mtime = fileMtimeSec;
+                        }
+                        meta._syncedMtime = meta.mtime;
+                        meta._syncedSize = file.size;
+                    }
+                }
+            }
+        } catch (_) {}
+    }
     return res;
 }
 
@@ -746,6 +792,7 @@ export async function resolveIsBinary(fp) {
     const meta = registry.meta[fp];
     if (!meta || meta.kind !== 'file') return false;
     if (meta.virtual || !window.rootHandle) return !!meta.isBinary;
+    if (typeof window.isFileDirty === 'function' && window.isFileDirty(fp)) return false;
     if (window.BINARY_EXT_DEFINITE.test(fp)) return true;
     try {
         const r = await sniffWorkspaceFile(fp);
