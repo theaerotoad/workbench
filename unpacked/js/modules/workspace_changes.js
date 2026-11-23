@@ -6,7 +6,7 @@ const SNAPSHOT_STAT_CAP = 5000;
 const SNAPSHOT_BATCH_SIZE = 32;
 const SNAPSHOT_MAX_TEXT_BYTES = 1024 * 1024;            // 1 MB per-file cap for line diffs
 const SNAPSHOT_MAX_TOTAL_TEXT_BYTES = 16 * 1024 * 1024; // 16 MB total text-ref budget per snapshot
-const NOTICE_MAX_REFETCH_FILES = 10;                    // Shared cap for external modified + rename-check reads
+const NOTICE_MAX_REFETCH_FILES = 10;                    // Shared cap for external modified + added/rename reads
 const NOTICE_REFETCH_TIMEOUT_MS = 3000;                 // Max time to wait on refetch reads before falling back
 const NOTICE_SNIPPET_MAX_LINES = 6;                     // Show inline snippets when a file has <= 6 changed lines
 const NOTICE_SNIPPET_CONTEXT_CHARS = 60;                // Context kept on each side of an inline change
@@ -14,6 +14,9 @@ const NOTICE_SNIPPET_MAX_CHANGE_CHARS = 160;            // Cap per-side removed/
 const NOTICE_MAX_SNIPPET_BYTES = 2048;                  // Total snippet budget across the entire notice
 const NOTICE_MAX_RANGES_PER_FILE = 6;                   // Cap displayed line ranges per file
 const NOTICE_WORD_BOUNDARY_MAX_STEP = 32;               // Max chars to shift prefix/suffix cut to a word boundary
+const RENAME_SIMILARITY_THRESHOLD = 0.5;                // Standard rename+edit similarity threshold
+const RENAME_DIR_FALLBACK_THRESHOLD = 0.3;              // 1-to-1 same-dir same-ext fallback similarity threshold
+const RENAME_NGRAM_WINDOW_CHARS = 65536;                // Cap n-gram input size for fast similarity checks
 
 const _noticeTextEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 
@@ -581,77 +584,176 @@ function _isFuzzyRenameCandidate(delPath, delSizeRaw, delText, addPath, addSizeR
     return Math.min(delSize, addSize) / Math.max(delSize, addSize) >= 0.5;
 }
 
-function _computeRenameSimilarity(beforeText, afterText) {
+function _stripBlankLines(normText) {
+    return normText
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .join('\n');
+}
+
+function _sampleForNgram(str) {
+    if (str.length <= RENAME_NGRAM_WINDOW_CHARS) return str;
+    const half = Math.floor(RENAME_NGRAM_WINDOW_CHARS / 2);
+    return str.slice(0, half) + '\n' + str.slice(-half);
+}
+
+// Sørensen-Dice similarity on character n-grams (4-grams normally, 2-grams for very short text),
+// computed over non-blank lines so blank lines never inflate similarity.
+function _textNgramDice(normA, normB) {
+    const sA = _sampleForNgram(_stripBlankLines(normA));
+    const sB = _sampleForNgram(_stripBlankLines(normB));
+    if (!sA.length || !sB.length) return 0;
+    if (sA === sB) return 1;
+
+    const minLen = Math.min(sA.length, sB.length);
+    if (minLen < 2) return sA === sB ? 1 : 0;
+    const n = minLen < 12 ? 2 : 4;
+
+    const counts = new Map();
+    const totalA = sA.length - n + 1;
+    const totalB = sB.length - n + 1;
+    for (let i = 0; i < totalA; i++) {
+        const g = sA.slice(i, i + n);
+        counts.set(g, (counts.get(g) || 0) + 1);
+    }
+
+    let intersection = 0;
+    for (let i = 0; i < totalB; i++) {
+        const g = sB.slice(i, i + n);
+        const c = counts.get(g);
+        if (c > 0) {
+            intersection++;
+            if (c === 1) counts.delete(g);
+            else counts.set(g, c - 1);
+        }
+    }
+
+    return (2 * intersection) / (totalA + totalB);
+}
+
+function _sharedPrefixSuffixLen(a, b) {
+    const minLen = Math.min(a.length, b.length);
+    let p = 0;
+    while (p < minLen && a.charCodeAt(p) === b.charCodeAt(p)) p++;
+    let s = 0;
+    const maxS = minLen - p;
+    while (s < maxS && a.charCodeAt(a.length - 1 - s) === b.charCodeAt(b.length - 1 - s)) s++;
+    return p + s;
+}
+
+// Character-level similarity using line-diff hunks (ignoring blank/whitespace-only lines):
+// unchanged non-blank lines plus shared prefix+suffix chars of adjacent paired lines in each hunk.
+function _pairedLineCharSimilarity(aLines, bLines, diffRes) {
+    let oldChars = 0;
+    for (const l of aLines) {
+        const t = l.trim();
+        if (t.length > 0) oldChars += t.length;
+    }
+    let newChars = 0;
+    for (const l of bLines) {
+        const t = l.trim();
+        if (t.length > 0) newChars += t.length;
+    }
+    const maxChars = Math.max(oldChars, newChars);
+    if (maxChars === 0) return 0;
+
+    if (!diffRes || diffRes.approximate || !Array.isArray(diffRes.hunks)) {
+        return 0;
+    }
+
+    let removedChars = 0;
+    let pairedChars = 0;
+    for (const h of diffRes.hunks) {
+        const oldNB = [];
+        const newNB = [];
+        for (const l of h.oldLines) {
+            const t = l.trim();
+            if (t.length > 0) {
+                removedChars += t.length;
+                oldNB.push(t);
+            }
+        }
+        for (const l of h.newLines) {
+            const t = l.trim();
+            if (t.length > 0) newNB.push(t);
+        }
+        const pairs = Math.min(oldNB.length, newNB.length);
+        for (let k = 0; k < pairs; k++) {
+            pairedChars += _sharedPrefixSuffixLen(oldNB[k], newNB[k]);
+        }
+    }
+
+    const unchangedChars = Math.max(0, oldChars - removedChars);
+    return (unchangedChars + pairedChars) / maxChars;
+}
+
+function _computeRenameSimilarity(beforeText, afterText, minScore = RENAME_SIMILARITY_THRESHOLD) {
     if (typeof beforeText !== 'string' || typeof afterText !== 'string') return null;
     if (!beforeText.length || !afterText.length) return null;
     if (beforeText.length > SNAPSHOT_MAX_TEXT_BYTES || afterText.length > SNAPSHOT_MAX_TEXT_BYTES) return null;
     if (beforeText === afterText) {
-        return { delta: null, hunks: null, lineEndingsOnly: false };
+        return { score: 1, delta: null, hunks: null, lineEndingsOnly: false };
     }
 
     const normA = beforeText.replace(/\r\n?/g, '\n');
     const normB = afterText.replace(/\r\n?/g, '\n');
     if (normA === normB) {
-        return { delta: null, hunks: null, lineEndingsOnly: true };
+        return { score: 1, delta: null, hunks: null, lineEndingsOnly: true };
     }
 
     const aLines = normA.split('\n');
     const bLines = normB.split('\n');
-    const maxLines = Math.max(aLines.length, bLines.length);
-    if (maxLines === 0) return null;
+    const ngramSim = _textNgramDice(normA, normB);
 
     if (typeof window.computeLineDiffHunks === 'function') {
         const res = window.computeLineDiffHunks(beforeText, afterText);
         if (!res) return null;
-        const matchedLines = Math.max(0, aLines.length - res.removed);
-        if (matchedLines === 0) return null;
-        const lineSim = matchedLines / maxLines;
-
-        if (!res.approximate && Array.isArray(res.hunks)) {
-            let oldChars = 0;
-            for (const l of aLines) oldChars += l.length;
-            let newChars = 0;
-            for (const l of bLines) newChars += l.length;
-            let removedChars = 0;
-            for (const h of res.hunks) {
-                for (const l of h.oldLines) removedChars += l.length;
-            }
-            const matchedChars = Math.max(0, oldChars - removedChars);
-            const maxChars = Math.max(oldChars, newChars);
-            const charSim = maxChars > 0 ? matchedChars / maxChars : 0;
-            // Accept either >= 50% matched character content (handles adding short/blank lines
-            // around long prose lines) or >= 50% matched lines with meaningful character overlap.
-            if (matchedChars === 0 || (charSim < 0.5 && !(lineSim >= 0.5 && charSim >= 0.3))) {
-                return null;
-            }
-        } else if (lineSim < 0.5) {
-            return null;
-        }
+        const pairedSim = _pairedLineCharSimilarity(aLines, bLines, res);
+        const score = Math.max(pairedSim, ngramSim);
+        if (score < minScore) return null;
 
         return {
+            score,
             delta: (res.added > 0 || res.removed > 0) ? { added: res.added, removed: res.removed } : null,
             hunks: _summarizeHunksFromDiff(res),
             lineEndingsOnly: false
         };
     }
 
-    if (typeof window.computeLineDiffCounts !== 'function') return null;
-    const d = window.computeLineDiffCounts(beforeText, afterText);
-    if (!d) return null;
-    const matchedLines = Math.max(0, aLines.length - d.removed);
-    if (matchedLines / maxLines < 0.5) return null;
+    if (ngramSim < minScore) return null;
+    const d = typeof window.computeLineDiffCounts === 'function'
+        ? window.computeLineDiffCounts(beforeText, afterText)
+        : null;
     return {
-        delta: (d.added > 0 || d.removed > 0) ? d : null,
+        score: ngramSim,
+        delta: (d && (d.added > 0 || d.removed > 0)) ? d : null,
         hunks: null,
         lineEndingsOnly: false
     };
 }
 
-// Pairs remaining deleted & added files that were both renamed and edited, using
-// line/content similarity when both texts are available and the match is unique on both sides.
+// Pairs remaining deleted & added files that were both renamed and edited:
+// Pass A: standard candidates (same dir or ext, size within ±50%), char similarity >= 0.5, unique 1-to-1.
+// Pass B: directory fallback — when a directory has exactly one unpaired deleted and one unpaired added
+//         file with the same extension, pair them if char similarity >= 0.3.
 function _detectEditedRenames(added, deleted, renamedOut, prevFiles, nextFiles) {
     if (!added.length || !deleted.length || !prevFiles || !nextFiles) return;
 
+    const removeMatched = (matchedAdd, matchedDel) => {
+        if (matchedAdd.size > 0) {
+            for (let i = added.length - 1; i >= 0; i--) {
+                if (matchedAdd.has(added[i])) added.splice(i, 1);
+            }
+        }
+        if (matchedDel.size > 0) {
+            for (let i = deleted.length - 1; i >= 0; i--) {
+                if (matchedDel.has(deleted[i])) deleted.splice(i, 1);
+            }
+        }
+    };
+
+    // Pass A: standard rename+edit matching (>= 0.5).
     const edgesByDel = new Map();
     const edgesByAdd = new Map();
 
@@ -665,7 +767,7 @@ function _detectEditedRenames(added, deleted, renamedOut, prevFiles, nextFiles) 
             if (typeof newText !== 'string' || !newText.length || newText.length > SNAPSHOT_MAX_TEXT_BYTES) continue;
             if (!_isFuzzyRenameCandidate(d.path, d.size, oldText, a.path, a.size, newText)) continue;
 
-            const analysis = _computeRenameSimilarity(oldText, newText);
+            const analysis = _computeRenameSimilarity(oldText, newText, RENAME_SIMILARITY_THRESHOLD);
             if (!analysis) continue;
 
             const edge = { d, a, analysis };
@@ -679,8 +781,8 @@ function _detectEditedRenames(added, deleted, renamedOut, prevFiles, nextFiles) 
         }
     }
 
-    const matchedAdd = new Set();
-    const matchedDel = new Set();
+    const matchedAddA = new Set();
+    const matchedDelA = new Set();
     for (const [d, dList] of edgesByDel.entries()) {
         if (dList.length !== 1) continue;
         const edge = dList[0];
@@ -694,20 +796,58 @@ function _detectEditedRenames(added, deleted, renamedOut, prevFiles, nextFiles) 
             hunks: edge.analysis.hunks,
             lineEndingsOnly: !!edge.analysis.lineEndingsOnly
         });
-        matchedDel.add(d);
-        matchedAdd.add(edge.a);
+        matchedDelA.add(d);
+        matchedAddA.add(edge.a);
+    }
+    removeMatched(matchedAddA, matchedDelA);
+
+    if (!added.length || !deleted.length) return;
+
+    // Pass B: directory fallback — sole unpaired deleted + sole unpaired added in same dir with same ext (>= 0.3).
+    const delByDir = new Map();
+    const addByDir = new Map();
+    for (const d of deleted) {
+        const dir = _pathDirname(d.path);
+        const list = delByDir.get(dir) || [];
+        list.push(d);
+        delByDir.set(dir, list);
+    }
+    for (const a of added) {
+        const dir = _pathDirname(a.path);
+        const list = addByDir.get(dir) || [];
+        list.push(a);
+        addByDir.set(dir, list);
     }
 
-    if (matchedAdd.size > 0) {
-        for (let i = added.length - 1; i >= 0; i--) {
-            if (matchedAdd.has(added[i])) added.splice(i, 1);
-        }
+    const matchedAddB = new Set();
+    const matchedDelB = new Set();
+    for (const [dir, delList] of delByDir.entries()) {
+        const addList = addByDir.get(dir);
+        if (delList.length !== 1 || !addList || addList.length !== 1) continue;
+        const d = delList[0];
+        const a = addList[0];
+        if (a.isBinary) continue;
+        if (_pathExtname(d.path) !== _pathExtname(a.path)) continue;
+
+        const oldText = prevFiles[d.path]?.text;
+        const newText = nextFiles[a.path]?.text;
+        if (typeof oldText !== 'string' || !oldText.length || oldText.length > SNAPSHOT_MAX_TEXT_BYTES) continue;
+        if (typeof newText !== 'string' || !newText.length || newText.length > SNAPSHOT_MAX_TEXT_BYTES) continue;
+
+        const analysis = _computeRenameSimilarity(oldText, newText, RENAME_DIR_FALLBACK_THRESHOLD);
+        if (!analysis) continue;
+
+        renamedOut.push({
+            from: d.path,
+            to: a.path,
+            delta: analysis.delta,
+            hunks: analysis.hunks,
+            lineEndingsOnly: !!analysis.lineEndingsOnly
+        });
+        matchedDelB.add(d);
+        matchedAddB.add(a);
     }
-    if (matchedDel.size > 0) {
-        for (let i = deleted.length - 1; i >= 0; i--) {
-            if (matchedDel.has(deleted[i])) deleted.splice(i, 1);
-        }
-    }
+    removeMatched(matchedAddB, matchedDelB);
 }
 
 function diffWorkspaceSnapshot(prev, next, sessionId, opts = {}) {
@@ -1007,8 +1147,8 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
     });
     if (!diff.total) return '';
 
-    // Re-read externally modified files (whose prior text is cached) and candidate
-    // rename targets within a shared 10-file cap and 3-second batch deadline.
+    // Re-read externally modified files (whose prior text is cached), rename candidates,
+    // and newly added text files within a shared 10-file cap and 3-second batch deadline.
     if (typeof window.readFileContent === 'function') {
         const modToRefetch = diff.modified
             .filter(m => {
@@ -1023,44 +1163,94 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
 
         const remainingBudget = NOTICE_MAX_REFETCH_FILES - modToRefetch.length;
         const addToRead = [];
-        if (remainingBudget > 0 && diff.added.length > 0 && diff.deleted.length > 0) {
-            const pickedAdd = new Set();
-            const hashedDelSizes = new Set();
-            const delWithText = [];
-            for (const d of diff.deleted) {
-                if (d.hash !== null && d.hash !== undefined && typeof d.size === 'number' && d.size > 0) {
-                    hashedDelSizes.add(d.size);
+        const pickedAdd = new Set();
+
+        const canReadAdded = (a) => {
+            if (pickedAdd.has(a) || a.isBinary) return false;
+            if (typeof next.files[a.path]?.text === 'string') return false;
+            if (typeof a.size === 'number' && (a.size <= 0 || a.size > SNAPSHOT_MAX_TEXT_BYTES)) return false;
+            return true;
+        };
+
+        if (remainingBudget > 0 && diff.added.length > 0) {
+            if (diff.deleted.length > 0) {
+                const hashedDelSizes = new Set();
+                const delWithText = [];
+                const delByDir = new Map();
+                const addByDir = new Map();
+
+                for (const d of diff.deleted) {
+                    if (d.hash !== null && d.hash !== undefined && typeof d.size === 'number' && d.size > 0) {
+                        hashedDelSizes.add(d.size);
+                    }
+                    const oldText = prev.files[d.path]?.text;
+                    if (typeof oldText === 'string' && oldText.length > 0 && oldText.length <= SNAPSHOT_MAX_TEXT_BYTES) {
+                        delWithText.push({ d, oldText });
+                    }
+                    const dir = _pathDirname(d.path);
+                    const list = delByDir.get(dir) || [];
+                    list.push(d);
+                    delByDir.set(dir, list);
                 }
-                const oldText = prev.files[d.path]?.text;
-                if (typeof oldText === 'string' && oldText.length > 0 && oldText.length <= SNAPSHOT_MAX_TEXT_BYTES) {
-                    delWithText.push({ d, oldText });
+                for (const a of diff.added) {
+                    const dir = _pathDirname(a.path);
+                    const list = addByDir.get(dir) || [];
+                    list.push(a);
+                    addByDir.set(dir, list);
+                }
+
+                // Priority 1: exact-size match against a hashed deleted file (unmodified rename check).
+                if (hashedDelSizes.size > 0) {
+                    for (const a of diff.added) {
+                        if (addToRead.length >= remainingBudget) break;
+                        if (a.hash !== null && a.hash !== undefined) continue;
+                        if (!canReadAdded(a)) continue;
+                        if (typeof a.size !== 'number' || !hashedDelSizes.has(a.size)) continue;
+                        addToRead.push(a);
+                        pickedAdd.add(a);
+                    }
+                }
+
+                // Priority 2: rename + edit candidates (standard fuzzy match or sole-pair directory fallback).
+                if (addToRead.length < remainingBudget && delWithText.length > 0) {
+                    for (const a of diff.added) {
+                        if (addToRead.length >= remainingBudget) break;
+                        if (!canReadAdded(a)) continue;
+
+                        const hasFuzzyCand = delWithText.some(({ d, oldText }) =>
+                            _isFuzzyRenameCandidate(d.path, d.size, oldText, a.path, a.size)
+                        );
+                        let hasDirFallbackCand = false;
+                        if (!hasFuzzyCand) {
+                            const dir = _pathDirname(a.path);
+                            const dirDels = delByDir.get(dir);
+                            const dirAdds = addByDir.get(dir);
+                            if (dirDels && dirDels.length === 1 && dirAdds && dirAdds.length === 1) {
+                                const soloDel = dirDels[0];
+                                const soloOldText = prev.files[soloDel.path]?.text;
+                                if (typeof soloOldText === 'string' &&
+                                    soloOldText.length > 0 &&
+                                    soloOldText.length <= SNAPSHOT_MAX_TEXT_BYTES &&
+                                    _pathExtname(soloDel.path) === _pathExtname(a.path)) {
+                                    hasDirFallbackCand = true;
+                                }
+                            }
+                        }
+
+                        if (!hasFuzzyCand && !hasDirFallbackCand) continue;
+                        addToRead.push(a);
+                        pickedAdd.add(a);
+                    }
                 }
             }
 
-            // Priority 1: exact-size match against a hashed deleted file (unmodified rename check).
-            if (hashedDelSizes.size > 0) {
+            // Priority 3: remaining budget — read newly added text files so the notice shows line counts
+            // and registry.files is warmed for tool reads and next-turn diffs.
+            if (addToRead.length < remainingBudget) {
                 for (const a of diff.added) {
                     if (addToRead.length >= remainingBudget) break;
-                    if (a.hash !== null && a.hash !== undefined) continue;
-                    if (a.isBinary) continue;
-                    if (typeof a.size !== 'number' || a.size <= 0 || a.size > SNAPSHOT_MAX_TEXT_BYTES) continue;
-                    if (!hashedDelSizes.has(a.size)) continue;
-                    addToRead.push(a);
-                    pickedAdd.add(a);
-                }
-            }
-
-            // Priority 2: rename + edit candidates (same dir or extension, size within ±50%).
-            if (addToRead.length < remainingBudget && delWithText.length > 0) {
-                for (const a of diff.added) {
-                    if (addToRead.length >= remainingBudget) break;
-                    if (pickedAdd.has(a) || a.isBinary) continue;
-                    if (typeof next.files[a.path]?.text === 'string') continue;
-                    if (typeof a.size === 'number' && (a.size <= 0 || a.size > SNAPSHOT_MAX_TEXT_BYTES)) continue;
-                    const hasCand = delWithText.some(({ d, oldText }) =>
-                        _isFuzzyRenameCandidate(d.path, d.size, oldText, a.path, a.size)
-                    );
-                    if (!hasCand) continue;
+                    if (typeof a.lines === 'number') continue;
+                    if (!canReadAdded(a)) continue;
                     addToRead.push(a);
                     pickedAdd.add(a);
                 }
@@ -1166,7 +1356,7 @@ async function buildWorkspaceChangeNoticeForTurn(sessionId) {
         }
     }
 
-    // Complete rename detection in order: exact hash, then rename+edit similarity, then size fallback.
+    // Complete rename detection in order: exact hash, rename+edit similarity (standard + dir fallback), then size fallback.
     _detectRenames(diff.added, diff.deleted, diff.renamed, { allowSizeFallback: false });
     _detectEditedRenames(diff.added, diff.deleted, diff.renamed, prev.files, next.files);
     _detectRenames(diff.added, diff.deleted, diff.renamed, { allowSizeFallback: true });
