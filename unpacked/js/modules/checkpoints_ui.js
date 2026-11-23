@@ -317,6 +317,28 @@ window.renderCheckpointTimeline = renderCheckpointTimeline;
 // --- AST_EXPORTS_END ---
 
 // --- renderFileDiffView.js ---
+function _formatBinaryDiffSide(rawVal, entryKind, fallbackSize, existsOnDisk) {
+    const fmtSize = (sz) => {
+        if (typeof sz !== 'number') return '';
+        return typeof formatFileSize === 'function' ? formatFileSize(sz) : `${sz} B`;
+    };
+    if (entryKind === 'delete') return '(file deleted)';
+    if (typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(rawVal)) {
+        const sz = fmtSize(rawVal.size);
+        if (rawVal.omitted) {
+            return `[Binary file${sz ? ' — ' + sz : ''}; backup omitted (${rawVal.reason || 'over size limit'})]`;
+        }
+        return `[Binary file${sz ? ' — ' + sz : ''} (saved in checkpoint)]`;
+    }
+    if (rawVal === null || rawVal === undefined) {
+        return existsOnDisk
+            ? `[Binary file${fmtSize(fallbackSize) ? ' — ' + fmtSize(fallbackSize) : ''}]`
+            : '(file absent)';
+    }
+    if (typeof rawVal === 'string') return rawVal;
+    return `[Binary file${fmtSize(fallbackSize) ? ' — ' + fmtSize(fallbackSize) : ''}]`;
+}
+
 async function renderFileDiffView(filepath, checkpointRange) {
     if (!monacoDiffEditor) return;
 
@@ -325,25 +347,51 @@ async function renderFileDiffView(filepath, checkpointRange) {
     btnDiffSave.style.display = 'inline-flex';
     btnDiffDiscard.style.display = 'inline-flex';
 
+    const meta = registry.meta[filepath];
+    const isBinPayload = (v) => typeof isBinaryBackupPayload === 'function' && isBinaryBackupPayload(v);
+    let isBinaryDiff = !!(
+        meta?.isBinary ||
+        window.BINARY_EXT_DEFINITE?.test(filepath) ||
+        isBinPayload(registry.originalFiles[filepath])
+    );
+
     let origContent, modContent, titleSuffix;
 
     if (checkpointRange) {
-        if (registry.files[filepath] === undefined) {
+        if (!isBinaryDiff && registry.files[filepath] === undefined) {
             await readFileContent(filepath);
         }
         const timeline = getFileTimeline(filepath);
         const fromEntry = timeline[checkpointRange.from];
         const toEntry = timeline[checkpointRange.to];
-        origContent = fromEntry ? (fromEntry.content || '') : '';
-        modContent = toEntry ? (toEntry.content || '') : '';
+        if (isBinPayload(fromEntry?.content) || isBinPayload(toEntry?.content)) {
+            isBinaryDiff = true;
+        }
+        if (isBinaryDiff) {
+            const existsNow = !!(meta && meta.kind === 'file');
+            origContent = _formatBinaryDiffSide(fromEntry?.content, fromEntry?.kind, meta?.size, fromEntry?.kind === 'current' && existsNow);
+            modContent = _formatBinaryDiffSide(toEntry?.content, toEntry?.kind, meta?.size, toEntry?.kind === 'current' && existsNow);
+        } else {
+            origContent = (fromEntry && typeof fromEntry.content === 'string') ? fromEntry.content : '';
+            modContent = (toEntry && typeof toEntry.content === 'string') ? toEntry.content : '';
+        }
         const fromLabel = fromEntry?.kind === 'baseline' ? 'Baseline' : fromEntry?.ts ? new Date(fromEntry.ts).toLocaleString() : '?';
         const toLabel = toEntry?.kind === 'current' ? 'Current' : toEntry?.ts ? new Date(toEntry.ts).toLocaleString() : '?';
         titleSuffix = `(${fromLabel} → ${toLabel})`;
         btnDiffSave.style.display = 'none';
         btnDiffDiscard.style.display = 'none';
         state.diffBase = undefined;
+    } else if (isBinaryDiff) {
+        const existsNow = !!(meta && meta.kind === 'file');
+        origContent = _formatBinaryDiffSide(registry.originalFiles[filepath], null, meta?.size, false);
+        modContent = existsNow
+            ? _formatBinaryDiffSide(null, 'current', meta?.size, true)
+            : '(file deleted)';
+        btnDiffSave.style.display = 'none';
+        state.diffBase = undefined;
+        titleSuffix = '(vs Baseline)';
     } else {
-        origContent = registry.originalFiles[filepath] || '';
+        origContent = typeof registry.originalFiles[filepath] === 'string' ? registry.originalFiles[filepath] : '';
         modContent = (await readFileContent(filepath)) || '';
         state.diffBase = (typeof isFileDirty === 'function' && isFileDirty(filepath) && state.fileBase && state.fileBase.has(filepath))
             ? state.fileBase.get(filepath)
@@ -353,16 +401,21 @@ async function renderFileDiffView(filepath, checkpointRange) {
 
     diffTitle.innerText = `Changes Diff: ${filepath} ${titleSuffix}`;
 
-    const origModel = MONACO.editor.createModel(origContent, langOf(filepath));
-    const modModel = MONACO.editor.createModel(modContent, langOf(filepath));
+    const lang = isBinaryDiff ? 'plaintext' : langOf(filepath);
+    const origModel = MONACO.editor.createModel(origContent, lang);
+    const modModel = MONACO.editor.createModel(modContent, lang);
 
     monacoDiffEditor.setModel({ original: origModel, modified: modModel });
-    monacoDiffEditor.updateOptions({ readOnly: !!checkpointRange });
-    const beforeLines = origContent ? origContent.split('\n').length : 0;
-    const afterLines = modContent ? modContent.split('\n').length : 0;
-    diffStats.innerHTML = checkpointRange
-        ? `<span class="dim">${beforeLines} lines → ${afterLines} lines</span>`
-        : `<span class="dim">${beforeLines} baseline lines → ${afterLines} modified lines</span>`;
+    monacoDiffEditor.updateOptions({ readOnly: !!checkpointRange || isBinaryDiff });
+    if (isBinaryDiff) {
+        diffStats.innerHTML = `<span class="dim">Binary file</span>`;
+    } else {
+        const beforeLines = origContent ? origContent.split('\n').length : 0;
+        const afterLines = modContent ? modContent.split('\n').length : 0;
+        diffStats.innerHTML = checkpointRange
+            ? `<span class="dim">${beforeLines} lines → ${afterLines} lines</span>`
+            : `<span class="dim">${beforeLines} baseline lines → ${afterLines} modified lines</span>`;
+    }
 
     setTimeout(() => monacoDiffEditor.layout(), 10);
 }

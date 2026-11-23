@@ -300,7 +300,7 @@ window.clearSessionAttachments = clearSessionAttachments;
 // --- AST_EXPORTS_END ---
 
 // --- commitEditFromModal.js ---
-function commitEditFromModal(revert) {
+async function commitEditFromModal(revert) {
     const msgId = _pendingEditMsgId;
     if (!msgId) return;
 
@@ -344,7 +344,7 @@ function commitEditFromModal(revert) {
     state.preEditAttachedReferences = null;
 
     if (doRevert && result && result.removedIds.length) {
-        window.revertToBeforePrompt(result.removedIds, rawForRevert, { skipConfirm: true });
+        await window.revertToBeforePrompt(result.removedIds, rawForRevert, { skipConfirm: true });
     }
 
     input.value = newText;

@@ -391,9 +391,9 @@ function messageHasFileEdits(ids) {
         const first = ops.findIndex((o) => o && o.prompt && idSet.has(o.prompt.id));
         if (first === -1) continue;
 
-        // Renames and directory creation are always real changes.
+        // Renames, directory creation, and directory deletion are always real changes.
         if (ops.some((o) => o && o.prompt && idSet.has(o.prompt.id) &&
-            (o.kind === 'rename-in' || o.kind === 'rename-out' || o.kind === 'mkdir'))) return true;
+            (o.kind === 'rename-in' || o.kind === 'rename-out' || o.kind === 'mkdir' || (o.kind === 'delete' && o.isDir)))) return true;
 
         // State of the file just before the first affected op (null = did not exist).
         let before;
