@@ -75,7 +75,23 @@ function describeToolAction(name, args) {
         case 'write': return `Write ${args.filepath || ''}`;
         case 'grep': return `Search pattern "${args.pattern || ''}"`;
         case 'find': return `Find files "${args.pattern || ''}"`;
-        case 'rename': return `Rename ${args.filepath || ''} to ${args.new_name || ''}`;
+        case 'rename': {
+            const fp = args.filepath || '';
+            const target = args.new_name || '';
+            const resolved = typeof window.resolveRenamePaths === 'function'
+                ? window.resolveRenamePaths(fp, target)
+                : null;
+            if (resolved && !resolved.error) {
+                const src = resolved.oldPath;
+                const dst = resolved.newPath;
+                const srcDir = src.includes('/') ? src.slice(0, src.lastIndexOf('/')) : '';
+                const dstDir = dst.includes('/') ? dst.slice(0, dst.lastIndexOf('/')) : '';
+                if (srcDir !== dstDir) return `Move ${src} to ${dst}`;
+                return `Rename ${src} to ${target}`;
+            }
+            const isMove = String(target).replace(/\\/g, '/').includes('/');
+            return `${isMove ? 'Move' : 'Rename'} ${fp} to ${target}`;
+        }
         case 'PreviewImage': {
             const hasCrop = [args.x, args.y, args.width, args.height].some(v => v !== undefined && v !== null);
             return `Preview ${args.filepath || ''}${hasCrop ? ` (region ${args.x || 0},${args.y || 0} ${args.width || '?'}x${args.height || '?'})` : ''}`;
