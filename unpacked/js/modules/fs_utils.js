@@ -499,13 +499,10 @@ window.shouldHideFromTools = shouldHideFromTools;
 // Single rule for what a workspace scan skips (also used by refreshPathMeta so both agree).
 function shouldSkipScanEntry(name, fullPath, isDir = false) {
     if (IGNORED_DIRS.has(name)) return true;
-    if (isDir && name.startsWith('.') && fullPath !== CUSTOM_TOOLS_DIR) return true;
     if (fullPath) {
         const parts = fullPath.split('/').filter(Boolean);
         for (let i = 0; i < parts.length - 1; i++) {
-            const seg = parts[i];
-            if (IGNORED_DIRS.has(seg)) return true;
-            if (seg.startsWith('.') && !(i === 0 && seg === CUSTOM_TOOLS_DIR)) return true;
+            if (IGNORED_DIRS.has(parts[i])) return true;
         }
     }
     return isSecurityProtectedPath(fullPath);

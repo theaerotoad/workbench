@@ -206,6 +206,7 @@ def create_app(
 
             IGNORED_DIR_NAMES = {
                 ".git", "node_modules", "venv", ".venv", "__pycache__",
+                ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
                 "target", "build", "dist"
             }
 
@@ -324,9 +325,14 @@ def create_app(
                                 last_ping = now
                                 yield ": ping\n\n"
                             valid = []
+                            ignored_event_dirs = {
+                                ".git", "node_modules", "venv", ".venv", "__pycache__",
+                                ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+                                "target", "build", "dist"
+                            }
                             for c_type, c_path in changes:
                                 rel = os.path.relpath(c_path, target_dir).replace("\\", "/")
-                                if any(p in {".git", "node_modules", "__pycache__", "venv", ".venv"} for p in rel.split("/")):
+                                if any(p in ignored_event_dirs for p in rel.split("/")):
                                     continue
                                 valid.append({"path": rel, "type": c_type.name})
                             if valid:
@@ -338,7 +344,11 @@ def create_app(
                         logger.debug(f"watchfiles disconnected or closed: {e}")
                         return
                 else:
-                    IGNORED = {".git", "node_modules", "__pycache__", "venv", ".venv"}
+                    IGNORED = {
+                        ".git", "node_modules", "venv", ".venv", "__pycache__",
+                        ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+                        "target", "build", "dist"
+                    }
 
                     def _get_signature():
                         sig = []

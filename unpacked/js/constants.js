@@ -227,7 +227,11 @@ const GLOW_STATUS_COLORS = {
     retrying: '140, 140, 140'
 };
 let HAS_FS_API = typeof window.showDirectoryPicker === 'function' && window.isSecureContext !== false;
-const IGNORED_DIRS = new Set(['node_modules', '.git', 'venv', '__pycache__', 'target', 'build', 'dist']);
+const IGNORED_DIRS = new Set([
+    'node_modules', '.git', 'venv', '.venv', '__pycache__',
+    '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox',
+    'target', 'build', 'dist'
+]);
 const IMAGE_FILE_EXT_RE = /\.(png|jpg|jpeg|gif|bmp|webp|svg|ico)$/i;
 const IMG_ZOOM_MAX = 8;
 const IMG_ZOOM_MIN = 0.2;
@@ -669,9 +673,10 @@ const TOOL_API_METHODS = {
             }
         }
 
+        let delRes = null;
         try {
-            const res = await window.fs.del(normFp, { mode: 'tool', sessionId, isDir });
-            if (res && res.error) return res.error;
+            delRes = await window.fs.del(normFp, { mode: 'tool', sessionId, isDir });
+            if (delRes && delRes.error) return delRes.error;
         } catch (e) {
             return `ERROR: ${e.message || String(e)}`;
         }
@@ -709,6 +714,13 @@ const TOOL_API_METHODS = {
                     window.monacoModels.delete(p);
                 }
             }
+        }
+        if (opts && opts.returnDetails) {
+            return {
+                ok: true,
+                isDir: !!(delRes && typeof delRes.isDir === 'boolean' ? delRes.isDir : isDir),
+                deletedFiles: Array.isArray(delRes?.deletedFiles) ? delRes.deletedFiles : []
+            };
         }
         return null;
     },
