@@ -1,7 +1,7 @@
 // map - tool definition.
 const TOOL_META = {
     name: "map",
-    description: "Outline code structure with Tree-sitter: classes, functions with signatures, nesting, and exact start-end lines, for a file or a whole directory. Much cheaper than reading files. Also outlines Markdown headings, JSON/YAML keys, CSS rules and HTML ids. Pass `symbol` (\"name\" or \"Class.method\"; substring fallback) to locate definitions anywhere under `path` and get line ranges for `read`. Large results degrade to top-level/summary detail and page via `offset`. The output always states what was skipped.",
+    description: "Outline code structure with Tree-sitter: classes, functions with signatures, nesting, and exact start-end lines, for a file or a whole directory. Much cheaper than reading files. Also outlines Markdown headings, JSON/YAML keys, CSS rules, and HTML ids plus inline script/style blocks. Pass `symbol` (\"name\" or \"Class.method\"; substring fallback) to locate definitions anywhere under `path` and get line ranges for `read`. Large results degrade to top-level/summary detail and page via `offset`. The output always states what was skipped.",
     parameters: {
         type: "object",
         properties: {
@@ -152,6 +152,8 @@ const LANGUAGE_QUERIES = {
                 (attribute
                     (attribute_name) @attr.name (#eq? @attr.name "id")
                     [(quoted_attribute_value) (attribute_value)] @attr.value))) @html.element
+        (script_element) @html.script
+        (style_element) @html.style
     `,
     fortran: `
         (module_statement (name) @class.name)
@@ -1115,6 +1117,79 @@ function extractSymbolsImperative(rootNode, exportedNames) {
     return walk(rootNode, true);
 }
 
+const JS_SCRIPT_TYPES = new Set([
+    '',
+    'text/javascript',
+    'application/javascript',
+    'application/ecmascript',
+    'text/ecmascript',
+    'module'
+]);
+
+function isJsScriptType(typeVal) {
+    const mime = String(typeVal || '').split(';')[0].trim().toLowerCase();
+    return JS_SCRIPT_TYPES.has(mime);
+}
+
+function isCssStyleType(typeVal) {
+    const mime = String(typeVal || '').split(';')[0].trim().toLowerCase();
+    return mime === '' || mime === 'text/css';
+}
+
+function inspectHtmlRawElement(elNode) {
+    const attrs = Object.create(null);
+    let rawTextNode = null;
+    for (let i = 0; i < elNode.childCount; i++) {
+        const ch = elNode.child(i);
+        if (ch.type === 'start_tag') {
+            for (let j = 0; j < ch.childCount; j++) {
+                const a = ch.child(j);
+                if (a.type !== 'attribute') continue;
+                let attrName = '';
+                let attrVal = '';
+                for (let k = 0; k < a.childCount; k++) {
+                    const part = a.child(k);
+                    if (part.type === 'attribute_name') {
+                        attrName = part.text.toLowerCase();
+                    } else if (part.type === 'quoted_attribute_value' || part.type === 'attribute_value') {
+                        attrVal = part.text.replace(/^['"]|['"]$/g, '').trim();
+                    }
+                }
+                if (attrName && attrs[attrName] === undefined) attrs[attrName] = attrVal;
+            }
+        } else if (ch.type === 'raw_text') {
+            rawTextNode = ch;
+        }
+    }
+    return { attrs, rawTextNode };
+}
+
+function formatRawTagName(tagName, attrs) {
+    let label = tagName;
+    if (attrs.id) label += `#${attrs.id}`;
+    if (attrs.src) {
+        const src = attrs.src.length > 50 ? attrs.src.slice(0, 47) + '…' : attrs.src;
+        label += `[src="${src}"]`;
+    }
+    if (attrs.type) {
+        const mime = attrs.type.split(';')[0].trim().toLowerCase();
+        const isDefault = (tagName === 'script' && mime === 'text/javascript')
+            || (tagName === 'style' && mime === 'text/css');
+        if (!isDefault) label += `[type="${attrs.type}"]`;
+    }
+    return label;
+}
+
+function shiftSymbolLines(syms, lineOffset) {
+    if (!lineOffset) return syms;
+    for (const s of syms || []) {
+        if (typeof s.ln === 'number') s.ln += lineOffset;
+        if (typeof s.end_ln === 'number') s.end_ln += lineOffset;
+        if (s.members && s.members.length) shiftSymbolLines(s.members, lineOffset);
+    }
+    return syms;
+}
+
 function extractSymbolsFromQuery(query, rootNode, langName) {
     const matches = query.matches(rootNode);
     const rawSymbols = [];
@@ -1127,6 +1202,8 @@ function extractSymbolsFromQuery(query, rootNode, langName) {
         let isAsync = false;
         let tag = '';
         let idVal = '';
+        let rawTagLabel = null;
+        let embed = null;
         let mainNode = null;
 
         for (const capture of match.captures) {
@@ -1191,11 +1268,34 @@ function extractSymbolsFromQuery(query, rootNode, langName) {
                 tag = capture.node.text;
             } else if (capture.name === 'attr.value') {
                 idVal = capture.node.text.replace(/^['"]|['"]$/g, '');
+            } else if (capture.name === 'html.script' || capture.name === 'html.style') {
+                const isScript = capture.name === 'html.script';
+                const tagName = isScript ? 'script' : 'style';
+                kind = 'tag';
+                ln = capture.node.startPosition.row + 1;
+                mainNode = capture.node;
+                const { attrs, rawTextNode } = inspectHtmlRawElement(capture.node);
+                rawTagLabel = formatRawTagName(tagName, attrs);
+                if (rawTextNode && rawTextNode.text && rawTextNode.text.trim().length > 0) {
+                    if (isScript && !attrs.src && isJsScriptType(attrs.type)) {
+                        embed = {
+                            lang: 'javascript',
+                            text: rawTextNode.text,
+                            lineOffset: rawTextNode.startPosition.row
+                        };
+                    } else if (!isScript && isCssStyleType(attrs.type)) {
+                        embed = {
+                            lang: 'css',
+                            text: rawTextNode.text,
+                            lineOffset: rawTextNode.startPosition.row
+                        };
+                    }
+                }
             }
         }
 
         if (kind === 'tag') {
-            name = (tag || 'element') + (idVal ? '#' + idVal : '');
+            name = rawTagLabel !== null ? rawTagLabel : ((tag || 'element') + (idVal ? '#' + idVal : ''));
         }
 
         if (kind !== 'unknown') {
@@ -1207,8 +1307,13 @@ function extractSymbolsFromQuery(query, rootNode, langName) {
             const sym = { kind, name, ln, end_ln, _node: mainNode };
             if (params) sym.params = params;
             if (isAsync) sym.async = true;
+            if (embed) sym._embed = embed;
 
-            if (!rawSymbols.some(s => s.kind === sym.kind && s.name === sym.name && s.ln === sym.ln)) {
+            const isDup = rawSymbols.some(s =>
+                (s._node && mainNode && s._node.id === mainNode.id && s.kind === sym.kind) ||
+                (s.kind === sym.kind && s.name === sym.name && s.ln === sym.ln && (!s._node || !mainNode))
+            );
+            if (!isDup) {
                 rawSymbols.push(sym);
             }
         }
@@ -1276,6 +1381,77 @@ function recreateParser(ctx) {
     }
     ctx.parser = (ctx.runtime && ctx.runtime.Parser) ? new ctx.runtime.Parser() : null;
     ctx.currentLangName = null;
+}
+
+async function ensureGrammarInCtx(ctx, langName) {
+    if (ctx.loadedGrammars.has(langName)) return ctx.loadedGrammars.get(langName);
+    if (ctx.grammarErrors.has(langName)) return null;
+    try {
+        const lang = await loadGrammar(ctx.runtime, langName);
+        ctx.loadedGrammars.set(langName, lang);
+        return lang;
+    } catch (err) {
+        ctx.grammarErrors.set(langName, cleanErrMsg(err));
+        return null;
+    }
+}
+
+async function subParseEmbeddedBlocks(symbols, ctx, imports, exportedNames) {
+    const embeds = [];
+    function collect(syms) {
+        for (const s of syms || []) {
+            if (s._embed) {
+                embeds.push({ sym: s, embed: s._embed });
+                delete s._embed;
+            }
+            if (s.members && s.members.length) collect(s.members);
+        }
+    }
+    collect(symbols);
+    if (embeds.length === 0) return;
+
+    // Preload any needed sub-grammars (javascript / css) once in parallel
+    const neededLangs = [...new Set(embeds.map(e => e.embed.lang))];
+    await Promise.all(neededLangs.map(l => ensureGrammarInCtx(ctx, l)));
+
+    for (const { sym, embed } of embeds) {
+        const subLang = ctx.loadedGrammars.get(embed.lang);
+        if (!subLang) continue;
+
+        let subTree = null;
+        try {
+            if (!ctx.parser) ctx.parser = new ctx.runtime.Parser();
+            if (ctx.currentLangName !== embed.lang) {
+                ctx.parser.setLanguage(subLang);
+                ctx.currentLangName = embed.lang;
+            }
+            subTree = ctx.parser.parse(embed.text);
+
+            let subSyms = [];
+            if (embed.lang === 'javascript') {
+                collectImportsAndExports(subTree.rootNode, imports, exportedNames);
+                subSyms = extractSymbolsImperative(subTree.rootNode, exportedNames);
+            } else if (embed.lang === 'css') {
+                const qEntry = getCompiledQuery(ctx.runtime, 'css', subLang);
+                if (qEntry && qEntry.query) {
+                    subSyms = extractSymbolsFromQuery(qEntry.query, subTree.rootNode, 'css');
+                }
+            }
+
+            if (subSyms.length > 0) {
+                shiftSymbolLines(subSyms, embed.lineOffset);
+                if (!sym.members) sym.members = [];
+                sym.members.push(...subSyms);
+            }
+        } catch (_) {
+            // Keep the outer <script>/<style> range shell intact if inline parsing traps
+            recreateParser(ctx);
+        } finally {
+            if (subTree) {
+                try { subTree.delete(); } catch (_) {}
+            }
+        }
+    }
 }
 
 async function mapOneFile(fp, content, ctx) {
@@ -1420,6 +1596,13 @@ async function mapOneFile(fp, content, ctx) {
             }
         } else {
             symbols = extractSymbolsImperative(tree.rootNode, exportedNames);
+        }
+
+        // Free the HTML tree before sub-parsing embedded JS/CSS blocks
+        if (langName === 'html' && symbols.length > 0) {
+            try { tree.delete(); } catch (_) {}
+            tree = null;
+            await subParseEmbeddedBlocks(symbols, ctx, imports, exportedNames);
         }
 
         const stats = tallySymbols(symbols);

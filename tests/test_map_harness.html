@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ion map.js Test Harness</title>
+<style>
+  :root {
+    --bg: #111318;
+    --panel: #191d26;
+    --border: #2a3140;
+    --fg: #e6ebf5;
+    --dim: #8b95a8;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --blue: #60a5fa;
+  }
+  body { margin: 0; padding: 20px; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { margin: 0 0 12px 0; font-size: 18px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  button { background: #263148; color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #334261; }
+  button.primary { background: #2563eb; border-color: #3b82f6; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .summary { margin-left: auto; font-size: 13px; color: var(--dim); }
+  .suite { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .suite-hdr { padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .case { padding: 8px 14px; border-bottom: 1px solid #202533; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .case:last-child { border-bottom: none; }
+  .pass { color: var(--green); }
+  .fail { color: var(--red); }
+  .warn { color: var(--yellow); }
+  .info { color: var(--blue); }
+  pre { margin: 6px 0 0 0; padding: 8px; background: #0d1016; border: 1px solid #222838; border-radius: 4px; white-space: pre-wrap; max-height: 260px; overflow: auto; color: var(--dim); font-size: 11.5px; }
+</style>
+</head>
+<body>
+  <h1>map.js Verification Harness (§3.1–3.5)</h1>
+  <div class="bar">
+    <button id="btn-run-all" class="primary">Run All Tests</button>
+    <button id="btn-smoke">Run All-Language Smoke Test (§3.3)</button>
+    <button id="btn-probe">Probe HTML WASM Versions (Issue 1b)</button>
+    <button id="btn-snapshots">Dump Regress Snapshots (§3.4)</button>
+    <label style="font-size:12px; color:var(--dim); display:flex; align-items:center; gap:6px;">
+      Source URL:
+      <input id="src-url" value="../unpacked/tools/map.js" style="background:#0d1016; color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:4px 8px; width:210px;" />
+    </label>
+    <span class="summary" id="summary">Idle</span>
+  </div>
+  <div id="output"></div>
+
+<script>
+const WORKER_RUNNER_SOURCE = `
+"use strict";
+let toolSrc = '';
+let fetchCounts = {};
+let failGrammarLang = null;
+
+const origFetch = self.fetch.bind(self);
+self.fetch = function(input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
+  fetchCounts[url] = (fetchCounts[url] || 0) + 1;
+  if (failGrammarLang && url.includes('tree-sitter-' + failGrammarLang + '.wasm')) {
+    return Promise.resolve(new Response('Not Found', { status: 404 }));
+  }
+  return origFetch(input, init);
+};
+
+let pendingApi = new Map();
+let reqId = 0;
+
+function callHost(runId, method, args) {
+  const id = ++reqId;
+  return new Promise((resolve, reject) => {
+    pendingApi.set(id, { resolve, reject });
+    self.postMessage({ type: 'api', id, runId, method, args });
+  });
+}
+
+self.addEventListener('message', async (e) => {
+  const m = e.data;
+  if (m.type === 'load') {
+    toolSrc = m.src;
+    self.postMessage({ type: 'loaded' });
+    return;
+  }
+  if (m.type === 'config') {
+    if ('failGrammarLang' in m) {
+      failGrammarLang = m.failGrammarLang;
+      if (globalThis.__mapLanguageCache && m.failGrammarLang) {
+        delete globalThis.__mapLanguageCache[m.failGrammarLang];
+      }
+    }
+    if (m.resetFetchCounts) fetchCounts = {};
+    self.postMessage({ type: 'configured', id: m.id });
+    return;
+  }
+  if (m.type === 'get-fetch-counts') {
+    self.postMessage({ type: 'fetch-counts', id: m.id, counts: fetchCounts });
+    return;
+  }
+  if (m.type === 'api-result') {
+    const p = pendingApi.get(m.id);
+    if (!p) return;
+    pendingApi.delete(m.id);
+    if (m.error) p.reject(new Error(m.error));
+    else p.resolve(m.value);
+    return;
+  }
+  if (m.type === 'eval-helpers') {
+    try {
+      const fn = new Function(toolSrc + '\\nreturn (' + m.expr + ');');
+      const val = await fn();
+      self.postMessage({ type: 'eval-done', id: m.id, value: val });
+    } catch (err) {
+      self.postMessage({ type: 'eval-done', id: m.id, error: err.message || String(err) });
+    }
+    return;
+  }
+  if (m.type === 'run') {
+    const runId = m.runId;
+    const api = {
+      mode: 'code',
+      planFile: '.agent_plan.md',
+      listFiles: () => callHost(runId, 'listFiles', []),
+      readFile: (fp) => callHost(runId, 'readFile', [fp]),
+      statFile: (fp) => callHost(runId, 'statFile', [fp]),
+      getSetting: (k) => callHost(runId, 'getSetting', [k]),
+      showUI: (html, opts) => callHost(runId, 'showUI', [html, opts || {}]),
+      setHeaderMsg: (msg) => callHost(runId, 'setHeaderMsg', [msg])
+    };
+    try {
+      const factory = new Function('args', 'api', toolSrc + '\\nreturn handler(args, api);');
+      const res = await factory(m.args || {}, api);
+      self.postMessage({ type: 'done', runId, result: res });
+    } catch (err) {
+      self.postMessage({ type: 'done', runId, error: err.message || String(err), stack: err.stack });
+    }
+  }
+});
+`;
+
+class MapWorkerHarness {
+  constructor(src) {
+    this.src = src;
+    this.blobUrl = URL.createObjectURL(new Blob([WORKER_RUNNER_SOURCE], { type: 'application/javascript' }));
+    this.worker = new Worker(this.blobUrl);
+    this.runs = new Map();
+    this.ctrl = new Map();
+    this.runSeq = 0;
+    this.ctrlSeq = 0;
+    this.ready = new Promise((resolve) => {
+      const onLoad = (e) => {
+        if (e.data && e.data.type === 'loaded') {
+          this.worker.removeEventListener('message', onLoad);
+          resolve();
+        }
+      };
+      this.worker.addEventListener('message', onLoad);
+    });
+    this.worker.addEventListener('message', (e) => this._onMsg(e.data));
+    this.worker.postMessage({ type: 'load', src });
+  }
+
+  async _onMsg(m) {
+    if (m.type === 'api') {
+      const run = this.runs.get(m.runId);
+      if (!run) return;
+      try {
+        const val = await run.handleApi(m.method, m.args);
+        this.worker.postMessage({ type: 'api-result', id: m.id, value: val });
+      } catch (err) {
+        this.worker.postMessage({ type: 'api-result', id: m.id, error: err.message || String(err) });
+      }
+    } else if (m.type === 'done') {
+      const run = this.runs.get(m.runId);
+      if (!run) return;
+      this.runs.delete(m.runId);
+      if (m.error) run.reject(new Error(m.error));
+      else run.resolve({ result: m.result, counters: run.counters });
+    } else if (m.type === 'configured' || m.type === 'fetch-counts' || m.type === 'eval-done') {
+      const c = this.ctrl.get(m.id);
+      if (!c) return;
+      this.ctrl.delete(m.id);
+      if (m.error) c.reject(new Error(m.error));
+      else c.resolve(m.counts ?? m.value ?? true);
+    }
+  }
+
+  config(opts) {
+    const id = ++this.ctrlSeq;
+    return new Promise((resolve, reject) => {
+      this.ctrl.set(id, { resolve, reject });
+      this.worker.postMessage({ type: 'config', id, ...opts });
+    });
+  }
+
+  getFetchCounts() {
+    const id = ++this.ctrlSeq;
+    return new Promise((resolve, reject) => {
+      this.ctrl.set(id, { resolve, reject });
+      this.worker.postMessage({ type: 'get-fetch-counts', id });
+    });
+  }
+
+  evalInTool(expr) {
+    const id = ++this.ctrlSeq;
+    return new Promise((resolve, reject) => {
+      this.ctrl.set(id, { resolve, reject });
+      this.worker.postMessage({ type: 'eval-helpers', id, expr });
+    });
+  }
+
+  run(args, { files = {}, settings = {}, readLatencyMs = 0, useStat = true } = {}) {
+    const runId = ++this.runSeq;
+    const counters = { showUI: 0, showUILive: 0, setHeaderMsg: 0, readFile: 0 };
+    const handleApi = async (method, a) => {
+      if (method === 'listFiles') return Object.keys(files);
+      if (method === 'readFile') {
+        counters.readFile++;
+        if (readLatencyMs > 0) await new Promise(r => setTimeout(r, readLatencyMs));
+        const fp = a[0];
+        if (!(fp in files)) return `ERROR: File not found: \${fp}`;
+        return files[fp];
+      }
+      if (method === 'statFile') {
+        if (!useStat) return null;
+        const fp = a[0];
+        if (!(fp in files)) return null;
+        const c = files[fp];
+        return { size: typeof c === 'string' ? c.length : 0, mtime: 1700000000, isBinary: false };
+      }
+      if (method === 'getSetting') return settings[a[0]];
+      if (method === 'showUI') {
+        counters.showUI++;
+        if (a[1] && a[1].live) counters.showUILive++;
+        return { cancelled: false };
+      }
+      if (method === 'setHeaderMsg') {
+        counters.setHeaderMsg++;
+        return null;
+      }
+      return null;
+    };
+
+    return new Promise((resolve, reject) => {
+      this.runs.set(runId, { resolve, reject, handleApi, counters });
+      this.worker.postMessage({ type: 'run', runId, args });
+    });
+  }
+
+  terminate() {
+    this.worker.terminate();
+    URL.revokeObjectURL(this.blobUrl);
+  }
+}
+
+// --- Fixture Builders (§3.2) ------------------------------------------------
+const HTML_FIXTURES = [
+  ['html/01_basic.html', '<div id="a"><span id="b">hi</span></div>'],
+  ['html/02_semantic.html', '<section id="a"><nav><ul><li><a href="#">x</a></li></ul></nav><table><tr><td>1</td></tr></table><button id="b">go</button></section>'],
+  ['html/03_void.html', '<div id="a"><br/><img src="x.png" /></div>'],
+  ['html/04_empty_svg.html', '<div id="a"><svg viewBox="0 0 10 10"></svg></div>'],
+  ['html/05_svg_path.html', '<div id="a"><path d="M0 0L10 10"/></div>'],
+  ['html/06_svg_circle.html', '<div id="a"><circle></circle></div>'],
+  ['html/07_custom_el.html', '<div id="a"><my-widget>hi</my-widget></div>'],
+  ['html/08_svg_nested.html', '<div id="a"><svg><path d="M0 0"/></svg></div>']
+];
+
+const CSS_FIXTURE = `.a { color: red; }
+#b .c { margin: 0; }
+@media (max-width: 600px) {
+  .d { display: none; }
+}
+`;
+
+const IIFE_FIXTURES = {
+  'js/iife.js': `(function () {
+  let state = 0;
+  function inner(a) { return a + 1; }
+  const arrow = (x) => x * 2;
+})();
+
+function topLevel() { return 1; }
+`,
+  'js/iife_bang.js': `!function () {
+  function bangFn(a) { return a; }
+}();
+`,
+  'js/iife_arrow.js': `(() => {
+  const arrowInner = (v) => v + 1;
+})();
+`,
+  'js/iife_call.js': `(function () {
+  function boundFn() { return this; }
+}).call(this);
+`,
+  'js/amd.js': `define(['dep'], function (dep) {
+  function amdFn() { return dep; }
+});
+`
+};
+
+const MD_FIXTURE = `# Title
+Intro text.
+
+\`\`\`python
+# not a heading
+def foo():
+    pass
+\`\`\`
+
+## Setup
+Run install.
+
+~~~bash
+# also not a heading
+echo hi
+~~~
+
+### Details
+More text.
+`;
+
+const REGRESS_FIXTURES = {
+  'regress/sample.py': `import os
+from pathlib import Path
+
+class Store:
+    def __init__(self, root):
+        self.root = root
+
+    async def load(self, key):
+        return key
+
+def helper(x, y=1):
+    return x + y
+`,
+  'regress/sample.js': `import { x } from './x.js';
+
+export class Engine {
+  constructor(cfg) { this.cfg = cfg; }
+  async run(task) { return task; }
+}
+
+const compute = (a, b) => a + b;
+function exportedFn() { return 1; }
+window.exportedFn = exportedFn;
+`,
+  'regress/sample.go': `package main
+import "fmt"
+
+type Server struct { Port int }
+func (s *Server) Start() { fmt.Println(s.Port) }
+func main() {}
+`,
+  'regress/sample.rs': `use std::io;
+pub struct Cache { size: usize }
+pub fn init_cache(n: usize) -> Cache { Cache { size: n } }
+`,
+  'regress/sample.html': `<div id="app"><main id="content"><p>hello</p></main></div>`,
+  'regress/sample.yaml': `name: demo\nversion: 1\nservers:\n  - a\n  - b\n`,
+  'regress/sample.json': `{\n  "name": "demo",\n  "items": [1, 2, 3],\n  "nested": { "a": 1 }\n}\n`
+};
+
+const LANGUAGE_SAMPLES = {
+  python: ['t.py', 'class A:\n    def f(self): pass\n'],
+  javascript: ['t.js', 'function hello(a) { return a; }\n'],
+  typescript: ['t.ts', 'export function greet(name: string): string { return name; }\n'],
+  tsx: ['t.tsx', 'export function App() { return <div />; }\n'],
+  go: ['t.go', 'package p\nfunc Foo(x int) int { return x }\n'],
+  rust: ['t.rs', 'pub fn bar(x: i32) -> i32 { x }\n'],
+  java: ['t.java', 'public class Demo { public void run() {} }\n'],
+  c: ['t.c', 'int add(int a, int b) { return a + b; }\n'],
+  cpp: ['t.cpp', 'class Box { public: int area() { return 1; } };\n'],
+  c_sharp: ['t.cs', 'public class Item { public void Save() {} }\n'],
+  ruby: ['t.rb', 'class Greeter\n  def hi; end\nend\n'],
+  php: ['t.php', '<?php function ping() { return 1; } ?>\n'],
+  swift: ['t.swift', 'func compute(x: Int) -> Int { return x }\n'],
+  css: ['t.css', '.btn { color: red; }\n'],
+  html: ['t.html', '<div id="root"><span>ok</span></div>\n'],
+  fortran: ['t.f90', 'module m\ncontains\nsubroutine sub(x)\nend subroutine\nend module\n'],
+  matlab: ['t.m', 'function y = double_val(x)\ny = x * 2;\nend\n'],
+  julia: ['t.jl', 'module Demo\nfunction calc(x)\n  return x + 1\nend\nend\n']
+};
+
+function makeManyFiles(count = 120) {
+  const files = {};
+  for (let i = 0; i < count; i++) {
+    const id = String(i).padStart(3, '0');
+    files[`many/mod_${id}.py`] = i === 100
+      ? `def f_${id}():\n    pass\n\ndef needle(x):\n    return x\n`
+      : `def f_${id}():\n    pass\n`;
+  }
+  return files;
+}
+
+// --- UI Helpers -------------------------------------------------------------
+const outEl = document.getElementById('output');
+const summaryEl = document.getElementById('summary');
+let totalPass = 0, totalFail = 0;
+
+function resetUI() {
+  outEl.innerHTML = '';
+  totalPass = 0;
+  totalFail = 0;
+  summaryEl.textContent = 'Running...';
+}
+
+function addSuite(title) {
+  const div = document.createElement('div');
+  div.className = 'suite';
+  div.innerHTML = `<div class="suite-hdr"><span>${title}</span><span class="st"></span></div><div class="cases"></div>`;
+  outEl.appendChild(div);
+  const casesEl = div.querySelector('.cases');
+  const stEl = div.querySelector('.st');
+  let p = 0, f = 0;
+  return {
+    log(name, ok, detail = '', clsOverride = null) {
+      if (ok) { p++; totalPass++; } else { f++; totalFail++; }
+      const c = document.createElement('div');
+      c.className = 'case';
+      const tagCls = clsOverride || (ok ? 'pass' : 'fail');
+      const tagTxt = clsOverride ? clsOverride.toUpperCase() : (ok ? 'PASS' : 'FAIL');
+      const span = document.createElement('span');
+      span.className = tagCls;
+      span.textContent = `[${tagTxt}]`;
+      c.appendChild(span);
+      c.appendChild(document.createTextNode(' ' + name));
+      if (detail) {
+        const pre = document.createElement('pre');
+        pre.textContent = detail;
+        c.appendChild(pre);
+      }
+      casesEl.appendChild(c);
+      stEl.textContent = `${p} passed, ${f} failed`;
+      summaryEl.textContent = `Passed: ${totalPass} | Failed: ${totalFail}`;
+    }
+  };
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'Assertion failed');
+}
+
+async function fetchToolSource() {
+  const url = document.getElementById('src-url').value.trim();
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
+  return await res.text();
+}
+
+// --- Main Test Runner -------------------------------------------------------
+async function runAllTests() {
+  resetUI();
+  const src = await fetchToolSource();
+  const h = new MapWorkerHarness(src);
+  await h.ready;
+
+  try {
+    // 1. Pure Unit Helpers
+    {
+      const s = addSuite('1. Pure Unit Helpers (Markdown, HTML Fallback, Prefilter, Sort)');
+      const res = await h.evalInTool(`(() => {
+        const md = summarizeMarkdown(${JSON.stringify(MD_FIXTURE)});
+        const fb = htmlFallbackOutline('<div id="a"><svg><path d="M0 0"/></svg><script id="s1">const x = "<div id=\\"fake\\">";<' + '/script></div>');
+        const pf = symbolPrefilter('Store.load');
+        const sorted = sortPaths(['b/a.js', 'a/sub/c.js', 'a/z.js', 'a/a.js']);
+        return { md, fb, pfHit: pf('class Store { load() {} }'), pfMiss: pf('class Store {}'), sorted };
+      })()`);
+      s.log('Markdown skips fenced # comments and adds line ranges',
+        !res.md.includes('not a heading') && res.md.includes('# Title :1-19') && res.md.includes('## Setup :10-19') && res.md.includes('### Details :18-19'),
+        res.md);
+      s.log('HTML fallback extracts div#a and script#s1 while ignoring script-body fake tags',
+        res.fb.length === 1 && res.fb[0].name === 'div#a' && res.fb[0].members?.length === 1 && res.fb[0].members[0].name === 'script#s1',
+        JSON.stringify(res.fb));
+      s.log('symbolPrefilter requires all dot segments', res.pfHit === true && res.pfMiss === false);
+      s.log('sortPaths groups directories contiguously',
+        JSON.stringify(res.sorted) === JSON.stringify(['a/a.js', 'a/z.js', 'a/sub/c.js', 'b/a.js']),
+        JSON.stringify(res.sorted));
+    }
+
+    // 2. Issue 1: All 8 HTML fixtures
+    {
+      const s = addSuite('2. Issue 1: HTML Fixtures (Standard + SVG + Custom Elements)');
+      for (const [fp, html] of HTML_FIXTURES) {
+        const { result } = await h.run({ path: fp }, { files: { [fp]: html } });
+        const expectedTag = fp.includes('02_semantic') ? 'tag section#a' : 'tag div#a';
+        const isNative = !result.output.includes('[fallback]');
+        const ok = result.output.includes(expectedTag) && isNative;
+        s.log(`${fp} (native, no fallback)`, ok, result.output);
+      }
+      const urlCheck = await h.evalInTool(`getGrammarUrl('html')`);
+      s.log('Grammar URL is version-pinned', /tree-sitter-wasms@\d+\.\d+\.\d+/.test(urlCheck), urlCheck);
+    }
+
+    // 3. Issue 3 & 7: Per-file isolation + parser recreation
+    {
+      const s = addSuite('3. Issue 3 & 7: Per-file Isolation, Skip Reporting, Parser Recovery');
+      await h.config({ failGrammarLang: 'rust' });
+      const files = {
+        'mixed_bad/bad.html': '<div id="a"><svg><path d="M0 0"/></svg></div>',
+        'mixed_bad/a.py': 'def alpha(): pass\n',
+        'mixed_bad/b.py': 'def beta(): pass\n',
+        'mixed_bad/c.rs': 'pub fn broken_grammar() {}\n',
+        'mixed_bad/huge.js': 'function f() {}\n'.repeat(40000) // ~640 KB > 512 KB
+      };
+      const { result: textRes } = await h.run({ path: 'mixed_bad' }, { files });
+      s.log('Text output returns valid Python files + reports skipped .rs and huge.js',
+        textRes.output.includes('alpha()') && textRes.output.includes('beta()') &&
+        textRes.output.includes('Skipped 2 files:') && textRes.output.includes('c.rs') && textRes.output.includes('huge.js'),
+        textRes.output);
+
+      const { result: jsonRes } = await h.run({ path: 'mixed_bad', format: 'json' }, { files });
+      const parsed = JSON.parse(jsonRes.output);
+      s.log('JSON output has skipped array with reasons and valid files',
+        Array.isArray(parsed.files) && parsed.files.length === 3 && parsed.skipped.length === 2,
+        JSON.stringify({ returned: parsed.returned, skipped: parsed.skipped }));
+
+      await h.config({ failGrammarLang: null });
+      const { result: afterRes } = await h.run({ path: 'mixed_bad/a.py' }, { files });
+      s.log('Subsequent call succeeds after errors (parser healthy)', afterRes.output.includes('alpha()'), afterRes.output);
+    }
+
+    // 4. Issue 4: CSS rules & media nesting + query compile self-check
+    {
+      const s = addSuite('4. Issue 4: CSS Query & Query Compilation Self-Check');
+      const { result } = await h.run({ path: 'css/t.css' }, { files: { 'css/t.css': CSS_FIXTURE } });
+      s.log('CSS outlines .a, #b .c, and nested @media .d',
+        result.output.includes('rule .a :1') &&
+        result.output.includes('rule #b .c :2') &&
+        result.output.includes('media (max-width: 600px) :3-5') &&
+        result.output.includes('  rule .d :4'),
+        result.output);
+
+      const compileReport = await h.evalInTool(`(async () => {
+        const rt = await ensureTreeSitter({}, null);
+        const out = [];
+        for (const langName of Object.keys(LANGUAGE_QUERIES)) {
+          try {
+            const lang = await loadGrammar(rt, langName);
+            const q = getCompiledQuery(rt, langName, lang);
+            out.push({ langName, ok: !!q.query, error: q.error });
+          } catch (e) {
+            out.push({ langName, ok: false, error: e.message });
+          }
+        }
+        return out;
+      })()`);
+      for (const item of compileReport) {
+        s.log(`Query compile: ${item.langName}`, item.ok, item.error || 'Compiled OK');
+      }
+    }
+
+    // 5. Issue 5: IIFE & AMD wrappers
+    {
+      const s = addSuite('5. Issue 5: IIFE & Module-Wrapper Descent');
+      const { result } = await h.run({ path: 'js' }, { files: IIFE_FIXTURES });
+      const ok = result.output.includes('module (iife)') &&
+        result.output.includes('let state :2') &&
+        result.output.includes('inner(a) :3') &&
+        result.output.includes('arrow(x) :4') &&
+        result.output.includes('topLevel() :7') &&
+        result.output.includes('bangFn(a)') &&
+        result.output.includes('arrowInner(v)') &&
+        result.output.includes('boundFn()') &&
+        result.output.includes('amdFn()');
+      s.log('All IIFE & AMD variants expose inner symbols', ok, result.output);
+    }
+
+    // 6. Issue 2: 120 files symbol search, detail degradation, exhaustive paging
+    {
+      const s = addSuite('6. Issue 2: Symbol Pre-filter, Detail Auto-Degradation & Offset Paging');
+      const manyFiles = makeManyFiles(120);
+
+      const { result: symRes } = await h.run({ path: 'many', symbol: 'needle' }, { files: manyFiles });
+      s.log('Symbol lookup finds needle in mod_100.py (no 50-file cap)',
+        symRes.output.includes('many/mod_100.py') && symRes.output.includes('needle(x)'),
+        symRes.output);
+
+      // Explicit full paging with small budget: assert every file visited once
+      const seen = new Set();
+      let dupes = 0;
+      let offset = 0;
+      let pages = 0;
+      while (offset !== null && pages < 50) {
+        const { result } = await h.run(
+          { path: 'many', detail: 'full', format: 'json', offset },
+          { files: manyFiles, settings: { maxOutputChars: 3000 } }
+        );
+        const obj = JSON.parse(result.output);
+        for (const f of obj.files) {
+          if (seen.has(f.file)) dupes++;
+          seen.add(f.file);
+        }
+        offset = obj.next_offset;
+        pages++;
+      }
+      s.log(`Paging visits all 120 files exactly once (${pages} pages)`,
+        seen.size === 120 && dupes === 0 && offset === null,
+        `visited=${seen.size}, dupes=${dupes}, pages=${pages}`);
+
+      // detail: auto degradation
+      const { result: autoTop } = await h.run(
+        { path: 'many', detail: 'auto' },
+        { files: manyFiles, settings: { maxOutputChars: 8500 } }
+      );
+      s.log('detail:"auto" degrades to top/summary with notice in output',
+        autoTop.output.includes('Detail auto-degraded to "'),
+        autoTop.output.slice(0, 400));
+
+      const { result: autoSum } = await h.run(
+        { path: 'many', detail: 'auto' },
+        { files: manyFiles, settings: { maxOutputChars: 2000 } }
+      );
+      s.log('detail:"auto" degrades to summary on tight budget',
+        autoSum.output.includes('Detail auto-degraded to "summary"') && autoSum.output.includes('120 files'),
+        autoSum.output);
+    }
+
+    // 7. Issue 6: Performance & Throttled UI
+    {
+      const s = addSuite('7. Issue 6: Concurrent Read Pool & UI Throttling');
+      const perfFiles = makeManyFiles(300);
+      const t0 = performance.now();
+      const { counters } = await h.run(
+        { path: 'many', detail: 'summary' },
+        { files: perfFiles, readLatencyMs: 5 }
+      );
+      const elapsed = performance.now() - t0;
+      const maxUiCalls = Math.floor(elapsed / 150) + 3;
+      s.log(`300 files with 5ms readFile latency finished in ${Math.round(elapsed)}ms (seq baseline >= 1500ms)`,
+        elapsed < 900,
+        `elapsed=${Math.round(elapsed)}ms, readFile=${counters.readFile}, showUI=${counters.showUI} (limit <= ${maxUiCalls})`);
+      s.log(`showUI throttled (${counters.showUI} <= ${maxUiCalls})`, counters.showUI <= maxUiCalls);
+    }
+
+    // 8. Issue 8 & 9: Default format is text, JSON/YAML line numbers
+    {
+      const s = addSuite('8. Issue 8 & 9: Default Format & Non-AST Line Numbers');
+      const { result } = await h.run({ path: 'regress' }, { files: REGRESS_FIXTURES });
+      s.log('Default format (omitted) returns text, not JSON', !result.output.trim().startsWith('{'));
+      s.log('JSON & YAML keys include line numbers',
+        result.output.includes('"name": demo :2') && result.output.includes('"name": demo :1'),
+        result.output);
+    }
+
+    // 9. §3.5 Concurrency on a cold worker
+    {
+      const s = addSuite('9. §3.5 Cold-Worker Concurrency & Crash Isolation');
+      const cold = new MapWorkerHarness(src);
+      await cold.ready;
+      try {
+        await cold.config({ resetFetchCounts: true });
+        const [r1, r2, r3, r4] = await Promise.all([
+          cold.run({ path: 'a.py' }, { files: { 'a.py': 'def one(): pass\n' } }),
+          cold.run({ path: 'b.js' }, { files: { 'b.js': 'function two() {}\n' } }),
+          cold.run({ path: 'c.py' }, { files: { 'c.py': 'def three(): pass\n' } }),
+          cold.run({ path: 'd.html' }, { files: { 'd.html': '<div id="a"><svg><path d="M0 0"/></svg></div>' } })
+        ]);
+        const counts = await cold.getFetchCounts();
+        const pyFetches = Object.entries(counts).filter(([u]) => u.includes('tree-sitter-python.wasm')).reduce((a, [, v]) => a + v, 0);
+        const okAll = r1.result.output.includes('one()') && r2.result.output.includes('two()') &&
+          r3.result.output.includes('three()') && r4.result.output.includes('tag div#a');
+        s.log('All 4 parallel cold calls succeed (including SVG HTML alongside Python/JS)',
+          okAll,
+          JSON.stringify({
+            counts,
+            outputs: okAll ? undefined : [r1.result.output, r2.result.output, r3.result.output, r4.result.output]
+          }, null, 2));
+        s.log('Python grammar fetched at most once across parallel calls', pyFetches <= 1, `python wasm fetches = ${pyFetches}`);
+      } finally {
+        cold.terminate();
+      }
+    }
+
+    // 10. HTML Inline <script> & <style> Sub-Parsing (Option B)
+    {
+      const s = addSuite('10. HTML Script/Style Block Ranges & Inline JS/CSS Sub-Parsing');
+      const richHtml = `<!doctype html>
+<html>
+<head>
+<style id="theme">
+.card { color: red; }
+@media (max-width: 600px) {
+  .card { color: blue; }
+}
+</style>
+<script src="/static/vendor.js"><` + `/script>
+<script id="cfg" type="application/json">{"debug": true}<` + `/script>
+</head>
+<body>
+<div id="app">
+<script type="module">
+import { api } from './api.js';
+
+class Widget {
+  render(x) { return x; }
+}
+
+async function initPage(el) {
+  return el;
+}
+<` + `/script>
+</div>
+</body>
+</html>
+`;
+      const files = { 'templates/page.html': richHtml };
+      const { result } = await h.run({ path: 'templates/page.html' }, { files });
+      const out = result.output;
+      const okOutline =
+        out.includes('tag style#theme :4-9') &&
+        out.includes('rule .card :5') &&
+        out.includes('media (max-width: 600px) :6-8') &&
+        out.includes('tag script[src="/static/vendor.js"] :10') &&
+        out.includes('tag script#cfg[type="application/json"] :11') &&
+        out.includes('tag div#app :14-26') &&
+        out.includes('tag script[type="module"] :15-25') &&
+        out.includes('class Widget :18-20') &&
+        out.includes('render(x) :19') &&
+        out.includes('initPage(el) :22-24  async') &&
+        out.includes('Imports: ./api.js');
+      s.log('HTML outlines inline CSS, inline JS with shifted lines, and external/JSON script ranges', okOutline, out);
+
+      const { result: symFn } = await h.run({ path: 'templates', symbol: 'initPage' }, { files });
+      s.log('Symbol lookup finds inline HTML JS function with exact line range (L22-24)',
+        symFn.output.includes('templates/page.html') && symFn.output.includes('L22-24') && symFn.output.includes('initPage(el)'),
+        symFn.output);
+
+      const { result: symMethod } = await h.run({ path: 'templates', symbol: 'Widget.render' }, { files });
+      s.log('Symbol lookup finds Class.method inside HTML inline script (L19)',
+        symMethod.output.includes('templates/page.html') && symMethod.output.includes('L19') && symMethod.output.includes('Widget.render(x)'),
+        symMethod.output);
+    }
+  } finally {
+    h.terminate();
+  }
+}
+
+async function runSmokeTests() {
+  resetUI();
+  const src = await fetchToolSource();
+  const h = new MapWorkerHarness(src);
+  await h.ready;
+  const s = addSuite('All-Language Smoke Test (§3.3)');
+  try {
+    for (const [lang, [fp, code]] of Object.entries(LANGUAGE_SAMPLES)) {
+      const { result } = await h.run({ path: fp, format: 'json' }, { files: { [fp]: code } });
+      const obj = JSON.parse(result.output);
+      const fd = obj.files && obj.files[0];
+      const count = fd && fd.symbols ? fd.symbols.length : 0;
+      const ok = count >= 1 && (!fd || !fd.warning);
+      s.log(`${lang} (${fp})`, ok, JSON.stringify(obj));
+    }
+  } finally {
+    h.terminate();
+  }
+}
+
+async function probeHtmlVersions() {
+  resetUI();
+  const s = addSuite('HTML WASM Runtime / Grammar Version Probe (Issue 1b)');
+  const pairs = [
+    ['0.20.8', '0.1.11', false],
+    ['0.20.8', '0.1.13', false],
+    ['0.22.6', '0.1.13', false],
+    ['0.24.7', '0.1.13', false],
+    ['0.25.10', '0.1.13', true]
+  ];
+  const sample = '<div id="a"><svg><path d="M0 0"/></svg><my-widget>hi</my-widget></div>';
+
+  for (const [rtVer, grVer, isEsm] of pairs) {
+    const workerCode = `
+      self.onmessage = async () => {
+        try {
+          let Parser, Language;
+          if (${isEsm}) {
+            const mod = await import('https://cdn.jsdelivr.net/npm/web-tree-sitter@${rtVer}/tree-sitter.js');
+            Parser = mod.Parser || mod.default;
+            Language = mod.Language || Parser.Language;
+          } else {
+            importScripts('https://cdn.jsdelivr.net/npm/web-tree-sitter@${rtVer}/tree-sitter.js');
+            Parser = self.TreeSitter;
+            Language = Parser.Language;
+          }
+          await Parser.init({
+            locateFile: (p) => 'https://cdn.jsdelivr.net/npm/web-tree-sitter@${rtVer}/' + p
+          });
+          const lang = await Language.load('https://cdn.jsdelivr.net/npm/tree-sitter-wasms@${grVer}/out/tree-sitter-html.wasm');
+          const parser = new Parser();
+          parser.setLanguage(lang);
+          const tree = parser.parse(${JSON.stringify(sample)});
+          const text = tree.rootNode.toString();
+          tree.delete();
+          parser.delete();
+          self.postMessage({ ok: true, detail: text });
+        } catch (err) {
+          self.postMessage({ ok: false, detail: err.message || String(err) });
+        }
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([workerCode], { type: 'application/javascript' }));
+    const w = new Worker(url);
+    const res = await new Promise((resolve) => {
+      w.onmessage = (e) => resolve(e.data);
+      w.onerror = (e) => resolve({ ok: false, detail: e.message || 'Worker error' });
+      w.postMessage('go');
+    });
+    w.terminate();
+    URL.revokeObjectURL(url);
+    s.log(`web-tree-sitter@${rtVer} + tree-sitter-wasms@${grVer}`, res.ok, res.detail);
+  }
+}
+
+async function dumpSnapshots() {
+  resetUI();
+  const src = await fetchToolSource();
+  const h = new MapWorkerHarness(src);
+  await h.ready;
+  const s = addSuite('Regress Snapshots (§3.4)');
+  try {
+    const { result: txt } = await h.run({ path: 'regress', format: 'text' }, { files: REGRESS_FIXTURES });
+    const { result: js } = await h.run({ path: 'regress', format: 'json' }, { files: REGRESS_FIXTURES });
+    s.log('regress/ text snapshot', true, txt.output, 'info');
+    s.log('regress/ json snapshot', true, JSON.stringify(JSON.parse(js.output), null, 2), 'info');
+  } finally {
+    h.terminate();
+  }
+}
+
+document.getElementById('btn-run-all').onclick = () => runAllTests().catch(e => alert(e.message));
+document.getElementById('btn-smoke').onclick = () => runSmokeTests().catch(e => alert(e.message));
+document.getElementById('btn-probe').onclick = () => probeHtmlVersions().catch(e => alert(e.message));
+document.getElementById('btn-snapshots').onclick = () => dumpSnapshots().catch(e => alert(e.message));
+</script>
+</body>
+</html>
