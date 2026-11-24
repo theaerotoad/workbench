@@ -1,7 +1,7 @@
 // map - tool definition.
 const TOOL_META = {
     name: "map",
-    description: "Outline code structure with Tree-sitter: classes, functions with signatures, nesting, and exact start-end lines, for a file or a whole directory. Much cheaper than reading files. Also outlines Markdown headings, JSON/YAML keys, CSS rules, and HTML ids plus inline script/style blocks. Pass `symbol` (\"name\" or \"Class.method\"; substring fallback) to locate definitions anywhere under `path` and get line ranges for `read`. Large results degrade to top-level/summary detail and page via `offset`. The output always states what was skipped.",
+    description: "Outline code structure with Tree-sitter: classes, functions with signatures, nesting, and exact start-end lines, for a file or a whole directory. Much cheaper than reading files. Also outlines Markdown headings, JSON/YAML keys, CSS rules, and HTML ids plus inline script/style blocks. Pass `symbol` (\"name\" or \"Class.method\"; substring fallback) to locate definitions anywhere under `path` and get line ranges for `read`. In outline mode (no `symbol`), large results degrade via `detail` and page via 0-based `offset` (displayed file numbers are 1-based). The output always states what was skipped.",
     parameters: {
         type: "object",
         properties: {
@@ -12,7 +12,7 @@ const TOOL_META = {
             },
             symbol: {
                 type: "string",
-                description: "Optional symbol name (or 'Class.method'; substring fallback) to locate definitions anywhere under `path` with start-end line ranges ready for `read`."
+                description: "Optional symbol name (or 'Class.method'; substring fallback) to locate definitions anywhere under `path` with start-end line ranges ready for `read`. When set, `detail` and `offset` are ignored."
             },
             extensions: {
                 type: "array",
@@ -27,11 +27,11 @@ const TOOL_META = {
             detail: {
                 type: "string",
                 enum: ["auto", "full", "top", "summary"],
-                description: "Outline detail level. auto (default) degrades full -> top -> summary to fit maxOutputChars. Explicit values skip stepping and page via offset if needed."
+                description: "Outline detail level (outline mode only; ignored when `symbol` is set). auto (default) degrades full -> top -> summary to fit maxOutputChars. Explicit values skip stepping and page via offset if needed."
             },
             offset: {
                 type: "number",
-                description: "0-based starting file index into the sorted file list for paging large outlines."
+                description: "0-based number of files to skip in the sorted file list (outline mode only; ignored when `symbol` is set). Displayed file numbers are 1-based, so offset:85 starts at file [86]. Keep the same `path` and `extensions` when paging."
             }
         },
         required: []
@@ -1830,7 +1830,8 @@ function formatSkippedText(skipped) {
     if (!skipped || skipped.length === 0) return '';
     const lines = [`Skipped ${skipped.length} file${skipped.length === 1 ? '' : 's'}:`];
     for (const s of skipped) {
-        lines.push(`  ${s.file}: ${s.reason}`);
+        const numPrefix = typeof s.file_number === 'number' ? `[#${s.file_number}] ` : '';
+        lines.push(`  ${numPrefix}${s.file}: ${s.reason}`);
     }
     return lines.join('\n');
 }
@@ -1843,17 +1844,40 @@ function budgetAndPage(entries, opts) {
         offset,
         totalFiles,
         targetPath,
+        explicitExtensions,
         hitLimitReason
     } = opts;
 
     const FOOTER_RESERVE = 260;
 
+    function formatCallArgs(detail, nextOff) {
+        const args = [];
+        if (targetPath) args.push(`path:${JSON.stringify(targetPath)}`);
+        if (explicitExtensions && explicitExtensions.length) {
+            args.push(`extensions:${JSON.stringify(explicitExtensions)}`);
+        }
+        args.push(`detail:"${detail}"`);
+        args.push(`offset:${nextOff}`);
+        return args.join(', ');
+    }
+
     function buildFilesPayload(detail, sliceEntries) {
         const files = [];
         const skipped = [];
-        for (const e of sliceEntries) {
-            if (e.ok) files.push(e.fileData);
-            else skipped.push({ file: e.fp, reason: e.reason });
+        const skippedText = [];
+        const blocks = [];
+        for (let i = 0; i < sliceEntries.length; i++) {
+            const e = sliceEntries[i];
+            const fileNum = offset + i + 1;
+            if (e.ok) {
+                files.push(e.fileData);
+                if (outFormat !== 'json') {
+                    blocks.push(renderFileText(e.fileData, detail, fileNum));
+                }
+            } else {
+                skipped.push({ file: e.fp, reason: e.reason });
+                skippedText.push({ file: e.fp, reason: e.reason, file_number: fileNum });
+            }
         }
         const countCovered = sliceEntries.length;
         const nextOffset = (offset + countCovered < totalFiles) ? (offset + countCovered) : null;
@@ -1864,6 +1888,7 @@ function budgetAndPage(entries, opts) {
                 total_files: totalFiles,
                 offset,
                 returned: files.length,
+                processed: countCovered,
                 next_offset: nextOffset,
                 detail,
                 skipped
@@ -1875,25 +1900,31 @@ function budgetAndPage(entries, opts) {
             return { str: JSON.stringify(obj), countCovered, nextOffset, detail, files, skipped };
         }
 
-        const blocks = files.map((fd, idx) => renderFileText(fd, detail, offset + idx + 1));
         const parts = [];
         if (requestedDetail === 'auto' && detail !== 'full') {
             parts.push(`[Detail auto-degraded to "${detail}" to fit output budget (${maxOutputChars} chars).]`);
         }
         if (blocks.length) parts.push(blocks.join('\n\n'));
-        if (skipped.length) parts.push(formatSkippedText(skipped));
+        if (skippedText.length) parts.push(formatSkippedText(skippedText));
+
+        const scopeLabel = targetPath ? ` under "${targetPath}"` : ' at workspace root';
+        const breakdown = skipped.length
+            ? ` (${files.length} mapped, ${skipped.length} skipped)`
+            : '';
 
         if (nextOffset !== null) {
-            const scopeLabel = targetPath ? ` under "${targetPath}"` : '';
             const reasonLabel = (countCovered === entries.length && hitLimitReason)
                 ? hitLimitReason
                 : 'output budget reached';
-            const pathArg = targetPath ? `path:"${targetPath}", ` : '';
             const altHint = detail === 'full'
                 ? 'use detail:"top" or detail:"summary", '
                 : (detail === 'top' ? 'use detail:"summary", ' : '');
             parts.push(
-                `[Showing files ${offset + 1}-${offset + countCovered} of ${totalFiles}${scopeLabel} (${reasonLabel}). Narrow 'path', ${altHint}or call map(${pathArg}detail:"${detail}", offset:${nextOffset}) to continue.]`
+                `[Showing files ${offset + 1}-${offset + countCovered} of ${totalFiles}${breakdown}${scopeLabel} (${reasonLabel}). Narrow 'path', ${altHint}or call map(${formatCallArgs(detail, nextOffset)}) to continue from file #${nextOffset + 1} (offset is 0-based; file numbers are 1-based).]`
+            );
+        } else if (offset > 0) {
+            parts.push(
+                `[Showing files ${offset + 1}-${offset + countCovered} of ${totalFiles}${breakdown}${scopeLabel} (end of list; offset:${offset}, 0-based).]`
             );
         }
 
@@ -1958,6 +1989,7 @@ function budgetAndPage(entries, opts) {
                 total_files: totalFiles,
                 offset,
                 returned: fileCount,
+                processed: covered,
                 next_offset: nextOffset,
                 detail: 'summary',
                 skipped
@@ -1979,14 +2011,17 @@ function budgetAndPage(entries, opts) {
         if (skipped.length) {
             parts.push(formatSkippedText(skipped));
         }
+        const scopeLabel = targetPath ? ` under "${targetPath}"` : ' at workspace root';
         if (nextOffset !== null) {
-            const scopeLabel = targetPath ? ` under "${targetPath}"` : '';
             const reasonLabel = (covered === entries.length && hitLimitReason)
                 ? hitLimitReason
                 : 'output budget reached';
-            const pathArg = targetPath ? `path:"${targetPath}", ` : '';
             parts.push(
-                `[Showing summary for files ${offset + 1}-${offset + covered} of ${totalFiles}${scopeLabel} (${reasonLabel}). Narrow 'path' or call map(${pathArg}detail:"summary", offset:${nextOffset}) to continue.]`
+                `[Showing summary for files ${offset + 1}-${offset + covered} of ${totalFiles}${scopeLabel} (${reasonLabel}). Narrow 'path' or call map(${formatCallArgs('summary', nextOffset)}) to continue from file #${nextOffset + 1} (offset is 0-based; file numbers are 1-based).]`
+            );
+        } else if (offset > 0) {
+            parts.push(
+                `[Showing summary for files ${offset + 1}-${offset + covered} of ${totalFiles}${scopeLabel} (end of list; offset:${offset}, 0-based).]`
             );
         }
         return { str: parts.join('\n\n'), countCovered: covered, nextOffset, detail: 'summary', skipped };
@@ -2560,6 +2595,7 @@ async function handler(args, api) {
             offset,
             totalFiles,
             targetPath,
+            explicitExtensions: Array.isArray(args.extensions) && args.extensions.length > 0 ? allowedExts : null,
             hitLimitReason
         });
 

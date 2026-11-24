@@ -616,6 +616,41 @@ async function runAllTests() {
       s.log('detail:"auto" degrades to summary on tight budget',
         autoSum.output.includes('Detail auto-degraded to "summary"') && autoSum.output.includes('120 files'),
         autoSum.output);
+
+      // Text-mode paging with a skipped file mid-list: verify 1-based [N] & [#N] continuity and final footer
+      const mixedMany = { ...makeManyFiles(25) };
+      mixedMany['many/mod_005.py'] = 'def big(): pass\n'.repeat(40000); // > 512 KB -> skipped (#6)
+      const seenNums = [];
+      let textOff = 0;
+      let lastFooterOk = false;
+      let midFooterOk = false;
+      let textPages = 0;
+      while (textOff !== null && textPages < 20) {
+        const { result } = await h.run(
+          { path: 'many', detail: 'full', format: 'text', offset: textOff },
+          { files: mixedMany, settings: { maxOutputChars: 900 } }
+        );
+        const out = result.output;
+        for (const m of out.matchAll(/^\[(\d+)\]\s+many\//gm)) seenNums.push(Number(m[1]));
+        for (const m of out.matchAll(/^\s+\[#(\d+)\]\s+many\//gm)) seenNums.push(Number(m[1]));
+
+        const contMatch = out.match(/offset:(\d+)\)\s+to continue from file #(\d+)\s+\(offset is 0-based/);
+        if (contMatch) {
+          const nextOff = Number(contMatch[1]);
+          const nextFileNum = Number(contMatch[2]);
+          if (nextFileNum === nextOff + 1 && out.includes('of 25')) midFooterOk = true;
+          textOff = nextOff;
+        } else {
+          lastFooterOk = out.includes('of 25') && out.includes('(end of list; offset:');
+          textOff = null;
+        }
+        textPages++;
+      }
+      seenNums.sort((a, b) => a - b);
+      const exactSeq = seenNums.length === 25 && seenNums.every((n, i) => n === i + 1);
+      s.log(`Text paging with skipped file covers [1..25] seamlessly (${textPages} pages) with self-consistent footers`,
+        exactSeq && midFooterOk && lastFooterOk,
+        `count=${seenNums.length}, exactSeq=${exactSeq}, midFooterOk=${midFooterOk}, lastFooterOk=${lastFooterOk}`);
     }
 
     // 7. Issue 6: Performance & Throttled UI
