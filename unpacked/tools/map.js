@@ -75,13 +75,13 @@ const TOOL_META = {
 // tree-sitter-wasms@0.1.13 (ABI 13/14) and @lumis-sh/wasm-* (ABI 15).
 const TS_RUNTIME_VERSION = '0.25.10';
 const TS_GRAMMARS_VERSION = '0.1.13';
-const TS_LUMIS_VERSION = '0.26.7';
 const TS_RUNTIME_BASE_URL = `https://cdn.jsdelivr.net/npm/web-tree-sitter@${TS_RUNTIME_VERSION}`;
 const TS_GRAMMARS_BASE_URL = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms@${TS_GRAMMARS_VERSION}/out`;
+// Each @lumis-sh/wasm-* package is published with its own independent patch version.
 const TS_LUMIS_GRAMMARS = {
-    fortran: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-fortran@${TS_LUMIS_VERSION}/tree-sitter-fortran.wasm`,
-    matlab: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab@${TS_LUMIS_VERSION}/tree-sitter-matlab.wasm`,
-    julia: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-julia@${TS_LUMIS_VERSION}/tree-sitter-julia.wasm`
+    fortran: 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-fortran@0.26.0/tree-sitter-fortran.wasm',
+    matlab: 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab@0.26.7/tree-sitter-matlab.wasm',
+    julia: 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-julia@0.26.3/tree-sitter-julia.wasm'
 };
 const JSYAML_URL = 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js';
 
