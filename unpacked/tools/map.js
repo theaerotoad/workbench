@@ -885,13 +885,31 @@ function collectImportsAndExports(rootNode, imports, exportedNames) {
         for (let i = 0; i < container.childCount; i++) {
             const child = container.child(i);
             if (child.type === 'import_statement') {
-                child.children.forEach(c => {
-                    if (c.type === 'dotted_name') imports.add(c.text);
-                    else if (c.type === 'aliased_import') {
-                        const dn = c.children.find(cc => cc.type === 'dotted_name');
-                        if (dn) imports.add(dn.text);
+                const sourceNode = typeof child.childForFieldName === 'function'
+                    ? child.childForFieldName('source')
+                    : null;
+                if (sourceNode) {
+                    const m = sourceNode.text.match(/['"]([^'"]+)['"]/);
+                    if (m) imports.add(m[1]);
+                } else {
+                    let foundDotted = false;
+                    child.children.forEach(c => {
+                        if (c.type === 'dotted_name') {
+                            imports.add(c.text);
+                            foundDotted = true;
+                        } else if (c.type === 'aliased_import') {
+                            const dn = c.children.find(cc => cc.type === 'dotted_name');
+                            if (dn) {
+                                imports.add(dn.text);
+                                foundDotted = true;
+                            }
+                        }
+                    });
+                    if (!foundDotted) {
+                        const match = child.text.match(/['"]([^'"]+)['"]/);
+                        if (match) imports.add(match[1]);
                     }
-                });
+                }
             } else if (child.type === 'import_from_statement') {
                 const nameNode = child.childForFieldName('module_name');
                 if (nameNode) imports.add(nameNode.text);
