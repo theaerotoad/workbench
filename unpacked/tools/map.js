@@ -71,11 +71,18 @@ const TOOL_META = {
 };
 
 // --- Pinned Runtime & Grammar Versions --------------------------------------
-const TS_RUNTIME_VERSION = '0.20.8';
+// web-tree-sitter@0.25.10 supports ABI 13-15 and remains compatible with both
+// tree-sitter-wasms@0.1.13 (ABI 13/14) and @lumis-sh/wasm-* (ABI 15).
+const TS_RUNTIME_VERSION = '0.25.10';
 const TS_GRAMMARS_VERSION = '0.1.13';
+const TS_LUMIS_VERSION = '0.26.7';
 const TS_RUNTIME_BASE_URL = `https://cdn.jsdelivr.net/npm/web-tree-sitter@${TS_RUNTIME_VERSION}`;
 const TS_GRAMMARS_BASE_URL = `https://cdn.jsdelivr.net/npm/tree-sitter-wasms@${TS_GRAMMARS_VERSION}/out`;
-const TS_MATLAB_WASM_URL = 'https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab/tree-sitter-matlab.wasm';
+const TS_LUMIS_GRAMMARS = {
+    fortran: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-fortran@${TS_LUMIS_VERSION}/tree-sitter-fortran.wasm`,
+    matlab: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-matlab@${TS_LUMIS_VERSION}/tree-sitter-matlab.wasm`,
+    julia: `https://cdn.jsdelivr.net/npm/@lumis-sh/wasm-julia@${TS_LUMIS_VERSION}/tree-sitter-julia.wasm`
+};
 const JSYAML_URL = 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js';
 
 const DEFAULT_MAX_OUTPUT_CHARS = 24000;
@@ -317,6 +324,10 @@ function parseMarkdownHeadings(content) {
     let fenceChar = '';
     let fenceLen = 0;
 
+    const lastLineNo = (lines.length > 1 && lines[lines.length - 1] === '')
+        ? lines.length - 1
+        : lines.length;
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const openMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
@@ -345,7 +356,7 @@ function parseMarkdownHeadings(content) {
                 prefix: hm[1],
                 text: hm[2].trim(),
                 ln: i + 1,
-                end_ln: lines.length
+                end_ln: lastLineNo
             });
         }
     }
@@ -734,67 +745,104 @@ function getIifeInfo(stmtNode) {
 }
 
 // --- Tree-sitter Runtime, Grammar & Query Caching ---------------------------
+function cleanErrMsg(err) {
+    const raw = err && typeof err === 'object' && 'message' in err ? err.message : String(err);
+    return String(raw || 'unknown error').replace(/\s+/g, ' ').trim();
+}
+
 async function ensureTreeSitter(api, progress) {
-    if (globalThis.__mapTreeSitterReady) return globalThis.TreeSitter;
+    if (globalThis.__mapTreeSitterRuntime && globalThis.__mapTreeSitterVersion === TS_RUNTIME_VERSION) {
+        return globalThis.__mapTreeSitterRuntime;
+    }
 
     if (progress) {
         await progress.update(
             "Downloading Tree-sitter runtime...",
             `<div class="tool-ui-wrap" style="padding: 12px; display:flex; align-items:center; gap:8px;">
                 <div class="running-tool-spinner"></div>
-                <span style="color:var(--dim); font-size:12px;">Booting Tree-sitter WebAssembly...</span>
+                <span style="color:var(--dim); font-size:12px;">Booting Tree-sitter WebAssembly (${TS_RUNTIME_VERSION})...</span>
             </div>`,
             true
         );
     }
 
-    if (!globalThis.__mapTreeSitterReady) {
-        let initPromise = globalThis.__mapTreeSitterInit;
-        if (!initPromise) {
-            initPromise = (async () => {
-                if (typeof globalThis.TreeSitter === 'undefined') {
-                    const jsUrl = `${TS_RUNTIME_BASE_URL}/tree-sitter.js`;
-                    if (typeof importScripts === 'function') {
-                        importScripts(jsUrl);
-                    } else {
-                        const scriptRes = await fetch(jsUrl);
-                        const scriptText = await scriptRes.text();
-                        (new Function(scriptText))();
-                    }
-                }
+    let initPromise = globalThis.__mapTreeSitterInit;
+    if (!initPromise || globalThis.__mapTreeSitterInitVersion !== TS_RUNTIME_VERSION) {
+        globalThis.__mapTreeSitterInitVersion = TS_RUNTIME_VERSION;
+        initPromise = (async () => {
+            const jsUrl = `${TS_RUNTIME_BASE_URL}/tree-sitter.js`;
+            let Parser = null;
+            let Language = null;
+            let Query = null;
 
-                await globalThis.TreeSitter.init({
-                    locateFile: (path) => {
-                        if (path === 'tree-sitter.wasm') {
-                            return `${TS_RUNTIME_BASE_URL}/tree-sitter.wasm`;
-                        }
-                        return path;
+            // web-tree-sitter@0.25+ ships ESM (named exports { Parser, Language, Query }).
+            const mod = await import(jsUrl);
+            Parser = mod.Parser || mod.default || (mod.TreeSitter && mod.TreeSitter.Parser) || globalThis.TreeSitter;
+            Language = mod.Language || (Parser && Parser.Language);
+            Query = mod.Query || (Parser && Parser.Query) || null;
+
+            if (!Parser || typeof Parser.init !== 'function') {
+                throw new Error(`Unexpected web-tree-sitter@${TS_RUNTIME_VERSION} module shape`);
+            }
+
+            await Parser.init({
+                locateFile: (scriptName) => {
+                    if (scriptName === 'tree-sitter.wasm' || scriptName === 'web-tree-sitter.wasm') {
+                        return `${TS_RUNTIME_BASE_URL}/${scriptName}`;
                     }
-                });
-                globalThis.__mapTreeSitterReady = true;
-            })();
-            globalThis.__mapTreeSitterInit = initPromise;
-        }
-        try {
-            await initPromise;
-        } catch (err) {
-            if (globalThis.__mapTreeSitterInit === initPromise) globalThis.__mapTreeSitterInit = null;
-            throw err;
-        }
+                    return `${TS_RUNTIME_BASE_URL}/${scriptName}`;
+                }
+            });
+
+            const runtime = { Parser, Language, Query, version: TS_RUNTIME_VERSION };
+            // Clear any cached grammars/queries if runtime version changed in a reused worker
+            for (const k of Object.keys(languageCache)) delete languageCache[k];
+            for (const k of Object.keys(queryCache)) {
+                try { queryCache[k]?.query?.delete(); } catch (_) {}
+                delete queryCache[k];
+            }
+            globalThis.__mapTreeSitterRuntime = runtime;
+            globalThis.__mapTreeSitterVersion = TS_RUNTIME_VERSION;
+            return runtime;
+        })();
+        globalThis.__mapTreeSitterInit = initPromise;
     }
-    return globalThis.TreeSitter;
+
+    try {
+        return await initPromise;
+    } catch (err) {
+        if (globalThis.__mapTreeSitterInit === initPromise) globalThis.__mapTreeSitterInit = null;
+        throw err;
+    }
 }
 
 function getGrammarUrl(langName) {
-    if (langName === 'matlab') return TS_MATLAB_WASM_URL;
+    if (TS_LUMIS_GRAMMARS[langName]) return TS_LUMIS_GRAMMARS[langName];
     return `${TS_GRAMMARS_BASE_URL}/tree-sitter-${langName}.wasm`;
 }
 
-async function loadGrammar(TreeSitter, langName) {
+function enqueueGrammarLink(fn) {
+    const prev = globalThis.__mapGrammarLinkQueue || Promise.resolve();
+    const next = prev.then(fn, fn);
+    globalThis.__mapGrammarLinkQueue = next.catch(() => {});
+    return next;
+}
+
+async function loadGrammar(runtime, langName) {
     let langPromise = languageCache[langName];
     if (!langPromise) {
         const url = getGrammarUrl(langName);
-        langPromise = Promise.resolve().then(() => TreeSitter.Language.load(url));
+        langPromise = (async () => {
+            // Download WASM bytes concurrently across languages, but serialize
+            // Language.load(bytes) to prevent Emscripten dynamic-linker races
+            // across parallel calls or parallel grammar preloads.
+            const res = await fetch(url);
+            if (!res.ok) {
+                throw new Error(`Language.load failed with status ${res.status} (${url})`);
+            }
+            const bytes = new Uint8Array(await res.arrayBuffer());
+            return await enqueueGrammarLink(() => runtime.Language.load(bytes));
+        })();
         languageCache[langName] = langPromise;
     }
     try {
@@ -805,7 +853,7 @@ async function loadGrammar(TreeSitter, langName) {
     }
 }
 
-function getCompiledQuery(langName, lang) {
+function getCompiledQuery(runtime, langName, lang) {
     const queryStr = LANGUAGE_QUERIES[langName];
     if (!queryStr) return null;
 
@@ -818,12 +866,12 @@ function getCompiledQuery(langName, lang) {
     }
 
     try {
-        const query = lang.query(queryStr);
+        const query = runtime.Query ? new runtime.Query(lang, queryStr) : lang.query(queryStr);
         const entry = { lang, queryStr, query, error: null };
         queryCache[langName] = entry;
         return entry;
     } catch (err) {
-        const entry = { lang, queryStr, query: null, error: err.message || String(err) };
+        const entry = { lang, queryStr, query: null, error: cleanErrMsg(err) };
         queryCache[langName] = entry;
         return entry;
     }
@@ -876,6 +924,41 @@ function collectImportsAndExports(rootNode, imports, exportedNames) {
     scanStatements(rootNode, true);
 }
 
+function extractDeclaratorFuncInfo(node) {
+    let decl = typeof node.childForFieldName === 'function' ? node.childForFieldName('declarator') : null;
+    let guard = 0;
+    let paramNode = null;
+    while (decl && guard++ < 12) {
+        if (decl.type === 'function_declarator') {
+            if (!paramNode) {
+                paramNode = (typeof decl.childForFieldName === 'function' && decl.childForFieldName('parameters'))
+                    || decl.children.find(c => c.type === 'parameter_list');
+            }
+            decl = (typeof decl.childForFieldName === 'function' && decl.childForFieldName('declarator'))
+                || decl.children.find(c =>
+                    c.type === 'identifier' || c.type === 'field_identifier' ||
+                    c.type === 'qualified_identifier' || c.type === 'destructor_name' ||
+                    c.type === 'operator_name'
+                );
+            continue;
+        }
+        if (
+            decl.type === 'identifier' ||
+            decl.type === 'field_identifier' ||
+            decl.type === 'qualified_identifier' ||
+            decl.type === 'destructor_name' ||
+            decl.type === 'operator_name'
+        ) {
+            return { name: decl.text, paramNode };
+        }
+        const inner = (typeof decl.childForFieldName === 'function' && decl.childForFieldName('declarator'))
+            || decl.children.find(c => c.type.includes('declarator'));
+        if (!inner || inner === decl) break;
+        decl = inner;
+    }
+    return { name: null, paramNode };
+}
+
 function extractSymbolsImperative(rootNode, exportedNames) {
     function extractSymbol(node) {
         if (node.type.includes('comment') || node.type.includes('string')) return null;
@@ -889,20 +972,21 @@ function extractSymbolsImperative(rootNode, exportedNames) {
             node.type.includes('trait')
         ) {
             const nameNode = node.childForFieldName('name')
-                || node.children.find(c => c.type === 'identifier' || c.type === 'type_identifier');
+                || node.children.find(c => c.type === 'identifier' || c.type === 'type_identifier' || c.type === 'constant');
             if (nameNode) {
                 if (exportedNames.has(nameNode.text)) isExp = true;
-                return {
+                const res = {
                     kind: 'class',
                     name: nameNode.text,
                     ln: nameNode.startPosition.row + 1,
-                    end_ln: node.endPosition.row + 1,
-                    export: !!isExp
+                    end_ln: node.endPosition.row + 1
                 };
+                if (isExp) res.export = true;
+                return res;
             }
         }
 
-        let isFunc = (node.type.includes('function') && node.type !== 'arrow_function') || node.type.includes('method');
+        let isFunc = (node.type.includes('function') && node.type !== 'arrow_function' && node.type !== 'function_declarator') || node.type.includes('method');
         let assignedName = null;
         let isVar = false;
         let declToken = 'var';
@@ -930,20 +1014,33 @@ function extractSymbolsImperative(rootNode, exportedNames) {
         if (isFunc) {
             let name = assignedName;
             let kind = 'fn';
+            let declParamNode = null;
             if (!name) {
                 const nameNode = node.childForFieldName('name')
-                    || node.children.find(c => c.type === 'identifier' || c.type === 'property_identifier');
-                if (nameNode) name = nameNode.text;
+                    || node.children.find(c => c.type === 'identifier' || c.type === 'property_identifier' || c.type === 'field_identifier');
+                if (nameNode) {
+                    name = nameNode.text;
+                } else {
+                    const info = extractDeclaratorFuncInfo(node);
+                    name = info.name;
+                    declParamNode = info.paramNode;
+                }
             }
             if (!name) return null;
 
-            if (name === 'constructor' || name === '__init__') kind = 'ctor';
+            if (name === 'constructor' || name === '__init__' || name === 'initialize') kind = 'ctor';
             if (exportedNames.has(name)) isExp = true;
 
             const isAsync = node.children.some(c => c.type === 'async' || c.text === 'async');
 
             let params = null;
-            const paramNode = node.children.find(c => c.type.includes('parameters') || c.type === 'formal_parameters');
+            const paramNode = declParamNode
+                || (typeof node.childForFieldName === 'function' && node.childForFieldName('parameters'))
+                || node.children.find(c =>
+                    c.type.includes('parameters') ||
+                    c.type === 'formal_parameters' ||
+                    c.type === 'parameter_list'
+                );
             if (paramNode) {
                 params = paramNode.text.replace(/\s+/g, ' ');
                 if (params.length > 50) params = params.slice(0, 49) + '…';
@@ -992,7 +1089,10 @@ function extractSymbolsImperative(rootNode, exportedNames) {
             if (sym) {
                 if (sym.kind === 'class') {
                     const bodyNode = child.children.find(c =>
-                        c.type.includes('body') || c.type === 'declaration_list' || c.type === 'block'
+                        c.type.includes('body') ||
+                        c.type === 'declaration_list' ||
+                        c.type === 'field_declaration_list' ||
+                        c.type === 'block'
                     );
                     if (bodyNode) {
                         const members = walk(bodyNode, false);
@@ -1174,7 +1274,7 @@ function recreateParser(ctx) {
     if (ctx.parser) {
         try { ctx.parser.delete(); } catch (_) {}
     }
-    ctx.parser = ctx.TreeSitter ? new ctx.TreeSitter() : null;
+    ctx.parser = (ctx.runtime && ctx.runtime.Parser) ? new ctx.runtime.Parser() : null;
     ctx.currentLangName = null;
 }
 
@@ -1263,7 +1363,7 @@ async function mapOneFile(fp, content, ctx) {
 
     let tree = null;
     try {
-        if (!ctx.parser) ctx.parser = new ctx.TreeSitter();
+        if (!ctx.parser) ctx.parser = new ctx.runtime.Parser();
         if (ctx.currentLangName !== langName) {
             ctx.parser.setLanguage(lang);
             ctx.currentLangName = langName;
@@ -1274,6 +1374,7 @@ async function mapOneFile(fp, content, ctx) {
         } catch (parseErr) {
             // Parser WASM state may be corrupted after a trap; always recreate.
             recreateParser(ctx);
+            const errMsg = cleanErrMsg(parseErr);
             if (langName === 'html') {
                 const fbSymbols = htmlFallbackOutline(content);
                 const fbStats = tallySymbols(fbSymbols);
@@ -1282,7 +1383,7 @@ async function mapOneFile(fp, content, ctx) {
                     lines: linesCount,
                     size: sizeBytes,
                     parser: 'fallback',
-                    warning: `HTML Tree-sitter parse failed (${parseErr.message || String(parseErr)}); used fallback scanner`
+                    warning: `HTML Tree-sitter parse failed (${errMsg}); used fallback scanner`
                 };
                 if (fbSymbols.length > 0) {
                     fileData.symbols = fbSymbols;
@@ -1290,7 +1391,7 @@ async function mapOneFile(fp, content, ctx) {
                 }
                 return { ok: true, fileData };
             }
-            return { ok: false, file: fp, reason: `parse error: ${parseErr.message || String(parseErr)}` };
+            return { ok: false, file: fp, reason: `parse error: ${errMsg}` };
         }
 
         const imports = new Set();
@@ -1301,12 +1402,12 @@ async function mapOneFile(fp, content, ctx) {
         let warning = null;
 
         if (LANGUAGE_QUERIES[langName]) {
-            const qEntry = getCompiledQuery(langName, lang);
+            const qEntry = getCompiledQuery(ctx.runtime, langName, lang);
             if (qEntry && qEntry.query) {
                 try {
                     symbols = extractSymbolsFromQuery(qEntry.query, tree.rootNode, langName);
                 } catch (qRunErr) {
-                    warning = `query error: ${qRunErr.message || String(qRunErr)}`;
+                    warning = `query error: ${cleanErrMsg(qRunErr)}`;
                     try {
                         symbols = extractSymbolsImperative(tree.rootNode, exportedNames);
                     } catch (_) {}
@@ -1337,7 +1438,7 @@ async function mapOneFile(fp, content, ctx) {
         return { ok: true, fileData };
     } catch (err) {
         recreateParser(ctx);
-        return { ok: false, file: fp, reason: `parse error: ${err.message || String(err)}` };
+        return { ok: false, file: fp, reason: `parse error: ${cleanErrMsg(err)}` };
     } finally {
         if (tree) {
             try { tree.delete(); } catch (_) {}
@@ -1952,7 +2053,7 @@ async function handler(args, api) {
 
     // Shared runtime context for parsing
     const ctx = {
-        TreeSitter: null,
+        runtime: null,
         parser: null,
         currentLangName: null,
         loadedGrammars: new Map(),
@@ -1971,18 +2072,18 @@ async function handler(args, api) {
         if (needed.size === 0) return true;
 
         try {
-            ctx.TreeSitter = await ensureTreeSitter(api, progress);
+            ctx.runtime = await ensureTreeSitter(api, progress);
         } catch (err) {
-            ctx.initError = err.message || String(err);
+            ctx.initError = cleanErrMsg(err);
             return false;
         }
 
         await Promise.all([...needed].map(async (langName) => {
             try {
-                const lang = await loadGrammar(ctx.TreeSitter, langName);
+                const lang = await loadGrammar(ctx.runtime, langName);
                 ctx.loadedGrammars.set(langName, lang);
             } catch (err) {
-                ctx.grammarErrors.set(langName, err.message || String(err));
+                ctx.grammarErrors.set(langName, cleanErrMsg(err));
             }
         }));
         return true;
