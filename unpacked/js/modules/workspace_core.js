@@ -1149,6 +1149,8 @@ async function syncAgentFilesWithWorkspace() {
             const storedPrompts = localStorage.getItem(wsPromptsKey);
             if (storedPrompts) {
                 MODE_PROMPTS = JSON.parse(storedPrompts);
+                if (MODE_PROMPTS.system === undefined) MODE_PROMPTS.system = seedDefaultModePrompts().system;
+                if (typeof upgradeLegacyModePrompts === 'function') upgradeLegacyModePrompts(MODE_PROMPTS);
                 localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
             }
 
@@ -1276,6 +1278,8 @@ async function syncAgentFilesWithWorkspace() {
             } catch(e) {}
         }
 
+        if (MODE_PROMPTS.system === undefined) MODE_PROMPTS.system = seedDefaultModePrompts().system;
+
         for (const mode of PROMPT_MODE_ORDER) {
             if (loadedPrompts.has(mode)) continue;
             const pText = await readDisk(MODE_PROMPT_FILES[mode]);
@@ -1285,6 +1289,9 @@ async function syncAgentFilesWithWorkspace() {
             } else {
                 await writeAgentFileToDisk(MODE_PROMPT_FILES[mode], promptFileContent(mode));
             }
+        }
+        for (const mode of upgradeLegacyModePrompts(MODE_PROMPTS)) {
+            await writeAgentFileToDisk(MODE_PROMPT_FILES[mode], promptFileContent(mode));
         }
         localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
 

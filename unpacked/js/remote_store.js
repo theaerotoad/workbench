@@ -2774,6 +2774,10 @@ function _applyHydratedSettingsToRuntime() {
         if (rawPrompts) {
             const parsedPrompts = JSON.parse(rawPrompts);
             if (parsedPrompts && typeof parsedPrompts === 'object' && !Array.isArray(parsedPrompts)) {
+                if (parsedPrompts.system === undefined && typeof window.seedDefaultModePrompts === 'function') {
+                    parsedPrompts.system = window.seedDefaultModePrompts().system;
+                }
+                if (typeof window.upgradeLegacyModePrompts === 'function') window.upgradeLegacyModePrompts(parsedPrompts);
                 if (window.MODE_PROMPTS && typeof window.MODE_PROMPTS === 'object') {
                     for (const k of Object.keys(window.MODE_PROMPTS)) delete window.MODE_PROMPTS[k];
                     Object.assign(window.MODE_PROMPTS, parsedPrompts);

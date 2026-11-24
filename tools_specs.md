@@ -343,7 +343,9 @@ host APIs:
   - Internal .agent/ Workspace:
       - .agent/models.json and .agent/config.json are user-owned private files.
         Tools cannot read or edit them.
-      - .agent/prompts/ files are read-only to tools.
+      - .agent/prompts/ files are read-only to tools. `.agent/prompts/system.md` is a meta prompt
+        prepended to every mode prompt. Supported variables in prompt bodies: `{{modeName}}`,
+        `{{modes}}`, `{{tools}}`, `{{planFile}}` and `{{mode}}`.
       - .agent/attachments/ files are virtual read-only session resources.
       - .agent/tools/ scripts can only be modified by the edit/write tools if
         the tool is explicitly unlocked by the user in the UI.

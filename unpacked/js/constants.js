@@ -272,6 +272,7 @@ let MODEL_PROVIDERS = [];
 const MODELS_FILE = '.agent/models.json';
 const MODEL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MODE_PROMPT_FILES = {
+    system: '.agent/prompts/system.md',
     plan: '.agent/prompts/plan.md',
     ask: '.agent/prompts/ask.md',
     code: '.agent/prompts/code.md',
@@ -338,15 +339,16 @@ const PASTE_LINE_THRESHOLD = 100;
 const PERMISSION_LABELS = { never: 'never', ask: 'ask', always: 'always' };
 const PLAN_FILE = '.agent_plan.md';
 const PROMPT_FILE_HEADERS = {
-    plan: `# PLAN MODE system prompt. Sent as the system message when the mode tab is PLAN.\n# Variables: {{planFile}} plan file path, {{mode}} mode id.`,
-    ask: `# ASK MODE system prompt (read-only Q&A). Sent as the system message when the mode tab is ASK.\n# Variables: {{planFile}} plan file path, {{mode}} mode id.`,
-    code: `# CODE MODE system prompt (full autonomous implementation). Sent when the mode tab is CODE.\n# Variables: {{planFile}} plan file path, {{mode}} mode id.`,
+    system: `# META system prompt. Prepended to the prompt of EVERY mode (plan, ask, code and custom modes).\n# Final system message = this body + the current mode's prompt + the skills list.\n# Variables: {{modeName}} current mode label, {{modes}} all mode labels, {{tools}} tools available now, {{planFile}} plan file path, {{mode}} mode id.`,
+    plan: `# PLAN MODE system prompt. Sent as the system message when the mode tab is PLAN.\n# Variables: {{planFile}} plan file path, {{mode}} mode id, {{modeName}} mode label, {{modes}} all mode labels, {{tools}} tools available now.\n# The META prompt in system.md is prepended to this one.`,
+    ask: `# ASK MODE system prompt (read-only Q&A). Sent as the system message when the mode tab is ASK.\n# Variables: {{planFile}} plan file path, {{mode}} mode id, {{modeName}} mode label, {{modes}} all mode labels, {{tools}} tools available now.\n# The META prompt in system.md is prepended to this one.`,
+    code: `# CODE MODE system prompt (full autonomous implementation). Sent when the mode tab is CODE.\n# Variables: {{planFile}} plan file path, {{mode}} mode id, {{modeName}} mode label, {{modes}} all mode labels, {{tools}} tools available now.\n# The META prompt in system.md is prepended to this one.`,
     title: `# SESSION TITLE GENERATION prompt. Used to name a session from its first prompt.\n# The system message is this body; the task prompt follows as a user message.\n# Variables: {{userPrompt}} the prompt the title is generated from.\n# Lines starting with '#' are comments and are stripped. Blank lines are kept.`
 };
 const PROMPT_FILE_MODES = Object.entries(MODE_PROMPT_FILES).reduce((acc, [mode, fp]) => {
     acc[fp] = mode; return acc;
 }, {});
-const PROMPT_MODE_ORDER = ['plan', 'ask', 'code', 'title'];
+const PROMPT_MODE_ORDER = ['system', 'plan', 'ask', 'code', 'title'];
 const PROMPTS_DIR = '.agent/prompts';
 const PROTECTED_PATTERNS = [
     '.git', '.env', '.env.*', '*.key', '*.pem', '*.p12', '*.pfx', '*.jks', '*.keystore',

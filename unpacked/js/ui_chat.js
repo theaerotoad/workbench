@@ -560,6 +560,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                     PROMPT_FILE_MODES[promptFile] = k;
                 }
             }
+            if (typeof upgradeLegacyModePrompts === 'function' && upgradeLegacyModePrompts(MODE_PROMPTS).length) {
+                localStorage.setItem('mode_prompts_json', JSON.stringify(MODE_PROMPTS));
+            }
         } else {
             MODE_PROMPTS = defaults;
         }

@@ -76,8 +76,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
     let activeTools = getToolsForMode(runMode, !!runModelVision);
     const runModeSession = state.sessions[runSessionId];
 
-    // The system prompt depends only on the mode, so rebuild it each run.
-    const currentSystemPrompt = buildDynamicSystemPrompt(runMode);
+    // The system prompt depends on the mode and the tools offered, so rebuild it each run.
+    let currentSystemPrompt = buildDynamicSystemPrompt(runMode, activeTools.map(t => t.function.name));
     if (runModeSession) {
         runModeSession.systemPrompt = currentSystemPrompt;
         runModeSession.systemPromptMode = runMode;
@@ -811,6 +811,8 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                     if (cur.url && cur.model) {
                         apiUrl = cur.url; model = cur.model; apiKey = cur.key; runModelVision = cur.vision; useProxy = !!cur.useProxy;
                         activeTools = getToolsForMode(runMode, !!runModelVision);
+                        currentSystemPrompt = buildDynamicSystemPrompt(runMode, activeTools.map(t => t.function.name));
+                        if (runModeSession) runModeSession.systemPrompt = currentSystemPrompt;
                     }
                 }
                 if (runGen.activeController === iterController) runGen.activeController = null;
