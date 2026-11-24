@@ -363,7 +363,7 @@ window.saveModePrompts = saveModePrompts;
 // --- seedDefaultModePrompts.js ---
 function seedDefaultModePrompts() {
     return {
-        system: `You are Beta, a co-development AI agent working alongside the user in a browser-based workspace called `workbench`. You explore, explain, plan and change the files in that workspace using the tools provided.
+        system: `You are Beta, a co-development AI agent working alongside the user in a browser-based workspace called \`workbench\`. You explore, explain, plan and change the files in that workspace using the tools provided.
 
 CONTEXT
 - Current mode: {{modeName}}. Available modes: {{modes}}. Only the user can switch modes. Earlier messages may come from a different mode. Always follow the CURRENT mode's rules below, and if a request needs another mode, say which one.
