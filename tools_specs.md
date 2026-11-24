@@ -84,6 +84,7 @@ async function handler(args, api) {
 | `permission`     | `string`   | `"ask"`                              | Default permission: `"always"` (silent run), `"ask"` (prompts user), `"never"` (disabled).  |
 | `toolBox`        | `number`   | `1`                                  | `1`: Output rendered in a collapsible tool card. `0`: Output injected raw into chat stream. |
 | `expanded`       | `boolean`  | `false`                              | When `true`, the finished tool card defaults to expanded in the chat UI.                    |
+| `autoExpand`     | `boolean`  | (not declared)                       | Optional per-tool setting (via `settings`) that overrides `expanded` for the early/final auto-expand checks. Defaults to the `expanded` value. |
 | `interactive`    | `boolean`  | `false`                              | Marks the tool as waiting for user interactions; extends timeout to 5 minutes.              |
 | `require_vision` | `boolean`  | `false`                              | Restricts tool visibility to models with `vision: true`.                                    |
 | `settings`       | `object[]` | `[]`                                 | List of user-configurable settings rendered in Ion's Settings UI.                           |

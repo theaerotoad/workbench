@@ -23,7 +23,7 @@ const TOOL_META = {
     modes: ["ask", "code"],
     permission: "ask",
     toolBox: 1,
-    "expanded": true,
+    "expanded": false,
     interactive: true,
     settings: [
         {
@@ -61,6 +61,13 @@ const TOOL_META = {
             label: "Sync file deletions back to the workspace (os.remove / shutil.rmtree)",
             type: "boolean",
             default: true
+        },
+        {
+            key: "autoExpand",
+            label: "Auto-expand tool card",
+            type: "boolean",
+            default: false,
+            description: "Open the tool box automatically when the run finishes (and while it runs). Off by default so long output does not flood the chat."
         }
     ]
 };
@@ -1813,15 +1820,15 @@ function buildCard({ label, badge, secs, out = '', images = [], codeStr = '', st
         const t = out.trimEnd();
         const tail = t.length > PY_LIVE_TAIL_CHARS ? '...[earlier output hidden while running]\n' + t.slice(-PY_LIVE_TAIL_CHARS) : t;
         body = tail
-            ? `<div data-live-scroll style="background:#0e1015; border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px; white-space:pre-wrap; word-break:break-word; color:var(--dim,#737791); ${PY_TERM_BOX}">${esc(tail)}</div>`
-            : `<div style="color:var(--dim,#737791); font-size:11px; padding:4px 2px;">${esc(status || 'Starting...')}</div>`;
+            ? `<div data-live-scroll style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap; word-break:break-word; color:var(--dim,#85858f); ${PY_TERM_BOX}">${esc(tail)}</div>`
+            : `<div style="color:var(--dim,#85858f); font-size:11px; padding:4px 2px;">${esc(status || 'Starting...')}</div>`;
     } else {
         const shown = clip(out.trim());
         body = shown
-            ? `<div data-py-copy style="background:#0e1015; border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px; white-space:pre-wrap; word-break:break-word; color:var(--dim,#737791); ${PY_TERM_BOX}">${esc(shown)}</div>`
+            ? `<div data-py-copy style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap; word-break:break-word; color:var(--dim,#85858f); ${PY_TERM_BOX}">${esc(shown)}</div>`
             : '';
         for (const img of images) {
-            body += `<div style="border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:12px; display:flex; justify-content:center; background:#ffffff; margin-top:4px;">
+            body += `<div style="border:1px solid var(--border); border-radius:6px; padding:12px; display:flex; justify-content:center; background:#ffffff; margin-top:4px;">
             <img src="data:${img.mime};base64,${img.base64}" style="max-width:100%; border-radius:4px;" />
         </div>`;
         }
@@ -1845,17 +1852,17 @@ function buildCard({ label, badge, secs, out = '', images = [], codeStr = '', st
         codePane = `
         <div data-py-pane="code" style="display:none;">
             <textarea data-py-copy hidden>${esc(codeStr)}</textarea>
-            <div style="background:#0e1015; border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px; white-space:pre; color:var(--fg,#dcdfe7); ${PY_TERM_BOX}">${esc(codeShown)}</div>
+            <div style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre; color:var(--fg,#ececf1); ${PY_TERM_BOX}">${esc(codeShown)}</div>
         </div>`;
     }
 
     return `<div data-py-card style="width:100%; border:1px solid var(--border,#2e2e2e); border-radius:8px; overflow:hidden; background:var(--bg-panel,#181818); margin:2px 0; font-family:var(--font-mono, monospace);">
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:rgba(0,0,0,0.25); border-bottom:1px solid var(--border,#2e2e2e);">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--bg-input,rgba(0,0,0,0.25)); border-bottom:1px solid var(--border,#2e2e2e);">
             <div style="display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--fg,#dcdfe7);">
                 <span class="icon" style="font-size:14px; color:var(--primary,#56b6c2);">${live ? 'hourglass_top' : 'play_arrow'}</span>
                 <span style="font-weight:600;">${esc(label)}</span>
                 <span style="font-size:10px; background:${badge[2]}; color:${badge[1]}; padding:1px 6px; border-radius:3px; font-weight:700;">${badge[0]}</span>
-                <span style="font-size:10px; color:var(--dim,#737791);">Pyodide &middot; ${secs}s</span>
+                <span style="font-size:10px; color:var(--dim,#85858f);">Pyodide &middot; ${secs}s</span>
             </div>
             <div style="display:flex; align-items:center; gap:3px;">${buttons}
             </div>
