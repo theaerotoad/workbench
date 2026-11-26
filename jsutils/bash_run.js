@@ -215,6 +215,15 @@ function __bashWorkerMain() {
         });
     }
 
+    function utf8ToDataUrl(code) {
+        const bytes = new TextEncoder().encode(code);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        return 'data:text/javascript;base64,' + btoa(bin);
+    }
+
     const toDataUrl = (code) => 'data:text/javascript;charset=utf-8,' + encodeURIComponent(code);
 
     const ZLIB_DATA_URL = toDataUrl([
@@ -329,12 +338,12 @@ function __bashWorkerMain() {
         return matches;
     }
 
-    function resolveBareNpmToJsDelivr(spec, pkgDeps) {
+    function resolveBareNpmCandidates(spec, pkgDeps) {
         let pkgName;
         let subpath = '';
         if (spec.startsWith('@')) {
             const parts = spec.split('/');
-            if (parts.length < 2) return null;
+            if (parts.length < 2) return [];
             pkgName = `${parts[0]}/${parts[1]}`;
             if (parts.length > 2) subpath = '/' + parts.slice(2).join('/');
         } else {
@@ -363,7 +372,10 @@ function __bashWorkerMain() {
 
         const cleanVerMatch = versionSpec.match(/^[\^~]?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/);
         const verPart = cleanVerMatch ? `@${cleanVerMatch[1]}` : '';
-        return `https://cdn.jsdelivr.net/npm/${targetPkg}${verPart}${subpath}/+esm`;
+        return [
+            `https://cdn.jsdelivr.net/npm/${targetPkg}${verPart}${subpath}/+esm`,
+            `https://esm.sh/${targetPkg}${verPart}${subpath}?bundle`
+        ];
     }
 
     async function fetchPackageDeps(ver, timeoutMs) {
@@ -378,74 +390,134 @@ function __bashWorkerMain() {
         }
     }
 
-    async function importPatchedModuleGraph(entryUrl, { pkgDeps = {}, timeoutMs = 25000, patchRelative = true } = {}) {
+    async function importPatchedModuleGraph(entryUrl, { pkgDeps = {}, timeoutMs = 25000 } = {}) {
         const parseEsm = await getEsmParse(timeoutMs);
-        const blobByUrl = new Map();
+        const inlineByUrl = new Map();
+        const visiting = new Set();
         const rewrittenLog = new Set();
+        let fetchedCount = 0;
+        const MAX_MODULES = 60;
 
-        async function loadAndPatch(url) {
-            if (blobByUrl.has(url)) return blobByUrl.get(url);
-
-            const resp = await withTimeout(fetch(url, { mode: 'cors', credentials: 'omit' }), timeoutMs, `Fetching ${url}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
-            const src = await resp.text();
-            const baseUrl = resp.url || url;
-
-            const lits = collectImportLiterals(src, parseEsm);
-            const replacements = [];
-
-            for (const lit of lits) {
-                const spec = lit.value;
-                let mapped = null;
-
-                const nodeUrl = getNodeBuiltinUrl(spec);
-                if (nodeUrl) {
-                    mapped = nodeUrl;
-                } else if (/^(https?:|data:|blob:)/i.test(spec)) {
-                    mapped = null;
-                } else if (spec.startsWith('/')) {
-                    mapped = new URL(spec, baseUrl).href;
-                } else if (spec.startsWith('./') || spec.startsWith('../')) {
-                    const resolved = new URL(spec, baseUrl).href;
-                    mapped = patchRelative ? await loadAndPatch(resolved) : resolved;
-                } else {
-                    mapped = resolveBareNpmToJsDelivr(spec, pkgDeps);
-                }
-
-                if (mapped && mapped !== spec) {
-                    rewrittenLog.add(spec);
-                    replacements.push({ start: lit.start, end: lit.end, text: JSON.stringify(mapped) });
+        async function fetchFirstOk(urls) {
+            const errs = [];
+            for (const u of urls) {
+                try {
+                    const resp = await withTimeout(fetch(u, { mode: 'cors', credentials: 'omit' }), timeoutMs, `Fetching ${u}`);
+                    if (!resp.ok) {
+                        errs.push(`HTTP ${resp.status} on ${u}`);
+                        continue;
+                    }
+                    const text = await resp.text();
+                    return { text, finalUrl: resp.url || u, requestedUrl: u };
+                } catch (err) {
+                    errs.push(`${u}: ${err && err.message ? err.message : err}`);
                 }
             }
-
-            let out = src;
-            if (replacements.length) {
-                replacements.sort((a, b) => a.start - b.start);
-                let cursor = 0;
-                const chunks = [];
-                for (const r of replacements) {
-                    if (r.start < cursor) continue;
-                    chunks.push(src.slice(cursor, r.start), r.text);
-                    cursor = r.end;
-                }
-                chunks.push(src.slice(cursor));
-                out = chunks.join('');
-            }
-
-            const blobUrl = URL.createObjectURL(new Blob([out], { type: 'application/javascript' }));
-            blobByUrl.set(url, blobUrl);
-            if (baseUrl !== url) blobByUrl.set(baseUrl, blobUrl);
-            return blobUrl;
+            throw new Error(errs.join('; '));
         }
 
-        const rootBlob = await loadAndPatch(entryUrl);
+        async function loadAndInline(urls, isEntry) {
+            const list = Array.isArray(urls) ? urls : [urls];
+            for (const u of list) {
+                if (inlineByUrl.has(u)) return inlineByUrl.get(u);
+            }
+            if (list.some(u => visiting.has(u))) return list[0];
+            if (++fetchedCount > MAX_MODULES) {
+                throw new Error(`Module graph exceeded ${MAX_MODULES} files while loading ${list[0]}`);
+            }
+
+            for (const u of list) visiting.add(u);
+            try {
+                const { text: src, finalUrl, requestedUrl } = await fetchFirstOk(list);
+                if (inlineByUrl.has(finalUrl)) return inlineByUrl.get(finalUrl);
+                visiting.add(finalUrl);
+
+                const lits = collectImportLiterals(src, parseEsm);
+                const replacements = [];
+
+                for (const lit of lits) {
+                    const spec = lit.value;
+                    let mapped = null;
+
+                    const nodeUrl = getNodeBuiltinUrl(spec);
+                    if (nodeUrl) {
+                        mapped = /^https?:\/\//i.test(nodeUrl) ? await loadAndInline(nodeUrl, false) : nodeUrl;
+                    } else if (/^(data:|blob:)/i.test(spec)) {
+                        mapped = null;
+                    } else if (/^https?:\/\//i.test(spec)) {
+                        mapped = await loadAndInline(spec, false);
+                    } else if (spec.startsWith('/') || spec.startsWith('./') || spec.startsWith('../')) {
+                        const resolved = new URL(spec, finalUrl).href;
+                        const resolvedNode = getNodeBuiltinUrl(resolved);
+                        if (resolvedNode) {
+                            mapped = /^https?:\/\//i.test(resolvedNode) ? await loadAndInline(resolvedNode, false) : resolvedNode;
+                        } else {
+                            mapped = await loadAndInline(resolved, false);
+                        }
+                    } else {
+                        const candidates = resolveBareNpmCandidates(spec, pkgDeps);
+                        if (candidates.length) {
+                            mapped = await loadAndInline(candidates, false);
+                        }
+                    }
+
+                    if (mapped && mapped !== spec) {
+                        rewrittenLog.add(spec);
+                        replacements.push({ start: lit.start, end: lit.end, text: JSON.stringify(mapped) });
+                    }
+                }
+
+                let out = src;
+                if (replacements.length) {
+                    replacements.sort((a, b) => a.start - b.start);
+                    let cursor = 0;
+                    const chunks = [];
+                    for (const r of replacements) {
+                        if (r.start < cursor) continue;
+                        chunks.push(src.slice(cursor, r.start), r.text);
+                        cursor = r.end;
+                    }
+                    chunks.push(src.slice(cursor));
+                    out = chunks.join('');
+                }
+
+                if (isEntry) {
+                    return { code: out, finalUrl };
+                }
+
+                // Inline every dependency as a self-contained data: ESM module so the browser's
+                // module loader never has to fetch cross-origin https: imports from an opaque-origin blob:.
+                const dataUrl = utf8ToDataUrl(out);
+                inlineByUrl.set(requestedUrl, dataUrl);
+                inlineByUrl.set(finalUrl, dataUrl);
+                return dataUrl;
+            } finally {
+                for (const u of list) visiting.delete(u);
+            }
+        }
+
+        const entry = await loadAndInline(entryUrl, true);
+        const rootBlob = URL.createObjectURL(new Blob([entry.code], { type: 'application/javascript' }));
         try {
-            const mod = await withTimeout(import(rootBlob), timeoutMs, `Importing patched module from ${entryUrl}`);
-            return unwrapExports(mod);
+            try {
+                const mod = await withTimeout(import(rootBlob), timeoutMs, `Importing patched module from ${entryUrl}`);
+                return unwrapExports(mod);
+            } catch (blobErr) {
+                const bMsg = blobErr && blobErr.message ? blobErr.message : String(blobErr);
+                // If an opaque-origin worker blocks blob: dynamic import, retry via data: URL.
+                if (/dynamically imported module|Failed to fetch|Importing a module/i.test(bMsg)) {
+                    const rootData = utf8ToDataUrl(entry.code);
+                    const mod = await withTimeout(import(rootData), timeoutMs, `Importing data-URI module from ${entryUrl}`);
+                    return unwrapExports(mod);
+                }
+                throw blobErr;
+            }
         } catch (err) {
             const specs = [...rewrittenLog].slice(0, 12).join(', ');
             const msg = err && err.message ? err.message : String(err);
             throw new Error(specs ? `${msg} [rewrote: ${specs}]` : msg);
+        } finally {
+            try { URL.revokeObjectURL(rootBlob); } catch (_) { /* ignore */ }
         }
     }
 
@@ -481,23 +553,21 @@ function __bashWorkerMain() {
         for (const source of plan) {
             try {
                 if (source === 'jsdelivr-patched') {
-                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (rewriting imports via es-module-lexer)...` });
+                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (inlining dependencies)...` });
                     const pkgDeps = await fetchPackageDeps(ver, 10000);
                     const mod = await importPatchedModuleGraph(jsdRawUrl, {
                         pkgDeps,
-                        timeoutMs: 30000,
-                        patchRelative: true
+                        timeoutMs: 30000
                     });
-                    return { mod, loadedVia: jsdRawUrl + ' (es-module-lexer)' };
+                    return { mod, loadedVia: jsdRawUrl + ' (inlined)' };
                 }
                 if (source === 'esm.sh') {
-                    post({ type: 'status', text: `Loading just-bash@${ver} from esm.sh...` });
+                    post({ type: 'status', text: `Loading just-bash@${ver} from esm.sh (inlining dependencies)...` });
                     const mod = await importPatchedModuleGraph(esmUrl, {
                         pkgDeps: {},
-                        timeoutMs: 25000,
-                        patchRelative: false
+                        timeoutMs: 30000
                     });
-                    return { mod, loadedVia: esmUrl };
+                    return { mod, loadedVia: esmUrl + ' (inlined)' };
                 }
             } catch (err) {
                 errors.push(`${source}: ${err && err.message ? err.message : String(err)}`);
