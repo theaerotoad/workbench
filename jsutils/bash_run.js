@@ -1,7 +1,7 @@
 // bash_run - Virtual Bash execution tool powered by just-bash with MountableFs lazy workspace bridge
 const TOOL_META = {
     name: "bash_run",
-    description: "Execute Bash commands and shell pipelines inside a sandboxed, in-browser virtual Bash environment (just-bash) mounted directly over Ion's workspace at /workspace.\n\nENVIRONMENT & FILESYSTEM MODEL:\n- Live Workspace (`/workspace`): Default working directory. Workspace files are lazily loaded on demand and cached in memory (auto-refreshed when edited outside bash). By default (`syncMode: 'auto'`), all files created, modified, renamed, or deleted under `/workspace` are automatically synced back to Ion's workspace when the command finishes — no separate sync call is needed. Ion's protected paths (`.git`, `.env`, `.agent/`, etc.) remain enforced by the host.\n- Scratch Space (`/tmp`, `/home/user`): Pure in-memory scratch directories that persist across calls in the session and are never synced back to Ion's workspace.\n- Supported Built-ins: Standard Unix file/text/data tools including cat, cp, ls, mkdir, mv, rm, stat, touch, tree, find, grep, rg, awk, sed, cut, diff, head, tail, sort, uniq, wc, xargs, tr, printf, base64, sha256sum, jq, and full Bash syntax (pipes, redirects, loops, functions, variables, globs, heredocs).\n- Browser Exclusions: python3/python, sqlite3, js-exec, tar, yq, xan, and native OS binaries are NOT available in the browser build. gzip/gunzip/zcat are unavailable in fallback mode.\n- Network: Disabled by default (`curl` requires enabling network access in settings).\n- Built-in Sandbox Command: Run `ion-info` inside bash to inspect runtime, mount, cache, and sync status.",
+    description: "Execute Bash commands and shell pipelines inside a sandboxed, in-browser virtual Bash environment (just-bash) mounted directly over Ion's workspace at /workspace.\n\nENVIRONMENT & FILESYSTEM MODEL:\n- Live Workspace (`/workspace`): Default working directory. Workspace files are lazily loaded on demand and cached in memory (auto-refreshed when edited outside bash). By default (`syncMode: 'auto'`), all files created, modified, renamed, or deleted under `/workspace` are automatically synced back to Ion's workspace when the command finishes — no separate sync call is needed. Ion's protected paths (`.git`, `.env`, `.agent/`, etc.) remain enforced by the host; in 'auto' mode, host-rejected writes or deletions are automatically reverted in `/workspace` so virtual state never drifts from Ion.\n- Scratch Space (`/tmp`, `/home/user`): Pure in-memory scratch directories that persist across calls in the session and are never synced back to Ion's workspace.\n- Supported Built-ins: Standard Unix file/text/data tools including cat, cp, ls, mkdir, mv, rm, stat, touch, tree, find, grep, rg, awk, sed, cut, diff, head, tail, sort, uniq, wc, xargs, tr, printf, base64, sha256sum, jq, and full Bash syntax (pipes, redirects, loops, functions, variables, globs, heredocs).\n- Browser Exclusions: python3/python, sqlite3, js-exec, tar, yq, xan, and native OS binaries are NOT available in the browser build. gzip/gunzip/zcat are unavailable in fallback mode.\n- Network: Disabled by default (`curl` requires enabling network access in settings).\n- Built-in Sandbox Command: Run `ion-info` inside bash to inspect runtime, mount, cache, and sync status.",
     parameters: {
         type: "object",
         properties: {
@@ -81,7 +81,7 @@ const TOOL_META = {
             type: "select",
             options: ["auto", "staged"],
             default: "auto",
-            description: "'auto' (default) writes /workspace changes back to Ion automatically after every command. 'staged' holds edits in memory until you run bash_fs sync (or pass sync: true)."
+            description: "'auto' (default) writes /workspace changes back to Ion automatically after every command and reverts any host-rejected paths. 'staged' holds edits in memory until you run bash_fs sync (or pass sync: true)."
         },
         {
             key: "syncDeletions",
@@ -1698,7 +1698,7 @@ async function ensureHostParentDir(api, filePath) {
     }
 }
 
-async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDeletions = true, pendingOnly = false } = {}) {
+async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDeletions = true, pendingOnly = false, revertOnError = false } = {}) {
     const exportedRes = await bashCall(
         st,
         { type: 'fsOp', cfg: st.cfg, op: 'exportDirty', paths: filterPaths, pendingOnly },
@@ -1714,6 +1714,7 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
     const syncedWrites = [];
     const syncedDeletes = [];
     const attemptedPaths = [];
+    const failedPaths = [];
     const errors = [];
 
     for (const w of writes) {
@@ -1733,6 +1734,7 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
             }
             const res = await api.writeFile(w.relPath, payload);
             if (typeof res === 'string' && res.startsWith('ERROR:')) {
+                failedPaths.push(w.relPath);
                 errors.push(`write ${w.relPath}: ${res.replace(/^ERROR:\s*/, '')}`);
             } else {
                 let stat = null;
@@ -1742,6 +1744,7 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
                 syncedWrites.push({ relPath: w.relPath, stat, size: bytes.byteLength, isBinary });
             }
         } catch (err) {
+            failedPaths.push(w.relPath);
             errors.push(`write ${w.relPath}: ${err && err.message ? err.message : err}`);
         }
     }
@@ -1755,11 +1758,13 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
             try {
                 const res = await api.deleteFile(d.relPath);
                 if (typeof res === 'string' && res.startsWith('ERROR:')) {
+                    failedPaths.push(d.relPath);
                     errors.push(`delete ${d.relPath}: ${res.replace(/^ERROR:\s*/, '')}`);
                 } else {
                     syncedDeletes.push(d.relPath);
                 }
             } catch (err) {
+                failedPaths.push(d.relPath);
                 errors.push(`delete ${d.relPath}: ${err && err.message ? err.message : err}`);
             }
         }
@@ -1779,10 +1784,31 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
         wsStatus = markRes.data ? markRes.data.workspace : null;
     }
 
+    let reverted = [];
+    if (revertOnError && failedPaths.length > 0) {
+        try {
+            const discardRes = await bashCall(
+                st,
+                { type: 'fsOp', cfg: st.cfg, op: 'discard', paths: failedPaths },
+                [],
+                null,
+                15000,
+                'Reverting rejected virtual files timed out.',
+                api
+            );
+            const d = discardRes.data || {};
+            reverted = [...(d.reverted || []), ...(d.removedNew || [])].sort();
+            if (d.workspace) wsStatus = d.workspace;
+        } catch (err) {
+            errors.push(`auto-revert failed: ${err && err.message ? err.message : err}`);
+        }
+    }
+
     return {
         written: syncedWrites.map(s => s.relPath),
         deleted: syncedDeletes,
         skippedDeletes: !syncDeletions ? deletes.map(d => d.relPath) : [],
+        reverted,
         errors,
         wsStatus
     };
@@ -2223,7 +2249,8 @@ async function handler(args, api) {
                 live.push();
                 syncReport = await syncDirtyWorkspaceToHost(st, api, {
                     syncDeletions,
-                    pendingOnly: !forceSync
+                    pendingOnly: !forceSync,
+                    revertOnError: syncMode === 'auto'
                 });
                 if (syncReport.wsStatus) execData.wsStatus = syncReport.wsStatus;
             }
@@ -2293,6 +2320,10 @@ async function handler(args, api) {
             if (syncReport.errors.length) {
                 footer.push(`sync errors: ${syncReport.errors.join('; ')}`);
                 cardNotes.push(`sync errors: ${syncReport.errors.length}`);
+            }
+            if (syncReport.reverted && syncReport.reverted.length) {
+                footer.push(`reverted in /workspace: ${syncReport.reverted.join(', ')}`);
+                cardNotes.push(`reverted ${syncReport.reverted.length} rejected path(s) in /workspace`);
             }
         }
         if (ws.dirtyTotal > 0) {
