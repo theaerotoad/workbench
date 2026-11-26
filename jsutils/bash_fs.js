@@ -1,18 +1,23 @@
-// bash_fs - Inspect, manage, and snapshot files in the active just-bash virtual filesystem
+// bash_fs - Manage the MountableFs lazy workspace bridge and virtual filesystem shared with bash_run
 const TOOL_META = {
     name: "bash_fs",
-    description: "Inspect or manage files inside the active just-bash in-memory virtual filesystem (shared with bash_run).\n\nACTIONS:\n- 'list': Recursively list virtual files under 'path' (defaults to '/workspace').\n- 'read': Read a virtual file at 'path'.\n- 'write': Create or overwrite a virtual file at 'path' with 'content'.\n- 'delete': Delete a virtual file or directory at 'path' (pass 'recursive: true' for directories).\n- 'reset': Wipe the virtual filesystem and reset cwd back to '/workspace'.\n- 'load_workspace': Copy read-only snapshots of Ion workspace files into '/workspace/...' inside just-bash so you can run grep/rg/awk/jq/sed/find on project files without modifying the host workspace.",
+    description: "Inspect, diff, sync, discard, and manage files in the active just-bash MountableFs filesystem (shared with bash_run).\n\nACTIONS:\n- 'status': Show mount info, lazy vs. cached file counts, and all staged dirty changes (created/modified/deleted) under /workspace.\n- 'diff': Show unified line diffs between Ion's current host files and staged virtual edits under /workspace (optionally scoped to 'path' or 'paths').\n- 'sync': Write staged /workspace edits (and deletions, unless disabled) back to Ion's host workspace via checkpointed api.writeFile / api.deleteFile.\n- 'discard': Revert staged /workspace edits/deletions back to Ion's host state (optionally scoped to 'path' or 'paths').\n- 'refresh': Re-scan Ion's workspace file list and invalidate cached non-dirty files that changed in Ion's editor.\n- 'list': Recursively list virtual files under 'path' (defaults to '/workspace').\n- 'read': Read a virtual file at 'path' (triggers lazy load if uncached).\n- 'write': Create or overwrite a virtual file at 'path' with 'content'.\n- 'delete': Delete a virtual file or directory at 'path' (pass 'recursive: true' for directories).\n- 'reset': Wipe /tmp, reset cwd to /workspace, and remount a clean lazy view of Ion's workspace.",
     parameters: {
         type: "object",
         properties: {
             action: {
                 type: "string",
-                enum: ["list", "read", "write", "delete", "reset", "load_workspace"],
-                description: "Virtual filesystem operation to perform."
+                enum: ["status", "diff", "sync", "discard", "refresh", "list", "read", "write", "delete", "reset"],
+                description: "Virtual filesystem or workspace-bridge operation to perform."
             },
             path: {
                 type: "string",
-                description: "Target path inside the virtual filesystem (e.g. '/workspace/data.json' or relative 'data.json'). Used by list, read, write, and delete."
+                description: "Target path (e.g. '/workspace/src/app.js' or 'src/app.js'). Used by list, read, write, delete, diff, sync, or discard."
+            },
+            paths: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional list of workspace-relative (or /workspace/...) paths to scope 'diff', 'sync', or 'discard'."
             },
             content: {
                 type: "string",
@@ -23,10 +28,9 @@ const TOOL_META = {
                 type: "boolean",
                 description: "Allow deleting directories recursively for action 'delete'."
             },
-            workspacePaths: {
-                type: "array",
-                items: { type: "string" },
-                description: "Optional list of workspace-relative file paths to copy into '/workspace/...' for action 'load_workspace'. If omitted, copies accessible non-ignored files up to the snapshot size cap."
+            syncDeletions: {
+                type: "boolean",
+                description: "Override whether action 'sync' propagates /workspace deletions to Ion's host workspace."
             }
         },
         required: ["action"]
@@ -38,15 +42,6 @@ const TOOL_META = {
     interactive: false,
     settings: [
         {
-            key: "maxSnapshotMb",
-            label: "Max workspace snapshot size (MB)",
-            type: "number",
-            default: 32,
-            min: 1,
-            max: 128,
-            description: "Total byte cap when using action 'load_workspace'."
-        },
-        {
             key: "autoExpand",
             label: "Auto-expand tool card",
             type: "boolean",
@@ -55,19 +50,15 @@ const TOOL_META = {
     ]
 };
 
-const BASH_FS_IGNORED_DIRS = new Set([
-    '.agent', '.ion', 'node_modules', '.git', 'venv', '.venv', '__pycache__',
-    '.pytest_cache', '.mypy_cache', '.ruff_cache', 'target', 'build', 'dist'
-]);
-const BASH_FS_MAX_SINGLE_FILE = 8 * 1024 * 1024;
+const BASH_FS_BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|gz|tar|tgz|7z|rar|wasm|npy|npz|pkl|pickle|parquet|feather|h5|hdf5|joblib|bin|onnx|wav|mp3|mp4|woff2?|ttf|otf|sqlite|db)$/i;
 
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
+        '&': '&',
+        '<': '<',
+        '>': '>',
+        '"': '"',
+        "'": '''
     }[c]));
 }
 
@@ -88,79 +79,112 @@ function renderCard(title, badge, bodyHtml) {
     </div>`;
 }
 
-async function collectWorkspaceSnapshot(api, requestedPaths, maxTotalBytes) {
-    const enc = new TextEncoder();
-    const items = [];
-    const skipped = [];
-    let total = 0;
+// Compact LCS line diff with +/- hunks and 2-line context.
+function buildUnifiedDiff(relPath, beforeText, afterText) {
+    const a = beforeText === null ? [] : beforeText.replace(/\r\n/g, '\n').split('\n');
+    const b = afterText === null ? [] : afterText.replace(/\r\n/g, '\n').split('\n');
 
-    let candidates;
-    if (Array.isArray(requestedPaths) && requestedPaths.length > 0) {
-        candidates = requestedPaths
-            .map(p => String(p || '').trim().replace(/^\/+/, ''))
-            .filter(Boolean);
-    } else {
-        const all = typeof api?.listFiles === 'function' ? await api.listFiles() : [];
-        candidates = all.filter((p) => {
-            if (typeof p !== 'string') return false;
-            const dirs = p.split('/').slice(0, -1);
-            return !dirs.some(seg => BASH_FS_IGNORED_DIRS.has(seg));
-        });
+    if (a.length * b.length > 400000) {
+        return `--- a/${relPath}\n+++ b/${relPath}\n@@ file too large for inline line diff (${a.length} -> ${b.length} lines) @@`;
     }
 
-    const loadOne = async (fp) => {
-        try {
-            const binary = typeof api?.isBinary === 'function' && await api.isBinary(fp);
-            let content;
-            let size = 0;
-            if (binary && typeof api?.readFileBytes === 'function') {
-                const bytes = await api.readFileBytes(fp);
-                if (!(bytes instanceof Uint8Array)) {
-                    skipped.push(`${fp} (unreadable binary)`);
-                    return;
-                }
-                if (bytes.byteLength > BASH_FS_MAX_SINGLE_FILE) {
-                    skipped.push(`${fp} (>8 MB)`);
-                    return;
-                }
-                content = bytes;
-                size = bytes.byteLength;
-            } else {
-                const text = await api.readFile(fp);
-                if (typeof text !== 'string' || text.startsWith('ERROR:')) {
-                    skipped.push(`${fp} (${typeof text === 'string' ? text : 'unreadable'})`);
-                    return;
-                }
-                size = enc.encode(text).byteLength;
-                if (size > BASH_FS_MAX_SINGLE_FILE) {
-                    skipped.push(`${fp} (>8 MB)`);
-                    return;
-                }
-                content = text;
-            }
-            if (total + size > maxTotalBytes) {
-                skipped.push(`${fp} (snapshot limit reached)`);
-                return;
-            }
-            total += size;
-            items.push({ path: `/workspace/${fp}`, content });
-        } catch (err) {
-            skipped.push(`${fp} (${err && err.message ? err.message : 'error'})`);
+    // Trim shared prefix/suffix to keep DP small
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let endA = a.length - 1;
+    let endB = b.length - 1;
+    while (endA >= start && endB >= start && a[endA] === b[endB]) { endA--; endB--; }
+
+    const midA = a.slice(start, endA + 1);
+    const midB = b.slice(start, endB + 1);
+    const m = midA.length;
+    const n = midB.length;
+
+    const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+    for (let i = m - 1; i >= 0; i--) {
+        for (let j = n - 1; j >= 0; j--) {
+            dp[i][j] = midA[i] === midB[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
         }
-    };
-
-    for (let i = 0; i < candidates.length; i += 6) {
-        await Promise.all(candidates.slice(i, i + 6).map(loadOne));
     }
 
-    return { items, skipped, total };
+    const ops = [];
+    for (let k = 0; k < start; k++) ops.push({ type: ' ', line: a[k] });
+    let i = 0;
+    let j = 0;
+    while (i < m && j < n) {
+        if (midA[i] === midB[j]) { ops.push({ type: ' ', line: midA[i++] }); j++; }
+        else if (dp[i + 1][j] >= dp[i][j + 1]) ops.push({ type: '-', line: midA[i++] });
+        else ops.push({ type: '+', line: midB[j++] });
+    }
+    while (i < m) ops.push({ type: '-', line: midA[i++] });
+    while (j < n) ops.push({ type: '+', line: midB[j++] });
+    for (let k = endA + 1; k < a.length; k++) ops.push({ type: ' ', line: a[k] });
+
+    const ctx = 2;
+    const keep = new Uint8Array(ops.length);
+    let hasChange = false;
+    for (let idx = 0; idx < ops.length; idx++) {
+        if (ops[idx].type !== ' ') {
+            hasChange = true;
+            for (let c = Math.max(0, idx - ctx); c <= Math.min(ops.length - 1, idx + ctx); c++) keep[c] = 1;
+        }
+    }
+    if (!hasChange) return `--- a/${relPath}\n+++ b/${relPath}\n(no text differences)`;
+
+    const out = [`--- ${beforeText === null ? '/dev/null' : 'a/' + relPath}`, `+++ ${afterText === null ? '/dev/null' : 'b/' + relPath}`];
+    let inHunk = false;
+    for (let idx = 0; idx < ops.length; idx++) {
+        if (keep[idx]) {
+            if (!inHunk) {
+                out.push('@@ ... @@');
+                inHunk = true;
+            }
+            out.push(`${ops[idx].type}${ops[idx].line}`);
+        } else {
+            inHunk = false;
+        }
+    }
+    return out.join('\n');
+}
+
+function renderDiffHtml(diffText) {
+    const lines = diffText.split('\n').slice(0, 400);
+    const htmlLines = lines.map((line) => {
+        if (line.startsWith('+++') || line.startsWith('---')) {
+            return `<div style="color:var(--primary,#56b6c2); font-weight:600;">${esc(line)}</div>`;
+        }
+        if (line.startsWith('@@')) {
+            return `<div style="color:var(--dim,#85858f);">${esc(line)}</div>`;
+        }
+        if (line.startsWith('+')) {
+            return `<div style="color:var(--green,#98c379); background:rgba(152,195,121,0.10);">${esc(line)}</div>`;
+        }
+        if (line.startsWith('-')) {
+            return `<div style="color:var(--red,#e06c75); background:rgba(224,108,117,0.10);">${esc(line)}</div>`;
+        }
+        return `<div style="color:var(--fg,#dcdfe7);">${esc(line)}</div>`;
+    });
+    return `<div style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre; overflow:auto; max-height:420px; line-height:1.45;">${htmlLines.join('')}</div>`;
+}
+
+function collectScopedPaths(args) {
+    const list = [];
+    if (Array.isArray(args.paths)) {
+        for (const p of args.paths) {
+            if (typeof p === 'string' && p.trim()) list.push(p.trim());
+        }
+    }
+    if (typeof args.path === 'string' && args.path.trim()) {
+        list.push(args.path.trim());
+    }
+    return list.length ? list : null;
 }
 
 async function handler(args, api) {
     const bridge = self.__ionBashBridge;
     if (!bridge || typeof bridge.fsOp !== 'function') {
         return {
-            output: "ERROR: The just-bash bridge is not available in this worker. Run 'bash_run' first to boot the sandbox. (If 'bash_run' already succeeded in this session, Ion is isolating each tool into its own Worker — in that case, use 'bash_run' directly with its 'files' and 'reset' parameters.)"
+            output: "ERROR: The just-bash bridge is not available in this worker. Run 'bash_run' first to boot the sandbox."
         };
     }
     if (!bridge.isReady()) {
@@ -178,17 +202,151 @@ async function handler(args, api) {
     const action = String(args.action || '').trim();
     const okBadge = ['OK', '#98c379', 'rgba(152,195,121,0.18)'];
     const errBadge = ['ERROR', '#e06c75', 'rgba(224,108,117,0.18)'];
+    const infoBadge = (label) => [label, '#61afef', 'rgba(97,175,239,0.18)'];
 
     try {
+        if (action === 'status') {
+            const res = await bridge.fsOp({ op: 'status' }, api);
+            const rt = res.runtime || {};
+            const ws = res.workspace || {};
+            const lines = [
+                `Runtime: just-bash@${rt.version || '?'} (${rt.mountMode || 'in-memory'})`,
+                `CWD: ${res.cwd || '/workspace'}`,
+                `Sync mode: ${rt.syncMode || 'staged'}`
+            ];
+            if (ws.enabled) {
+                lines.push(`Workspace files: ${ws.hostKnownCount} known (${ws.lazyCount} lazy, ${ws.materializedCount} cached in memory)`);
+                if (ws.dirtyTotal === 0) {
+                    lines.push('Staged changes: clean (no uncommitted /workspace modifications)');
+                } else {
+                    lines.push(`Staged changes (${ws.dirtyTotal}):`);
+                    for (const p of ws.created) lines.push(`  A  ${p}`);
+                    for (const p of ws.modified) lines.push(`  M  ${p}`);
+                    for (const p of ws.deleted) lines.push(`  D  ${p}`);
+                }
+            } else {
+                lines.push('Workspace mount: disabled (pure in-memory sandbox)');
+            }
+
+            const badge = ws.dirtyTotal > 0
+                ? [`${ws.dirtyTotal} STAGED`, '#e5c07b', 'rgba(229,192,123,0.18)']
+                : okBadge;
+            await api.showUI(renderCard(
+                'bash_fs status',
+                badge,
+                `<div style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`
+            ));
+            return { output: lines.join('\n'), summary: ws.dirtyTotal > 0 ? `bash_fs status (${ws.dirtyTotal} staged)` : 'bash_fs status (clean)' };
+        }
+
+        if (action === 'diff') {
+            const filterPaths = collectScopedPaths(args);
+            const res = await bridge.fsOp({ op: 'exportDirty', paths: filterPaths }, api);
+            const writes = res.writes || [];
+            const deletes = res.deletes || [];
+
+            if (writes.length === 0 && deletes.length === 0) {
+                await api.showUI(renderCard('bash_fs diff', okBadge, 'No staged changes under <code>/workspace</code>.'));
+                return { output: 'No staged changes under /workspace.', summary: 'bash_fs diff (clean)' };
+            }
+
+            const dec = new TextDecoder('utf-8', { fatal: true });
+            const chunks = [];
+
+            for (const w of writes) {
+                const bytes = w.bytes instanceof Uint8Array ? w.bytes : new Uint8Array(w.bytes || []);
+                const isBin = BASH_FS_BINARY_EXT.test(w.relPath) || bytes.includes(0);
+                if (isBin) {
+                    chunks.push(`--- ${w.existedOnHost ? 'a/' + w.relPath : '/dev/null'}\n+++ b/${w.relPath}\n[binary file, ${fmtBytes(bytes.byteLength)}]`);
+                    continue;
+                }
+                let afterText;
+                try {
+                    afterText = dec.decode(bytes);
+                } catch (_) {
+                    chunks.push(`--- ${w.existedOnHost ? 'a/' + w.relPath : '/dev/null'}\n+++ b/${w.relPath}\n[non-UTF-8 binary file, ${fmtBytes(bytes.byteLength)}]`);
+                    continue;
+                }
+                let beforeText = null;
+                if (w.existedOnHost) {
+                    const hostRead = await api.readFile(w.relPath);
+                    beforeText = (typeof hostRead === 'string' && !hostRead.startsWith('ERROR:')) ? hostRead : '';
+                }
+                chunks.push(buildUnifiedDiff(w.relPath, beforeText, afterText));
+            }
+
+            for (const d of deletes) {
+                const isBin = BASH_FS_BINARY_EXT.test(d.relPath) || (typeof api.isBinary === 'function' && await api.isBinary(d.relPath));
+                if (isBin) {
+                    chunks.push(`--- a/${d.relPath}\n+++ /dev/null\n[deleted binary file]`);
+                } else {
+                    const hostRead = await api.readFile(d.relPath);
+                    const beforeText = (typeof hostRead === 'string' && !hostRead.startsWith('ERROR:')) ? hostRead : '';
+                    chunks.push(buildUnifiedDiff(d.relPath, beforeText, null));
+                }
+            }
+
+            const fullDiff = chunks.join('\n\n');
+            const out = typeof api?.cleanupText === 'function' ? api.cleanupText(fullDiff) : fullDiff;
+            const total = writes.length + deletes.length;
+            await api.showUI(renderCard(`bash_fs diff (${total} file${total === 1 ? '' : 's'})`, infoBadge(`${total} CHANGED`), renderDiffHtml(out)));
+            return { output: out, summary: `bash_fs diff (${total} file${total === 1 ? '' : 's'})` };
+        }
+
+        if (action === 'sync') {
+            const filterPaths = collectScopedPaths(args);
+            const opts = { paths: filterPaths };
+            if (typeof args.syncDeletions === 'boolean') opts.syncDeletions = args.syncDeletions;
+            const rep = await bridge.syncToHost(api, opts);
+
+            const lines = [];
+            if (rep.written.length) lines.push(`Synced writes (${rep.written.length}): ${rep.written.join(', ')}`);
+            if (rep.deleted.length) lines.push(`Synced deletions (${rep.deleted.length}): ${rep.deleted.join(', ')}`);
+            if (rep.skippedDeletes.length) lines.push(`Skipped deletions (syncDeletions=false): ${rep.skippedDeletes.join(', ')}`);
+            if (rep.errors.length) lines.push(`Errors (${rep.errors.length}):\n- ${rep.errors.join('\n- ')}`);
+            if (!lines.length) lines.push('Nothing to sync (no staged changes under /workspace).');
+
+            const badge = rep.errors.length
+                ? ['PARTIAL / ERROR', '#e5c07b', 'rgba(229,192,123,0.18)']
+                : okBadge;
+            await api.showUI(renderCard(
+                'bash_fs sync',
+                badge,
+                `<div style="white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`
+            ));
+            return {
+                output: lines.join('\n'),
+                summary: `bash_fs sync (${rep.written.length} written, ${rep.deleted.length} deleted)`
+            };
+        }
+
+        if (action === 'discard') {
+            const filterPaths = collectScopedPaths(args);
+            const res = await bridge.fsOp({ op: 'discard', paths: filterPaths }, api);
+            const lines = [];
+            if (res.reverted.length) lines.push(`Reverted to Ion workspace (${res.reverted.length}): ${res.reverted.join(', ')}`);
+            if (res.removedNew.length) lines.push(`Removed untracked virtual files (${res.removedNew.length}): ${res.removedNew.join(', ')}`);
+            if (!lines.length) lines.push('No staged changes to discard.');
+            await api.showUI(renderCard('bash_fs discard', okBadge, `<div style="white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`));
+            return { output: lines.join('\n'), summary: `bash_fs discard (${res.reverted.length + res.removedNew.length} reverted)` };
+        }
+
+        if (action === 'refresh') {
+            const res = await bridge.fsOp({ op: 'refresh' }, api);
+            const msg = `Workspace mount refreshed: +${res.added} new, -${res.removed} removed, ${res.invalidated} cached file(s) invalidated.`;
+            await api.showUI(renderCard('bash_fs refresh', okBadge, esc(msg)));
+            return { output: msg, summary: 'bash_fs refresh' };
+        }
+
         if (action === 'list') {
-            const res = await bridge.fsOp({ op: 'list', path: args.path || '/workspace' });
+            const res = await bridge.fsOp({ op: 'list', path: args.path || '/workspace' }, api);
             const lines = res.files.length
                 ? res.files.map(f => `${f.path} (${fmtBytes(f.size)})`)
                 : ['(empty)'];
             const text = `Virtual files under ${res.root} (cwd: ${res.cwd}):\n${lines.join('\n')}${res.truncated ? '\n...[truncated]' : ''}`;
             await api.showUI(renderCard(
                 `bash_fs list ${res.root}`,
-                [`${res.files.length} FILES`, '#61afef', 'rgba(97,175,239,0.18)'],
+                infoBadge(`${res.files.length} FILES`),
                 `<div style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap; max-height:320px; overflow:auto;">${esc(lines.join('\n'))}</div>`
             ));
             return { output: text, summary: `bash_fs list (${res.files.length} files)` };
@@ -198,7 +356,7 @@ async function handler(args, api) {
             if (!args.path || !String(args.path).trim()) {
                 return { output: "ERROR: 'path' is required for action 'read'." };
             }
-            const res = await bridge.fsOp({ op: 'read', path: args.path });
+            const res = await bridge.fsOp({ op: 'read', path: args.path }, api);
             const out = typeof api?.cleanupText === 'function' ? api.cleanupText(res.content) : res.content;
             await api.showUI(renderCard(
                 `bash_fs read ${res.path}`,
@@ -215,7 +373,7 @@ async function handler(args, api) {
             if (typeof args.content !== 'string') {
                 return { output: "ERROR: 'content' string is required for action 'write'." };
             }
-            const res = await bridge.fsOp({ op: 'write', path: args.path, content: args.content });
+            const res = await bridge.fsOp({ op: 'write', path: args.path, content: args.content }, api);
             await api.showUI(renderCard(
                 `bash_fs write ${res.path}`,
                 okBadge,
@@ -228,7 +386,7 @@ async function handler(args, api) {
             if (!args.path || !String(args.path).trim()) {
                 return { output: "ERROR: 'path' is required for action 'delete'." };
             }
-            const res = await bridge.fsOp({ op: 'delete', path: args.path, recursive: !!args.recursive });
+            const res = await bridge.fsOp({ op: 'delete', path: args.path, recursive: !!args.recursive }, api);
             await api.showUI(renderCard(
                 `bash_fs delete ${res.path}`,
                 okBadge,
@@ -238,45 +396,13 @@ async function handler(args, api) {
         }
 
         if (action === 'reset') {
-            const res = await bridge.fsOp({ op: 'reset' });
+            const res = await bridge.fsOp({ op: 'reset' }, api);
             await api.showUI(renderCard(
                 'bash_fs reset',
                 okBadge,
-                `Virtual filesystem cleared. Working directory reset to <code>${esc(res.cwd)}</code>.`
+                `Sandbox reset. Working directory is <code>${esc(res.cwd)}</code> with a clean lazy workspace mount.`
             ));
-            return { output: `Virtual filesystem reset. cwd: ${res.cwd}`, summary: 'bash_fs reset' };
-        }
-
-        if (action === 'load_workspace') {
-            const maxMb = Math.min(128, Math.max(1, Number(await api?.getSetting?.('maxSnapshotMb')) || 32));
-            if (typeof api?.setHeaderMsg === 'function') {
-                await api.setHeaderMsg('Reading workspace files for virtual snapshot...');
-            }
-            const { items, skipped, total } = await collectWorkspaceSnapshot(
-                api,
-                args.workspacePaths,
-                maxMb * 1024 * 1024
-            );
-            const transfer = items
-                .filter(it => it.content instanceof Uint8Array)
-                .map(it => it.content.buffer);
-            const res = await bridge.fsOp({ op: 'writeBatch', items }, transfer);
-
-            const summaryLines = [
-                `Loaded ${res.written.length} workspace file(s) (${fmtBytes(total)}) into /workspace (read-only snapshot; host files are not modified by bash_run).`
-            ];
-            if (res.failed.length) summaryLines.push(`Failed: ${res.failed.join('; ')}`);
-            if (skipped.length) summaryLines.push(`Skipped (${skipped.length}): ${skipped.slice(0, 15).join('; ')}${skipped.length > 15 ? ' ...' : ''}`);
-
-            await api.showUI(renderCard(
-                'bash_fs load_workspace',
-                [`${res.written.length} LOADED`, '#98c379', 'rgba(152,195,121,0.18)'],
-                `<div style="white-space:pre-wrap;">${esc(summaryLines.join('\n'))}</div>`
-            ));
-            return {
-                output: summaryLines.join('\n'),
-                summary: `Loaded ${res.written.length} workspace file(s) into /workspace`
-            };
+            return { output: `Sandbox reset. cwd: ${res.cwd}`, summary: 'bash_fs reset' };
         }
 
         return { output: `ERROR: Unsupported action '${action}'.` };
