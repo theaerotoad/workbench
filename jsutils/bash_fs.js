@@ -63,11 +63,11 @@ const BASH_FS_MAX_SINGLE_FILE = 8 * 1024 * 1024;
 
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&',
-        '<': '<',
-        '>': '>',
-        '"': '"',
-        "'": '''
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
     }[c]));
 }
 
@@ -158,7 +158,18 @@ async function collectWorkspaceSnapshot(api, requestedPaths, maxTotalBytes) {
 
 async function handler(args, api) {
     const bridge = self.__ionBashBridge;
-    if (!bridge || typeof bridge.fsOp !== 'function' || !bridge.isReady()) {
+    if (!bridge || typeof bridge.fsOp !== 'function') {
+        return {
+            output: "ERROR: The just-bash bridge is not available in this worker. Run 'bash_run' first to boot the sandbox. (If 'bash_run' already succeeded in this session, Ion is isolating each tool into its own Worker — in that case, use 'bash_run' directly with its 'files' and 'reset' parameters.)"
+        };
+    }
+    if (!bridge.isReady()) {
+        const lastErr = typeof bridge.getLastError === 'function' ? bridge.getLastError() : null;
+        if (lastErr) {
+            return {
+                output: `ERROR: The just-bash sandbox failed to start on the last 'bash_run' call:\n${lastErr}`
+            };
+        }
         return {
             output: "ERROR: The just-bash virtual sandbox is not active yet. Call 'bash_run' first (for example with command: 'ion-info') to boot the sandbox, then retry 'bash_fs'."
         };

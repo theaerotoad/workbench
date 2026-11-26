@@ -53,9 +53,9 @@ const TOOL_META = {
             key: "cdnProvider",
             label: "CDN loader strategy",
             type: "select",
-            options: ["auto", "esm.sh", "jsdelivr"],
+            options: ["auto", "jsdelivr-esm", "jsdelivr-patched", "esm.sh"],
             default: "auto",
-            description: "'auto' tries esm.sh first (full node:zlib rewrite) and falls back to jsDelivr with an inline node:zlib browser stub."
+            description: "'auto' tries jsDelivr +esm, then raw jsDelivr with bare-specifier + node:zlib rewriting, then esm.sh."
         },
         {
             key: "customModuleUrl",
@@ -122,11 +122,11 @@ const BASH_TERM_BOX = `font-size:11px; line-height:1.5; max-height:calc(${BASH_T
 // --- UI & formatting helpers -------------------------------------------------
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&',
-        '<': '<',
-        '>': '>',
-        '"': '"',
-        "'": '''
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
     }[c]));
 }
 
@@ -215,9 +215,11 @@ function __bashWorkerMain() {
         });
     }
 
-    const ZLIB_STUB = [
+    const toDataUrl = (code) => 'data:text/javascript;charset=utf-8,' + encodeURIComponent(code);
+
+    const ZLIB_DATA_URL = toDataUrl([
         'export const constants = {};',
-        'function unavail(fn){ throw new Error("node:zlib " + fn + " is unavailable in browser fallback mode (switch CDN provider to esm.sh if you need gzip/gunzip)"); }',
+        'function unavail(fn){ throw new Error("node:zlib " + fn + " is unavailable in browser fallback mode"); }',
         'export function gzipSync(){ unavail("gzipSync"); }',
         'export function gunzipSync(){ unavail("gunzipSync"); }',
         'export function deflateSync(){ unavail("deflateSync"); }',
@@ -225,8 +227,42 @@ function __bashWorkerMain() {
         'export function deflateRawSync(){ unavail("deflateRawSync"); }',
         'export function inflateRawSync(){ unavail("inflateRawSync"); }',
         'export default { constants, gzipSync, gunzipSync, deflateSync, inflateSync, deflateRawSync, inflateRawSync };'
-    ].join('\n');
-    const ZLIB_DATA_URL = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(ZLIB_STUB);
+    ].join('\n'));
+
+    const PROCESS_DATA_URL = toDataUrl([
+        'const p = globalThis.process || { env: {}, cwd: () => "/workspace", platform: "browser", versions: {} };',
+        'export const env = p.env;',
+        'export const cwd = p.cwd;',
+        'export const platform = p.platform;',
+        'export const versions = p.versions;',
+        'export const argv = p.argv || ["node"];',
+        'export const nextTick = p.nextTick || ((fn, ...a) => Promise.resolve().then(() => fn(...a)));',
+        'export default p;'
+    ].join('\n'));
+
+    const NODE_BUILTINS = new Set([
+        'assert', 'buffer', 'child_process', 'crypto', 'dns', 'events', 'fs', 'http', 'https',
+        'module', 'net', 'os', 'path', 'perf_hooks', 'process', 'querystring', 'readline',
+        'stream', 'string_decoder', 'timers', 'tls', 'tty', 'url', 'util', 'vm', 'worker_threads', 'zlib'
+    ]);
+
+    const nodeStubCache = new Map();
+    function getNodeBuiltinUrl(spec) {
+        const bare = spec.startsWith('node:') ? spec.slice(5) : spec;
+        const root = bare.split('/')[0];
+        if (!spec.startsWith('node:') && !NODE_BUILTINS.has(root)) return null;
+        if (root === 'zlib') return ZLIB_DATA_URL;
+        if (root === 'process') return PROCESS_DATA_URL;
+        if (nodeStubCache.has(bare)) return nodeStubCache.get(bare);
+        const code = [
+            `const err = () => { throw new Error("Node built-in '${spec}' is unavailable in the browser sandbox."); };`,
+            'const stub = new Proxy(err, { get(_t, k) { if (k === "__esModule") return true; if (k === "default") return stub; return err; } });',
+            'export default stub;'
+        ].join('\n');
+        const url = toDataUrl(code);
+        nodeStubCache.set(bare, url);
+        return url;
+    }
 
     function unwrapExports(mod) {
         if (mod && typeof mod.Bash === 'function') return mod;
@@ -234,69 +270,364 @@ function __bashWorkerMain() {
         throw new Error('Module loaded, but no Bash class export was found.');
     }
 
-    async function importWithZlibPatch(url, timeoutMs) {
-        const resp = await withTimeout(fetch(url, { mode: 'cors', credentials: 'omit' }), timeoutMs, `Fetching ${url}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
-        let src = await resp.text();
-        const baseUrl = resp.url || url;
+    // Lexical scanner that finds ONLY real ESM static import/export specifiers and dynamic import("...")
+    // string literals, skipping string/template/comment/regex bodies so prose inside bundles is never altered.
+    function collectImportLiterals(src) {
+        const len = src.length;
+        const matches = [];
+        const REGEX_PREV = new Set([
+            '', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '\n',
+            'return', 'case', 'throw', 'in', 'of', 'typeof', 'void', 'delete', 'new', 'else', 'do', 'yield', 'await'
+        ]);
+        const isIdStart = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+        const isIdPart = (c) => isIdStart(c) || (c >= 48 && c <= 57);
 
-        // Patch bare node:zlib imports (just-bash Issue #510) into an inline data-URI ESM stub.
-        src = src.replace(/(from\s*|import\s*\(\s*)(["'])node:zlib\2/g, (_, pre, q) => `${pre}${q}${ZLIB_DATA_URL}${q}`);
-        // Rewrite relative .js/.mjs chunk imports against the CDN origin so Blob import resolves them.
-        src = src.replace(/(\bfrom\s*|\bimport\s*\(\s*)(["'])(\.\.?\/[^"'\s]+\.[cm]?js)\2/g, (full, pre, q, rel) => {
-            try {
-                return `${pre}${q}${new URL(rel, baseUrl).href}${q}`;
-            } catch (_) {
-                return full;
+        let i = 0;
+        let prevTok = '';
+
+        function skipWsAndComments() {
+            while (i < len) {
+                const c = src.charCodeAt(i);
+                if (c <= 32) { i++; continue; }
+                if (c === 47 && src.charCodeAt(i + 1) === 47) {
+                    i += 2;
+                    while (i < len && src.charCodeAt(i) !== 10) i++;
+                    continue;
+                }
+                if (c === 47 && src.charCodeAt(i + 1) === 42) {
+                    i += 2;
+                    while (i < len && !(src.charCodeAt(i) === 42 && src.charCodeAt(i + 1) === 47)) i++;
+                    i += 2;
+                    continue;
+                }
+                break;
             }
-        });
-
-        const blobUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
-        try {
-            const mod = await withTimeout(import(blobUrl), timeoutMs, `Importing patched bundle from ${url}`);
-            return unwrapExports(mod);
-        } finally {
-            try { URL.revokeObjectURL(blobUrl); } catch (_) { /* ignore */ }
         }
+
+        function readString() {
+            const start = i;
+            const q = src[i++];
+            while (i < len) {
+                const ch = src[i++];
+                if (ch === '\\') { i++; continue; }
+                if (ch === q) {
+                    return { start, end: i, quote: q, value: src.slice(start + 1, i - 1) };
+                }
+            }
+            return null;
+        }
+
+        function skipTemplate() {
+            i++; // opening `
+            while (i < len) {
+                const ch = src[i++];
+                if (ch === '\\') { i++; continue; }
+                if (ch === '`') return;
+                if (ch === '$' && src[i] === '{') {
+                    i++;
+                    let depth = 1;
+                    while (i < len && depth > 0) {
+                        const t = src[i];
+                        if (t === '{') { depth++; i++; }
+                        else if (t === '}') { depth--; i++; }
+                        else if (t === '\'' || t === '"') { readString(); }
+                        else if (t === '`') { skipTemplate(); }
+                        else if (t === '/' && src[i + 1] === '/') { i += 2; while (i < len && src[i] !== '\n') i++; }
+                        else if (t === '/' && src[i + 1] === '*') { i += 2; while (i < len && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; }
+                        else { i++; }
+                    }
+                }
+            }
+        }
+
+        function skipRegex() {
+            i++; // opening /
+            let inClass = false;
+            while (i < len) {
+                const ch = src[i++];
+                if (ch === '\\') { i++; continue; }
+                if (ch === '[') { inClass = true; continue; }
+                if (ch === ']') { inClass = false; continue; }
+                if (!inClass && ch === '/') {
+                    while (i < len && isIdPart(src.charCodeAt(i))) i++;
+                    return;
+                }
+                if (ch === '\n') return;
+            }
+        }
+
+        while (i < len) {
+            const c = src.charCodeAt(i);
+            if (c <= 32) { i++; continue; }
+            if (c === 47) {
+                const n = src.charCodeAt(i + 1);
+                if (n === 47) { i += 2; while (i < len && src.charCodeAt(i) !== 10) i++; continue; }
+                if (n === 42) { i += 2; while (i < len && !(src.charCodeAt(i) === 42 && src.charCodeAt(i + 1) === 47)) i++; i += 2; continue; }
+                if (REGEX_PREV.has(prevTok)) { skipRegex(); prevTok = 'regex'; continue; }
+                i++; prevTok = '/'; continue;
+            }
+            if (c === 34 || c === 39) { readString(); prevTok = 'str'; continue; }
+            if (c === 96) { skipTemplate(); prevTok = 'str'; continue; }
+
+            if (isIdStart(c)) {
+                const idStart = i++;
+                while (i < len && isIdPart(src.charCodeAt(i))) i++;
+                const word = src.slice(idStart, i);
+
+                if ((word === 'import' || word === 'export') && prevTok !== '.') {
+                    const save = i;
+                    skipWsAndComments();
+                    const nextCh = src[i];
+
+                    if (word === 'import' && nextCh === '(') {
+                        i++;
+                        skipWsAndComments();
+                        if (src[i] === '"' || src[i] === '\'') {
+                            const lit = readString();
+                            skipWsAndComments();
+                            if (lit && (src[i] === ')' || src[i] === ',')) {
+                                matches.push(lit);
+                            }
+                        }
+                        prevTok = '(';
+                        continue;
+                    }
+
+                    if (word === 'import' && (nextCh === '"' || nextCh === '\'')) {
+                        const lit = readString();
+                        if (lit) matches.push(lit);
+                        prevTok = 'str';
+                        continue;
+                    }
+
+                    if (word === 'import' && nextCh === '.') {
+                        // import.meta
+                        i = save;
+                        prevTok = word;
+                        continue;
+                    }
+
+                    const canHaveFrom = word === 'import'
+                        ? (nextCh === '*' || nextCh === '{' || isIdStart(src.charCodeAt(i)))
+                        : (nextCh === '*' || nextCh === '{');
+
+                    if (canHaveFrom) {
+                        // Scan clause until "from" followed by a string literal, stopping at statement boundary.
+                        let braceDepth = 0;
+                        let found = false;
+                        while (i < len) {
+                            skipWsAndComments();
+                            const ch = src[i];
+                            if (!ch || ch === ';') break;
+                            if (ch === '{') { braceDepth++; i++; continue; }
+                            if (ch === '}') { braceDepth--; i++; continue; }
+                            if (ch === '"' || ch === '\'') { readString(); continue; }
+                            if (braceDepth === 0 && isIdStart(src.charCodeAt(i))) {
+                                const wStart = i++;
+                                while (i < len && isIdPart(src.charCodeAt(i))) i++;
+                                if (src.slice(wStart, i) === 'from') {
+                                    skipWsAndComments();
+                                    if (src[i] === '"' || src[i] === '\'') {
+                                        const lit = readString();
+                                        if (lit) matches.push(lit);
+                                        found = true;
+                                    }
+                                    break;
+                                }
+                                continue;
+                            }
+                            if (braceDepth === 0 && (ch === '(' || ch === '=' || ch === ')')) break;
+                            i++;
+                        }
+                        if (!found) i = save;
+                        prevTok = found ? 'str' : word;
+                        continue;
+                    }
+
+                    i = save;
+                }
+
+                prevTok = word;
+                continue;
+            }
+
+            prevTok = src[i++];
+        }
+        return matches;
+    }
+
+    function resolveBareNpmToJsDelivr(spec, pkgDeps) {
+        let pkgName;
+        let subpath = '';
+        if (spec.startsWith('@')) {
+            const parts = spec.split('/');
+            if (parts.length < 2) return null;
+            pkgName = `${parts[0]}/${parts[1]}`;
+            if (parts.length > 2) subpath = '/' + parts.slice(2).join('/');
+        } else {
+            const slash = spec.indexOf('/');
+            if (slash === -1) {
+                pkgName = spec;
+            } else {
+                pkgName = spec.slice(0, slash);
+                subpath = spec.slice(slash);
+            }
+        }
+
+        let targetPkg = pkgName;
+        let versionSpec = pkgDeps && typeof pkgDeps[pkgName] === 'string' ? pkgDeps[pkgName].trim() : '';
+        if (versionSpec.startsWith('npm:')) {
+            const aliased = versionSpec.slice(4);
+            const atIdx = aliased.lastIndexOf('@');
+            if (atIdx > 0) {
+                targetPkg = aliased.slice(0, atIdx);
+                versionSpec = aliased.slice(atIdx + 1);
+            } else {
+                targetPkg = aliased;
+                versionSpec = '';
+            }
+        }
+
+        const cleanVerMatch = versionSpec.match(/^[\^~]?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/);
+        const verPart = cleanVerMatch ? `@${cleanVerMatch[1]}` : '';
+        return `https://cdn.jsdelivr.net/npm/${targetPkg}${verPart}${subpath}/+esm`;
+    }
+
+    async function fetchPackageDeps(ver, timeoutMs) {
+        try {
+            const url = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/package.json`;
+            const resp = await withTimeout(fetch(url, { mode: 'cors', credentials: 'omit' }), Math.min(timeoutMs, 10000), 'Fetching package.json');
+            if (!resp.ok) return {};
+            const pkg = await resp.json();
+            return (pkg && typeof pkg.dependencies === 'object' && pkg.dependencies) ? pkg.dependencies : {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    async function importPatchedModuleGraph(entryUrl, { pkgDeps = {}, timeoutMs = 25000, patchRelative = true } = {}) {
+        const blobByUrl = new Map();
+        const createdBlobs = [];
+
+        async function loadAndPatch(url) {
+            if (blobByUrl.has(url)) return blobByUrl.get(url);
+
+            const resp = await withTimeout(fetch(url, { mode: 'cors', credentials: 'omit' }), timeoutMs, `Fetching ${url}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
+            const src = await resp.text();
+            const baseUrl = resp.url || url;
+
+            const lits = collectImportLiterals(src);
+            const replacements = [];
+
+            for (const lit of lits) {
+                const spec = lit.value;
+                let mapped = null;
+
+                const nodeUrl = getNodeBuiltinUrl(spec);
+                if (nodeUrl) {
+                    mapped = nodeUrl;
+                } else if (/^(https?:|data:|blob:)/i.test(spec)) {
+                    mapped = null; // already absolute URL
+                } else if (spec.startsWith('/')) {
+                    mapped = new URL(spec, baseUrl).href;
+                } else if (spec.startsWith('./') || spec.startsWith('../')) {
+                    const resolved = new URL(spec, baseUrl).href;
+                    mapped = patchRelative ? await loadAndPatch(resolved) : resolved;
+                } else {
+                    mapped = resolveBareNpmToJsDelivr(spec, pkgDeps);
+                }
+
+                if (mapped && mapped !== spec) {
+                    replacements.push({ start: lit.start, end: lit.end, text: JSON.stringify(mapped) });
+                }
+            }
+
+            let out = src;
+            if (replacements.length) {
+                replacements.sort((a, b) => a.start - b.start);
+                let cursor = 0;
+                const chunks = [];
+                for (const r of replacements) {
+                    chunks.push(src.slice(cursor, r.start), r.text);
+                    cursor = r.end;
+                }
+                chunks.push(src.slice(cursor));
+                out = chunks.join('');
+            }
+
+            const blobUrl = URL.createObjectURL(new Blob([out], { type: 'application/javascript' }));
+            createdBlobs.push(blobUrl);
+            blobByUrl.set(url, blobUrl);
+            if (baseUrl !== url) blobByUrl.set(baseUrl, blobUrl);
+            return blobUrl;
+        }
+
+        const rootBlob = await loadAndPatch(entryUrl);
+        const mod = await withTimeout(import(rootBlob), timeoutMs, `Importing patched module from ${entryUrl}`);
+        return unwrapExports(mod);
     }
 
     async function loadJustBash(cfg) {
         installProcessShim();
         const ver = cfg.version || '3.6.0';
-        const esmUrl = `https://esm.sh/just-bash@${ver}/browser`;
-        const jsdUrl = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/dist/bundle/browser.js`;
+        const jsdEsmUrl = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/dist/bundle/browser.js/+esm`;
+        const jsdRawUrl = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/dist/bundle/browser.js`;
+        const esmUrl = `https://esm.sh/just-bash@${ver}/browser?bundle`;
         const errors = [];
 
         if (cfg.customModuleUrl) {
-            post({ type: 'status', text: `Loading just-bash from custom URL...` });
+            post({ type: 'status', text: 'Loading just-bash from custom URL...' });
             try {
                 const mod = unwrapExports(await withTimeout(import(cfg.customModuleUrl), 25000, 'Custom module import'));
                 return { mod, loadedVia: cfg.customModuleUrl };
             } catch (e1) {
                 errors.push(`direct custom import: ${e1.message || e1}`);
-                post({ type: 'status', text: 'Retrying custom URL with node:zlib browser shim...' });
-                const mod = await importWithZlibPatch(cfg.customModuleUrl, 25000);
+                post({ type: 'status', text: 'Retrying custom URL with browser specifier shim...' });
+                const pkgDeps = await fetchPackageDeps(ver, 10000);
+                const mod = await importPatchedModuleGraph(cfg.customModuleUrl, { pkgDeps, timeoutMs: 25000 });
                 return { mod, loadedVia: cfg.customModuleUrl + ' (patched)' };
             }
         }
 
-        const plan = cfg.cdnProvider === 'jsdelivr'
-            ? ['jsdelivr']
-            : cfg.cdnProvider === 'esm.sh'
-                ? ['esm.sh']
-                : ['esm.sh', 'jsdelivr'];
+        const provider = cfg.cdnProvider || 'auto';
+        const plan = provider === 'jsdelivr-esm'
+            ? ['jsdelivr-esm']
+            : (provider === 'jsdelivr-patched' || provider === 'jsdelivr')
+                ? ['jsdelivr-patched']
+                : provider === 'esm.sh'
+                    ? ['esm.sh']
+                    : ['jsdelivr-esm', 'jsdelivr-patched', 'esm.sh'];
 
         for (const source of plan) {
             try {
+                if (source === 'jsdelivr-esm') {
+                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (+esm)...` });
+                    const mod = await importPatchedModuleGraph(jsdEsmUrl, {
+                        pkgDeps: {},
+                        timeoutMs: 25000,
+                        patchRelative: false
+                    });
+                    return { mod, loadedVia: jsdEsmUrl };
+                }
+                if (source === 'jsdelivr-patched') {
+                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (patching bare imports & node:zlib)...` });
+                    const pkgDeps = await fetchPackageDeps(ver, 10000);
+                    const mod = await importPatchedModuleGraph(jsdRawUrl, {
+                        pkgDeps,
+                        timeoutMs: 30000,
+                        patchRelative: true
+                    });
+                    return { mod, loadedVia: jsdRawUrl + ' (patched)' };
+                }
                 if (source === 'esm.sh') {
                     post({ type: 'status', text: `Loading just-bash@${ver} from esm.sh...` });
-                    const mod = unwrapExports(await withTimeout(import(esmUrl), 25000, 'esm.sh import'));
+                    const mod = await importPatchedModuleGraph(esmUrl, {
+                        pkgDeps: {},
+                        timeoutMs: 25000,
+                        patchRelative: false
+                    });
                     return { mod, loadedVia: esmUrl };
-                }
-                if (source === 'jsdelivr') {
-                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (with node:zlib shim)...` });
-                    const mod = await importWithZlibPatch(jsdUrl, 25000);
-                    return { mod, loadedVia: jsdUrl + ' (zlib-shimmed)' };
                 }
             } catch (err) {
                 errors.push(`${source}: ${err && err.message ? err.message : String(err)}`);
@@ -774,11 +1105,29 @@ async function ensureBashReady(cfg, onEvent) {
 
 // Expose a shared bridge on the Tool Worker global so companion tools (e.g. bash_fs)
 // operate on the exact same warm virtual filesystem and execution queue.
+self.__ionBashMeta = self.__ionBashMeta || { lastCfg: null, lastError: null };
 self.__ionBashBridge = {
     isReady: () => !!(self.__ionBash && self.__ionBash.alive && self.__ionBash.info),
     getInfo: () => (self.__ionBash && self.__ionBash.info) ? { ...self.__ionBash.info } : null,
+    getLastError: () => self.__ionBashMeta.lastError || null,
+    ensureReady: (onEvent) => bashExclusive(async () => {
+        if (self.__ionBash && self.__ionBash.alive && self.__ionBash.ready) {
+            await self.__ionBash.ready;
+            return self.__ionBash.info;
+        }
+        if (!self.__ionBashMeta.lastCfg) {
+            throw new Error('just-bash has not been configured yet. Call bash_run first to start the sandbox.');
+        }
+        const st = await ensureBashReady(self.__ionBashMeta.lastCfg, onEvent);
+        self.__ionBashMeta.lastError = null;
+        return st.info;
+    }),
     fsOp: (payload, transfer, onEvent) => bashExclusive(async () => {
-        const st = self.__ionBash;
+        let st = self.__ionBash;
+        if ((!st || !st.alive || !st.ready) && self.__ionBashMeta.lastCfg) {
+            st = await ensureBashReady(self.__ionBashMeta.lastCfg, onEvent);
+            self.__ionBashMeta.lastError = null;
+        }
         if (!st || !st.alive || !st.ready) {
             throw new Error('just-bash sandbox is not running yet. Run a command with bash_run first to start it.');
         }
@@ -972,6 +1321,7 @@ async function handler(args, api) {
         allowNetwork,
         allowedUrlPrefixes
     };
+    self.__ionBashMeta.lastCfg = cfg;
 
     const firstLine = command.trim().split('\n')[0] || (reset ? 'reset sandbox' : 'write virtual files');
     const shortLabel = firstLine.length > 68 ? firstLine.slice(0, 65) + '...' : firstLine;
@@ -1002,6 +1352,7 @@ async function handler(args, api) {
                 }
             };
             const st = await ensureBashReady(cfg, onEvent);
+            self.__ionBashMeta.lastError = null;
             const hardTimeoutMs = (timeoutSec + 5) * 1000;
             try {
                 const resp = await bashCall(
@@ -1033,6 +1384,7 @@ async function handler(args, api) {
         live.stop();
         const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
         const errMsg = err && err.message ? err.message : String(err);
+        self.__ionBashMeta.lastError = errMsg;
         const isTimeout = !!(err && err.timedOut);
         const badge = isTimeout
             ? ['TIMED OUT', '#e5c07b', 'rgba(229,192,123,0.18)']
