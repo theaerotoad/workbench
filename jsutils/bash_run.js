@@ -53,9 +53,9 @@ const TOOL_META = {
             key: "cdnProvider",
             label: "CDN loader strategy",
             type: "select",
-            options: ["auto", "jsdelivr-esm", "jsdelivr-patched", "esm.sh"],
+            options: ["auto", "jsdelivr-patched", "esm.sh"],
             default: "auto",
-            description: "'auto' tries jsDelivr +esm, then raw jsDelivr with bare-specifier + node:zlib rewriting, then esm.sh."
+            description: "'auto' loads the jsDelivr browser bundle with es-module-lexer import rewriting (recommended), falling back to esm.sh."
         },
         {
             key: "customModuleUrl",
@@ -240,6 +240,8 @@ function __bashWorkerMain() {
         'export default p;'
     ].join('\n'));
 
+    const BUFFER_CDN_URL = 'https://cdn.jsdelivr.net/npm/buffer@6.0.3/+esm';
+
     const NODE_BUILTINS = new Set([
         'assert', 'buffer', 'child_process', 'crypto', 'dns', 'events', 'fs', 'http', 'https',
         'module', 'net', 'os', 'path', 'perf_hooks', 'process', 'querystring', 'readline',
@@ -248,14 +250,20 @@ function __bashWorkerMain() {
 
     const nodeStubCache = new Map();
     function getNodeBuiltinUrl(spec) {
-        const bare = spec.startsWith('node:') ? spec.slice(5) : spec;
+        let normalized = spec;
+        const esmNodeMatch = String(spec || '').match(/^(?:https?:\/\/esm\.sh)?\/node\/([a-z0-9_/-]+)\.mjs(?:\?.*)?$/i);
+        if (esmNodeMatch) {
+            normalized = 'node:' + esmNodeMatch[1];
+        }
+        const bare = normalized.startsWith('node:') ? normalized.slice(5) : normalized;
         const root = bare.split('/')[0];
-        if (!spec.startsWith('node:') && !NODE_BUILTINS.has(root)) return null;
+        if (!normalized.startsWith('node:') && !NODE_BUILTINS.has(root)) return null;
         if (root === 'zlib') return ZLIB_DATA_URL;
         if (root === 'process') return PROCESS_DATA_URL;
+        if (root === 'buffer') return BUFFER_CDN_URL;
         if (nodeStubCache.has(bare)) return nodeStubCache.get(bare);
         const code = [
-            `const err = () => { throw new Error("Node built-in '${spec}' is unavailable in the browser sandbox."); };`,
+            `const err = () => { throw new Error("Node built-in '${normalized}' is unavailable in the browser sandbox."); };`,
             'const stub = new Proxy(err, { get(_t, k) { if (k === "__esModule") return true; if (k === "default") return stub; return err; } });',
             'export default stub;'
         ].join('\n');
@@ -270,188 +278,53 @@ function __bashWorkerMain() {
         throw new Error('Module loaded, but no Bash class export was found.');
     }
 
-    // Lexical scanner that finds ONLY real ESM static import/export specifiers and dynamic import("...")
-    // string literals, skipping string/template/comment/regex bodies so prose inside bundles is never altered.
-    function collectImportLiterals(src) {
-        const len = src.length;
+    let cachedEsmParse = null;
+    async function getEsmParse(timeoutMs) {
+        if (cachedEsmParse) return cachedEsmParse;
+        const candidates = [
+            'https://cdn.jsdelivr.net/npm/es-module-lexer@1.7.0/+esm',
+            'https://cdn.jsdelivr.net/npm/es-module-lexer@1.7.0/dist/lexer.asm.js',
+            'https://cdn.jsdelivr.net/npm/es-module-lexer@1.7.0/dist/lexer.js'
+        ];
+        const errs = [];
+        for (const url of candidates) {
+            try {
+                const mod = await withTimeout(import(url), Math.min(timeoutMs, 15000), `Loading es-module-lexer`);
+                const initFn = mod.init || (mod.default && mod.default.init);
+                const parseFn = mod.parse || (mod.default && mod.default.parse);
+                if (typeof parseFn !== 'function') throw new Error('parse() export missing');
+                if (initFn) await initFn;
+                cachedEsmParse = parseFn;
+                return cachedEsmParse;
+            } catch (err) {
+                errs.push(`${url}: ${err && err.message ? err.message : err}`);
+            }
+        }
+        throw new Error(`Could not load es-module-lexer:\n- ${errs.join('\n- ')}`);
+    }
+
+    // Spec-accurate ESM specifier extraction via es-module-lexer (handles esbuild's mid-file static
+    // imports, complex regexes, template literals, and dynamic import("...") expressions reliably).
+    function collectImportLiterals(src, parseEsm) {
+        const [imports] = parseEsm(src);
         const matches = [];
-        const REGEX_PREV = new Set([
-            '', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '\n',
-            'return', 'case', 'throw', 'in', 'of', 'typeof', 'void', 'delete', 'new', 'else', 'do', 'yield', 'await'
-        ]);
-        const isIdStart = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
-        const isIdPart = (c) => isIdStart(c) || (c >= 48 && c <= 57);
-
-        let i = 0;
-        let prevTok = '';
-
-        function skipWsAndComments() {
-            while (i < len) {
-                const c = src.charCodeAt(i);
-                if (c <= 32) { i++; continue; }
-                if (c === 47 && src.charCodeAt(i + 1) === 47) {
-                    i += 2;
-                    while (i < len && src.charCodeAt(i) !== 10) i++;
-                    continue;
-                }
-                if (c === 47 && src.charCodeAt(i + 1) === 42) {
-                    i += 2;
-                    while (i < len && !(src.charCodeAt(i) === 42 && src.charCodeAt(i + 1) === 47)) i++;
-                    i += 2;
-                    continue;
-                }
-                break;
+        for (const imp of imports) {
+            if (imp.d === -2) continue; // import.meta
+            const spec = imp.n;
+            if (typeof spec !== 'string' || !spec) continue;
+            let start;
+            let end;
+            const chAtS = src[imp.s];
+            if ((chAtS === '"' || chAtS === "'") && src[imp.e - 1] === chAtS) {
+                start = imp.s;
+                end = imp.e;
+            } else if (imp.s > 0 && (src[imp.s - 1] === '"' || src[imp.s - 1] === "'") && src[imp.e] === src[imp.s - 1]) {
+                start = imp.s - 1;
+                end = imp.e + 1;
+            } else {
+                continue; // non-literal dynamic expression
             }
-        }
-
-        function readString() {
-            const start = i;
-            const q = src[i++];
-            while (i < len) {
-                const ch = src[i++];
-                if (ch === '\\') { i++; continue; }
-                if (ch === q) {
-                    return { start, end: i, quote: q, value: src.slice(start + 1, i - 1) };
-                }
-            }
-            return null;
-        }
-
-        function skipTemplate() {
-            i++; // opening `
-            while (i < len) {
-                const ch = src[i++];
-                if (ch === '\\') { i++; continue; }
-                if (ch === '`') return;
-                if (ch === '$' && src[i] === '{') {
-                    i++;
-                    let depth = 1;
-                    while (i < len && depth > 0) {
-                        const t = src[i];
-                        if (t === '{') { depth++; i++; }
-                        else if (t === '}') { depth--; i++; }
-                        else if (t === '\'' || t === '"') { readString(); }
-                        else if (t === '`') { skipTemplate(); }
-                        else if (t === '/' && src[i + 1] === '/') { i += 2; while (i < len && src[i] !== '\n') i++; }
-                        else if (t === '/' && src[i + 1] === '*') { i += 2; while (i < len && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; }
-                        else { i++; }
-                    }
-                }
-            }
-        }
-
-        function skipRegex() {
-            i++; // opening /
-            let inClass = false;
-            while (i < len) {
-                const ch = src[i++];
-                if (ch === '\\') { i++; continue; }
-                if (ch === '[') { inClass = true; continue; }
-                if (ch === ']') { inClass = false; continue; }
-                if (!inClass && ch === '/') {
-                    while (i < len && isIdPart(src.charCodeAt(i))) i++;
-                    return;
-                }
-                if (ch === '\n') return;
-            }
-        }
-
-        while (i < len) {
-            const c = src.charCodeAt(i);
-            if (c <= 32) { i++; continue; }
-            if (c === 47) {
-                const n = src.charCodeAt(i + 1);
-                if (n === 47) { i += 2; while (i < len && src.charCodeAt(i) !== 10) i++; continue; }
-                if (n === 42) { i += 2; while (i < len && !(src.charCodeAt(i) === 42 && src.charCodeAt(i + 1) === 47)) i++; i += 2; continue; }
-                if (REGEX_PREV.has(prevTok)) { skipRegex(); prevTok = 'regex'; continue; }
-                i++; prevTok = '/'; continue;
-            }
-            if (c === 34 || c === 39) { readString(); prevTok = 'str'; continue; }
-            if (c === 96) { skipTemplate(); prevTok = 'str'; continue; }
-
-            if (isIdStart(c)) {
-                const idStart = i++;
-                while (i < len && isIdPart(src.charCodeAt(i))) i++;
-                const word = src.slice(idStart, i);
-
-                if ((word === 'import' || word === 'export') && prevTok !== '.') {
-                    const save = i;
-                    skipWsAndComments();
-                    const nextCh = src[i];
-
-                    if (word === 'import' && nextCh === '(') {
-                        i++;
-                        skipWsAndComments();
-                        if (src[i] === '"' || src[i] === '\'') {
-                            const lit = readString();
-                            skipWsAndComments();
-                            if (lit && (src[i] === ')' || src[i] === ',')) {
-                                matches.push(lit);
-                            }
-                        }
-                        prevTok = '(';
-                        continue;
-                    }
-
-                    if (word === 'import' && (nextCh === '"' || nextCh === '\'')) {
-                        const lit = readString();
-                        if (lit) matches.push(lit);
-                        prevTok = 'str';
-                        continue;
-                    }
-
-                    if (word === 'import' && nextCh === '.') {
-                        // import.meta
-                        i = save;
-                        prevTok = word;
-                        continue;
-                    }
-
-                    const canHaveFrom = word === 'import'
-                        ? (nextCh === '*' || nextCh === '{' || isIdStart(src.charCodeAt(i)))
-                        : (nextCh === '*' || nextCh === '{');
-
-                    if (canHaveFrom) {
-                        // Scan clause until "from" followed by a string literal, stopping at statement boundary.
-                        let braceDepth = 0;
-                        let found = false;
-                        while (i < len) {
-                            skipWsAndComments();
-                            const ch = src[i];
-                            if (!ch || ch === ';') break;
-                            if (ch === '{') { braceDepth++; i++; continue; }
-                            if (ch === '}') { braceDepth--; i++; continue; }
-                            if (ch === '"' || ch === '\'') { readString(); continue; }
-                            if (braceDepth === 0 && isIdStart(src.charCodeAt(i))) {
-                                const wStart = i++;
-                                while (i < len && isIdPart(src.charCodeAt(i))) i++;
-                                if (src.slice(wStart, i) === 'from') {
-                                    skipWsAndComments();
-                                    if (src[i] === '"' || src[i] === '\'') {
-                                        const lit = readString();
-                                        if (lit) matches.push(lit);
-                                        found = true;
-                                    }
-                                    break;
-                                }
-                                continue;
-                            }
-                            if (braceDepth === 0 && (ch === '(' || ch === '=' || ch === ')')) break;
-                            i++;
-                        }
-                        if (!found) i = save;
-                        prevTok = found ? 'str' : word;
-                        continue;
-                    }
-
-                    i = save;
-                }
-
-                prevTok = word;
-                continue;
-            }
-
-            prevTok = src[i++];
+            matches.push({ start, end, value: spec });
         }
         return matches;
     }
@@ -506,8 +379,9 @@ function __bashWorkerMain() {
     }
 
     async function importPatchedModuleGraph(entryUrl, { pkgDeps = {}, timeoutMs = 25000, patchRelative = true } = {}) {
+        const parseEsm = await getEsmParse(timeoutMs);
         const blobByUrl = new Map();
-        const createdBlobs = [];
+        const rewrittenLog = new Set();
 
         async function loadAndPatch(url) {
             if (blobByUrl.has(url)) return blobByUrl.get(url);
@@ -517,7 +391,7 @@ function __bashWorkerMain() {
             const src = await resp.text();
             const baseUrl = resp.url || url;
 
-            const lits = collectImportLiterals(src);
+            const lits = collectImportLiterals(src, parseEsm);
             const replacements = [];
 
             for (const lit of lits) {
@@ -528,7 +402,7 @@ function __bashWorkerMain() {
                 if (nodeUrl) {
                     mapped = nodeUrl;
                 } else if (/^(https?:|data:|blob:)/i.test(spec)) {
-                    mapped = null; // already absolute URL
+                    mapped = null;
                 } else if (spec.startsWith('/')) {
                     mapped = new URL(spec, baseUrl).href;
                 } else if (spec.startsWith('./') || spec.startsWith('../')) {
@@ -539,6 +413,7 @@ function __bashWorkerMain() {
                 }
 
                 if (mapped && mapped !== spec) {
+                    rewrittenLog.add(spec);
                     replacements.push({ start: lit.start, end: lit.end, text: JSON.stringify(mapped) });
                 }
             }
@@ -549,6 +424,7 @@ function __bashWorkerMain() {
                 let cursor = 0;
                 const chunks = [];
                 for (const r of replacements) {
+                    if (r.start < cursor) continue;
                     chunks.push(src.slice(cursor, r.start), r.text);
                     cursor = r.end;
                 }
@@ -557,23 +433,28 @@ function __bashWorkerMain() {
             }
 
             const blobUrl = URL.createObjectURL(new Blob([out], { type: 'application/javascript' }));
-            createdBlobs.push(blobUrl);
             blobByUrl.set(url, blobUrl);
             if (baseUrl !== url) blobByUrl.set(baseUrl, blobUrl);
             return blobUrl;
         }
 
         const rootBlob = await loadAndPatch(entryUrl);
-        const mod = await withTimeout(import(rootBlob), timeoutMs, `Importing patched module from ${entryUrl}`);
-        return unwrapExports(mod);
+        try {
+            const mod = await withTimeout(import(rootBlob), timeoutMs, `Importing patched module from ${entryUrl}`);
+            return unwrapExports(mod);
+        } catch (err) {
+            const specs = [...rewrittenLog].slice(0, 12).join(', ');
+            const msg = err && err.message ? err.message : String(err);
+            throw new Error(specs ? `${msg} [rewrote: ${specs}]` : msg);
+        }
     }
 
     async function loadJustBash(cfg) {
         installProcessShim();
         const ver = cfg.version || '3.6.0';
-        const jsdEsmUrl = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/dist/bundle/browser.js/+esm`;
         const jsdRawUrl = `https://cdn.jsdelivr.net/npm/just-bash@${ver}/dist/bundle/browser.js`;
-        const esmUrl = `https://esm.sh/just-bash@${ver}/browser?bundle`;
+        const esmExternals = 'node:zlib,node:buffer,node:process,node:fs,node:path,node:os,node:tty,node:module,node:worker_threads,node:child_process,node:crypto,node:net,node:http,node:https,node:tls,node:dns,node:readline,node:vm';
+        const esmUrl = `https://esm.sh/just-bash@${ver}/browser?bundle&external=${esmExternals}`;
         const errors = [];
 
         if (cfg.customModuleUrl) {
@@ -583,7 +464,7 @@ function __bashWorkerMain() {
                 return { mod, loadedVia: cfg.customModuleUrl };
             } catch (e1) {
                 errors.push(`direct custom import: ${e1.message || e1}`);
-                post({ type: 'status', text: 'Retrying custom URL with browser specifier shim...' });
+                post({ type: 'status', text: 'Retrying custom URL with es-module-lexer browser shim...' });
                 const pkgDeps = await fetchPackageDeps(ver, 10000);
                 const mod = await importPatchedModuleGraph(cfg.customModuleUrl, { pkgDeps, timeoutMs: 25000 });
                 return { mod, loadedVia: cfg.customModuleUrl + ' (patched)' };
@@ -591,34 +472,23 @@ function __bashWorkerMain() {
         }
 
         const provider = cfg.cdnProvider || 'auto';
-        const plan = provider === 'jsdelivr-esm'
-            ? ['jsdelivr-esm']
-            : (provider === 'jsdelivr-patched' || provider === 'jsdelivr')
-                ? ['jsdelivr-patched']
-                : provider === 'esm.sh'
-                    ? ['esm.sh']
-                    : ['jsdelivr-esm', 'jsdelivr-patched', 'esm.sh'];
+        const plan = (provider === 'jsdelivr-patched' || provider === 'jsdelivr' || provider === 'jsdelivr-esm')
+            ? ['jsdelivr-patched']
+            : provider === 'esm.sh'
+                ? ['esm.sh']
+                : ['jsdelivr-patched', 'esm.sh'];
 
         for (const source of plan) {
             try {
-                if (source === 'jsdelivr-esm') {
-                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (+esm)...` });
-                    const mod = await importPatchedModuleGraph(jsdEsmUrl, {
-                        pkgDeps: {},
-                        timeoutMs: 25000,
-                        patchRelative: false
-                    });
-                    return { mod, loadedVia: jsdEsmUrl };
-                }
                 if (source === 'jsdelivr-patched') {
-                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (patching bare imports & node:zlib)...` });
+                    post({ type: 'status', text: `Loading just-bash@${ver} from jsDelivr (rewriting imports via es-module-lexer)...` });
                     const pkgDeps = await fetchPackageDeps(ver, 10000);
                     const mod = await importPatchedModuleGraph(jsdRawUrl, {
                         pkgDeps,
                         timeoutMs: 30000,
                         patchRelative: true
                     });
-                    return { mod, loadedVia: jsdRawUrl + ' (patched)' };
+                    return { mod, loadedVia: jsdRawUrl + ' (es-module-lexer)' };
                 }
                 if (source === 'esm.sh') {
                     post({ type: 'status', text: `Loading just-bash@${ver} from esm.sh...` });
