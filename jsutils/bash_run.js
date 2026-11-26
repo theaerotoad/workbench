@@ -1,7 +1,7 @@
 // bash_run - Virtual Bash execution tool powered by just-bash with MountableFs lazy workspace bridge
 const TOOL_META = {
     name: "bash_run",
-    description: "Execute Bash commands and shell pipelines inside a sandboxed, in-browser virtual Bash environment (just-bash) with Ion's workspace lazily mounted at /workspace via MountableFs.\n\nENVIRONMENT & FILESYSTEM MODEL:\n- MountableFs Layout:\n  - `/workspace`: Lazily backed by Ion's workspace files. Directory structure is available immediately for `ls`, `find`, `tree`; file contents are fetched on demand from Ion on first read and cached in memory (auto-refreshed if edited in Ion).\n  - `/tmp`, `/home/user`: Pure in-memory scratch space (never synced to Ion).\n- Dirty Tracking & Sync: Writes, edits, renames, and deletions under `/workspace` are tracked separately from host files. In 'staged' mode (default), changes stay in memory until synced via `bash_fs` (`action: 'sync'`) or `bash_run` (`sync: true`). In 'auto' mode, changes under `/workspace` sync back to Ion automatically after each command.\n- Supported Built-ins: Standard Unix file/text/data tools including cat, cp, ls, mkdir, mv, rm, stat, touch, tree, find, grep, rg, awk, sed, cut, diff, head, tail, sort, uniq, wc, xargs, tr, printf, base64, sha256sum, jq, and full Bash syntax (pipes, redirects, loops, functions, variables, globs, heredocs).\n- Browser Exclusions: python3/python, sqlite3, js-exec, tar, yq, xan, and native OS binaries are NOT available in the browser build. gzip/gunzip/zcat are unavailable in fallback mode.\n- Network: Disabled by default (`curl` requires enabling network access in settings).\n- Built-in Sandbox Command: Run `ion-info` inside bash to inspect runtime, mount, lazy-load, and dirty-file stats.",
+    description: "Execute Bash commands and shell pipelines inside a sandboxed, in-browser virtual Bash environment (just-bash) mounted directly over Ion's workspace at /workspace.\n\nENVIRONMENT & FILESYSTEM MODEL:\n- Live Workspace (`/workspace`): Default working directory. Workspace files are lazily loaded on demand and cached in memory (auto-refreshed when edited outside bash). By default (`syncMode: 'auto'`), all files created, modified, renamed, or deleted under `/workspace` are automatically synced back to Ion's workspace when the command finishes — no separate sync call is needed. Ion's protected paths (`.git`, `.env`, `.agent/`, etc.) remain enforced by the host.\n- Scratch Space (`/tmp`, `/home/user`): Pure in-memory scratch directories that persist across calls in the session and are never synced back to Ion's workspace.\n- Supported Built-ins: Standard Unix file/text/data tools including cat, cp, ls, mkdir, mv, rm, stat, touch, tree, find, grep, rg, awk, sed, cut, diff, head, tail, sort, uniq, wc, xargs, tr, printf, base64, sha256sum, jq, and full Bash syntax (pipes, redirects, loops, functions, variables, globs, heredocs).\n- Browser Exclusions: python3/python, sqlite3, js-exec, tar, yq, xan, and native OS binaries are NOT available in the browser build. gzip/gunzip/zcat are unavailable in fallback mode.\n- Network: Disabled by default (`curl` requires enabling network access in settings).\n- Built-in Sandbox Command: Run `ion-info` inside bash to inspect runtime, mount, cache, and sync status.",
     parameters: {
         type: "object",
         properties: {
@@ -31,11 +31,11 @@ const TOOL_META = {
             },
             sync: {
                 type: "boolean",
-                description: "If true, syncs all dirty writes (and deletions, if enabled) under /workspace back to Ion's host workspace after this command finishes."
+                description: "Forces syncing any unsynced /workspace changes back to Ion after this command (automatic by default when syncMode is 'auto')."
             },
             reset: {
                 type: "boolean",
-                description: "If true, resets /tmp, cwd, and all uncommitted /workspace changes back to a clean lazy mount of Ion's workspace before running."
+                description: "If true, clears /tmp, resets cwd to /workspace, and remounts a fresh lazy view of Ion's workspace before running."
             }
         },
         required: ["command"]
@@ -79,9 +79,9 @@ const TOOL_META = {
             key: "syncMode",
             label: "Workspace write-back mode",
             type: "select",
-            options: ["staged", "auto"],
-            default: "staged",
-            description: "'staged' keeps edits in memory until you run bash_fs sync (or pass sync: true). 'auto' writes dirty /workspace changes back to Ion after every command."
+            options: ["auto", "staged"],
+            default: "auto",
+            description: "'auto' (default) writes /workspace changes back to Ion automatically after every command. 'staged' holds edits in memory until you run bash_fs sync (or pass sync: true)."
         },
         {
             key: "syncDeletions",
@@ -187,7 +187,7 @@ function __bashWorkerMain() {
         allowNetwork: false,
         mountWorkspace: true,
         mountMode: 'in-memory',
-        syncMode: 'staged'
+        syncMode: 'auto'
     };
 
     const post = (msg, transfer) => self.postMessage(msg, transfer || []);
@@ -657,9 +657,9 @@ function __bashWorkerMain() {
         const statCache = new Map();        // path -> { size, mtime, isBinary } for lazy stat metadata
         const dirtySet = new Set();         // paths created or modified in /workspace
         const deletedSet = new Set();       // host-known paths deleted in /workspace
+        const pendingSync = new Set();      // dirty/deleted paths not yet attempted by auto-sync
         const inFlight = new Map();         // path -> Promise (dedupes concurrent reads)
         const execCounters = { lazyReads: 0, lazyStats: 0 };
-        const seenMethods = new Set();
 
         function norm(p) {
             return normalizePath(p || '/', '/');
@@ -841,7 +841,7 @@ function __bashWorkerMain() {
             return { added, removed, invalidated };
         }
 
-        async function exportDirty(filterPaths) {
+        async function exportDirty(filterPaths, pendingOnly = false) {
             const filterSet = Array.isArray(filterPaths) && filterPaths.length
                 ? new Set(filterPaths.map(p => norm(String(p).replace(/^\/workspace(?=\/|$)/, '') || '/')))
                 : null;
@@ -849,8 +849,11 @@ function __bashWorkerMain() {
             const writes = [];
             for (const p of [...dirtySet].sort()) {
                 if (filterSet && !filterSet.has(p)) continue;
+                if (pendingOnly && !pendingSync.has(p)) continue;
                 let buf;
-                if (typeof mem.readFileBuffer === 'function') {
+                if (typeof mem.readFileBytes === 'function') {
+                    buf = await mem.readFileBytes(p);
+                } else if (typeof mem.readFileBuffer === 'function') {
                     buf = await mem.readFileBuffer(p);
                 } else {
                     const txt = await mem.readFile(p);
@@ -868,29 +871,38 @@ function __bashWorkerMain() {
             const deletes = [];
             for (const p of [...deletedSet].sort()) {
                 if (filterSet && !filterSet.has(p)) continue;
+                if (pendingOnly && !pendingSync.has(p)) continue;
                 deletes.push({ mountPath: p, relPath: toHostRel(p) });
             }
 
             return { writes, deletes };
         }
 
-        async function markSynced(syncedWrites, syncedDeletes) {
+        async function markSynced(syncedWrites, syncedDeletes, attemptedPaths) {
+            for (const rel of (attemptedPaths || [])) {
+                const p = norm('/' + String(rel).replace(/^\/+/, ''));
+                pendingSync.delete(p);
+            }
             for (const item of (syncedWrites || [])) {
                 const p = norm('/' + String(item.relPath || item).replace(/^\/+/, ''));
                 dirtySet.delete(p);
                 deletedSet.delete(p);
+                pendingSync.delete(p);
                 lazySet.delete(p);
                 hostKnown.add(p);
-                const meta = item.stat || null;
-                if (meta) {
-                    materialized.set(p, meta);
-                    statCache.set(p, meta);
-                }
+                const meta = item.stat || {
+                    size: typeof item.size === 'number' ? item.size : 0,
+                    mtime: null,
+                    isBinary: !!item.isBinary
+                };
+                materialized.set(p, meta);
+                statCache.set(p, meta);
             }
             for (const rel of (syncedDeletes || [])) {
                 const p = norm('/' + String(rel).replace(/^\/+/, ''));
                 deletedSet.delete(p);
                 dirtySet.delete(p);
+                pendingSync.delete(p);
                 hostKnown.delete(p);
                 lazySet.delete(p);
                 materialized.delete(p);
@@ -909,6 +921,7 @@ function __bashWorkerMain() {
             for (const p of [...dirtySet]) {
                 if (filterSet && !filterSet.has(p)) continue;
                 dirtySet.delete(p);
+                pendingSync.delete(p);
                 materialized.delete(p);
                 statCache.delete(p);
                 if (hostKnown.has(p)) {
@@ -923,6 +936,7 @@ function __bashWorkerMain() {
             for (const p of [...deletedSet]) {
                 if (filterSet && !filterSet.has(p)) continue;
                 deletedSet.delete(p);
+                pendingSync.delete(p);
                 if (hostKnown.has(p)) {
                     await putPlaceholder(p);
                     reverted.push(toHostRel(p));
@@ -949,9 +963,9 @@ function __bashWorkerMain() {
                 modified,
                 deleted,
                 dirtyTotal: created.length + modified.length + deleted.length,
+                pendingSyncTotal: pendingSync.size,
                 execLazyReads: execCounters.lazyReads,
-                execLazyStats: execCounters.lazyStats,
-                seenMethods: [...seenMethods]
+                execLazyStats: execCounters.lazyStats
             };
         }
 
@@ -973,17 +987,20 @@ function __bashWorkerMain() {
 
         const explicit = {
             async readFile(p, opts) {
-                seenMethods.add('readFile');
                 await materializeOne(p);
                 return mem.readFile(p, opts);
             },
+            async readFileBytes(p, opts) {
+                await materializeOne(p);
+                return typeof mem.readFileBytes === 'function'
+                    ? mem.readFileBytes(p, opts)
+                    : mem.readFileBuffer(p);
+            },
             async readFileBuffer(p, opts) {
-                seenMethods.add('readFileBuffer');
                 await materializeOne(p);
                 return mem.readFileBuffer(p, opts);
             },
             async stat(p) {
-                seenMethods.add('stat');
                 const np = await resolveLazyKey(p);
                 const st = await mem.stat(p);
                 if (!np) return st;
@@ -1004,7 +1021,6 @@ function __bashWorkerMain() {
                 return copy;
             },
             async lstat(p) {
-                seenMethods.add('lstat');
                 const np = lazySet.has(norm(p)) ? norm(p) : null;
                 const st = await mem.lstat(p);
                 if (!np) return st;
@@ -1025,7 +1041,6 @@ function __bashWorkerMain() {
                 return copy;
             },
             async writeFile(p, content, opts) {
-                seenMethods.add('writeFile');
                 const np = norm(p);
                 lazySet.delete(np);
                 materialized.delete(np);
@@ -1033,10 +1048,10 @@ function __bashWorkerMain() {
                 const r = await mem.writeFile(p, content, opts);
                 dirtySet.add(np);
                 deletedSet.delete(np);
+                pendingSync.add(np);
                 return r;
             },
             async appendFile(p, content, opts) {
-                seenMethods.add('appendFile');
                 const np = norm(p);
                 if (lazySet.has(np)) await materializeOne(np);
                 const r = await mem.appendFile(p, content, opts);
@@ -1044,10 +1059,10 @@ function __bashWorkerMain() {
                 statCache.delete(np);
                 dirtySet.add(np);
                 deletedSet.delete(np);
+                pendingSync.add(np);
                 return r;
             },
             async rm(p, opts) {
-                seenMethods.add('rm');
                 const np = norm(p);
                 const beforeFiles = await filterFilesOnly(listMemFilesUnder(np));
                 const r = await mem.rm(p, opts);
@@ -1056,12 +1071,16 @@ function __bashWorkerMain() {
                     materialized.delete(fp);
                     statCache.delete(fp);
                     dirtySet.delete(fp);
-                    if (hostKnown.has(fp)) deletedSet.add(fp);
+                    if (hostKnown.has(fp)) {
+                        deletedSet.add(fp);
+                        pendingSync.add(fp);
+                    } else {
+                        pendingSync.delete(fp);
+                    }
                 }
                 return r;
             },
             async mv(src, dest) {
-                seenMethods.add('mv');
                 const ns = norm(src);
                 const nd = norm(dest);
                 await materializeSubtree(ns);
@@ -1073,18 +1092,23 @@ function __bashWorkerMain() {
                     materialized.delete(oldP);
                     statCache.delete(oldP);
                     dirtySet.delete(oldP);
-                    if (hostKnown.has(oldP)) deletedSet.add(oldP);
+                    if (hostKnown.has(oldP)) {
+                        deletedSet.add(oldP);
+                        pendingSync.add(oldP);
+                    } else {
+                        pendingSync.delete(oldP);
+                    }
 
                     lazySet.delete(newP);
                     materialized.delete(newP);
                     statCache.delete(newP);
                     deletedSet.delete(newP);
                     dirtySet.add(newP);
+                    pendingSync.add(newP);
                 }
                 return r;
             },
             async cp(src, dest, opts) {
-                seenMethods.add('cp');
                 const ns = norm(src);
                 const nd = norm(dest);
                 await materializeSubtree(ns);
@@ -1096,11 +1120,11 @@ function __bashWorkerMain() {
                     statCache.delete(fp);
                     deletedSet.delete(fp);
                     dirtySet.add(fp);
+                    pendingSync.add(fp);
                 }
                 return r;
             },
             async link(existingPath, newPath) {
-                seenMethods.add('link');
                 const ne = norm(existingPath);
                 const nn = norm(newPath);
                 if (lazySet.has(ne)) await materializeOne(ne);
@@ -1108,6 +1132,7 @@ function __bashWorkerMain() {
                 lazySet.delete(nn);
                 deletedSet.delete(nn);
                 dirtySet.add(nn);
+                pendingSync.add(nn);
                 return r;
             }
         };
@@ -1126,12 +1151,10 @@ function __bashWorkerMain() {
                 const val = mem[prop];
                 if (typeof val !== 'function') return val;
                 if (typeof prop === 'string') {
-                    seenMethods.add(prop);
                     if (PASSTHROUGH_METHODS.has(prop)) {
                         return val.bind(mem);
                     }
-                    // Catch any additional async read/open/stream/bytes method added in just-bash 3.x
-                    // (e.g. readFileBytes, readFileStream, readFileWithLimit, open) before delegating.
+                    // Guard any future async read/open/stream/bytes method added in just-bash
                     if (READ_LIKE_RE.test(prop)) {
                         return async (...args) => {
                             if (typeof args[0] === 'string') {
@@ -1223,9 +1246,6 @@ function __bashWorkerMain() {
                         `workspace: ${st.hostKnownCount} host files (${st.lazyCount} lazy, ${st.materializedCount} cached)`,
                         `dirty: ${st.created.length} created, ${st.modified.length} modified, ${st.deleted.length} deleted`
                     );
-                    if (st.seenMethods && st.seenMethods.length) {
-                        lines.push(`fsMethods: ${st.seenMethods.join(', ')}`);
-                    }
                 }
                 return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
             }));
@@ -1318,7 +1338,7 @@ function __bashWorkerMain() {
             allowNetwork: !!m.cfg.allowNetwork,
             mountWorkspace: m.cfg.mountWorkspace !== false,
             mountMode: 'initializing',
-            syncMode: m.cfg.syncMode || 'staged'
+            syncMode: m.cfg.syncMode || 'auto'
         };
         post({ type: 'status', text: 'Mounting lazy workspace (/workspace) via MountableFs...' });
         await createSandbox(m.cfg, m.manifest);
@@ -1436,12 +1456,12 @@ function __bashWorkerMain() {
 
         if (op === 'exportDirty') {
             if (!wsMount) return { ok: true, writes: [], deletes: [] };
-            const exported = await wsMount.exportDirty(m.paths);
+            const exported = await wsMount.exportDirty(m.paths, !!m.pendingOnly);
             return { ok: true, ...exported };
         }
 
         if (op === 'markSynced') {
-            if (wsMount) await wsMount.markSynced(m.syncedWrites, m.syncedDeletes);
+            if (wsMount) await wsMount.markSynced(m.syncedWrites, m.syncedDeletes, m.attemptedPaths);
             return { ok: true, workspace: wsMount ? wsMount.getStatus() : null };
         }
 
@@ -1662,10 +1682,26 @@ async function handleHostRpc(st, req) {
     }
 }
 
-async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDeletions = true } = {}) {
+async function ensureHostParentDir(api, filePath) {
+    const slash = filePath.lastIndexOf('/');
+    if (slash <= 0) return;
+    const parts = filePath.slice(0, slash).split('/').filter(Boolean);
+    let cur = '';
+    for (const part of parts) {
+        cur = cur ? `${cur}/${part}` : part;
+        for (const method of ['mkdir', 'createDirectory', 'createFolder', 'mkdirp', 'mkdirTree']) {
+            if (typeof api?.[method] === 'function') {
+                try { await api[method](cur); } catch (_) { /* ignore */ }
+                break;
+            }
+        }
+    }
+}
+
+async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDeletions = true, pendingOnly = false } = {}) {
     const exportedRes = await bashCall(
         st,
-        { type: 'fsOp', cfg: st.cfg, op: 'exportDirty', paths: filterPaths },
+        { type: 'fsOp', cfg: st.cfg, op: 'exportDirty', paths: filterPaths, pendingOnly },
         [],
         null,
         30000,
@@ -1677,14 +1713,23 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
 
     const syncedWrites = [];
     const syncedDeletes = [];
+    const attemptedPaths = [];
     const errors = [];
 
     for (const w of writes) {
+        attemptedPaths.push(w.relPath);
         try {
+            await ensureHostParentDir(api, w.relPath);
             const bytes = w.bytes instanceof Uint8Array ? w.bytes : new Uint8Array(w.bytes || []);
             let payload = bytes;
+            let isBinary = true;
             if (!BASH_BINARY_EXT.test(w.relPath) && !bytes.includes(0)) {
-                try { payload = dec.decode(bytes); } catch (_) { payload = bytes; }
+                try {
+                    payload = dec.decode(bytes);
+                    isBinary = false;
+                } catch (_) {
+                    payload = bytes;
+                }
             }
             const res = await api.writeFile(w.relPath, payload);
             if (typeof res === 'string' && res.startsWith('ERROR:')) {
@@ -1694,11 +1739,15 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
                 if (typeof api.statFile === 'function') {
                     try { stat = await api.statFile(w.relPath); } catch (_) { stat = null; }
                 }
-                syncedWrites.push({ relPath: w.relPath, stat });
+                syncedWrites.push({ relPath: w.relPath, stat, size: bytes.byteLength, isBinary });
             }
         } catch (err) {
             errors.push(`write ${w.relPath}: ${err && err.message ? err.message : err}`);
         }
+    }
+
+    for (const d of deletes) {
+        attemptedPaths.push(d.relPath);
     }
 
     if (syncDeletions && typeof api?.deleteFile === 'function') {
@@ -1717,10 +1766,10 @@ async function syncDirtyWorkspaceToHost(st, api, { filterPaths = null, syncDelet
     }
 
     let wsStatus = null;
-    if (syncedWrites.length || syncedDeletes.length) {
+    if (syncedWrites.length || syncedDeletes.length || attemptedPaths.length) {
         const markRes = await bashCall(
             st,
-            { type: 'fsOp', cfg: st.cfg, op: 'markSynced', syncedWrites, syncedDeletes },
+            { type: 'fsOp', cfg: st.cfg, op: 'markSynced', syncedWrites, syncedDeletes, attemptedPaths },
             [],
             null,
             15000,
@@ -2072,7 +2121,7 @@ async function handler(args, api) {
     const cdnProvider = String((await api?.getSetting?.('cdnProvider')) || 'auto').trim();
     const customModuleUrl = String((await api?.getSetting?.('customModuleUrl')) || '').trim();
     const mountWorkspace = (await api?.getSetting?.('mountWorkspace')) !== false;
-    const syncMode = String((await api?.getSetting?.('syncMode')) || 'staged').trim();
+    const syncMode = String((await api?.getSetting?.('syncMode')) || 'auto').trim();
     const syncDeletions = (await api?.getSetting?.('syncDeletions')) !== false;
     const limitProfile = String((await api?.getSetting?.('limitProfile')) || 'normal').trim();
     const timeoutSec = Math.min(300, Math.max(1, Number(await api?.getSetting?.('timeoutSec')) || 30));
@@ -2166,10 +2215,16 @@ async function handler(args, api) {
             }
 
             const shouldSync = mountWorkspace && (forceSync || syncMode === 'auto');
-            if (shouldSync && execData.wsStatus && execData.wsStatus.dirtyTotal > 0) {
+            const pendingCount = execData.wsStatus
+                ? (forceSync ? execData.wsStatus.dirtyTotal : execData.wsStatus.pendingSyncTotal)
+                : 0;
+            if (shouldSync && pendingCount > 0) {
                 setStatus('Syncing /workspace changes to Ion...');
                 live.push();
-                syncReport = await syncDirtyWorkspaceToHost(st, api, { syncDeletions });
+                syncReport = await syncDirtyWorkspaceToHost(st, api, {
+                    syncDeletions,
+                    pendingOnly: !forceSync
+                });
                 if (syncReport.wsStatus) execData.wsStatus = syncReport.wsStatus;
             }
 
@@ -2245,8 +2300,13 @@ async function handler(args, api) {
             if (ws.created.length) parts.push(`${ws.created.length} created`);
             if (ws.modified.length) parts.push(`${ws.modified.length} modified`);
             if (ws.deleted.length) parts.push(`${ws.deleted.length} deleted`);
-            footer.push(`staged dirty: ${parts.join(', ')}`);
-            cardNotes.push(`staged in /workspace: ${parts.join(', ')} (use bash_fs sync to apply)`);
+            if (syncMode === 'auto') {
+                footer.push(`unsynced: ${parts.join(', ')}`);
+                cardNotes.push(`unsynced in /workspace: ${parts.join(', ')}`);
+            } else {
+                footer.push(`staged dirty: ${parts.join(', ')}`);
+                cardNotes.push(`staged in /workspace: ${parts.join(', ')} (use bash_fs sync to apply)`);
+            }
         }
     }
 

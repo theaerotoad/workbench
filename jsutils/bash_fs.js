@@ -1,7 +1,7 @@
 // bash_fs - Manage the MountableFs lazy workspace bridge and virtual filesystem shared with bash_run
 const TOOL_META = {
     name: "bash_fs",
-    description: "Inspect, diff, sync, discard, and manage files in the active just-bash MountableFs filesystem (shared with bash_run).\n\nACTIONS:\n- 'status': Show mount info, lazy vs. cached file counts, and all staged dirty changes (created/modified/deleted) under /workspace.\n- 'diff': Show unified line diffs between Ion's current host files and staged virtual edits under /workspace (optionally scoped to 'path' or 'paths').\n- 'sync': Write staged /workspace edits (and deletions, unless disabled) back to Ion's host workspace via checkpointed api.writeFile / api.deleteFile.\n- 'discard': Revert staged /workspace edits/deletions back to Ion's host state (optionally scoped to 'path' or 'paths').\n- 'refresh': Re-scan Ion's workspace file list and invalidate cached non-dirty files that changed in Ion's editor.\n- 'list': Recursively list virtual files under 'path' (defaults to '/workspace').\n- 'read': Read a virtual file at 'path' (triggers lazy load if uncached).\n- 'write': Create or overwrite a virtual file at 'path' with 'content'.\n- 'delete': Delete a virtual file or directory at 'path' (pass 'recursive: true' for directories).\n- 'reset': Wipe /tmp, reset cwd to /workspace, and remount a clean lazy view of Ion's workspace.",
+    description: "Optional companion utility for inspecting or resetting the active just-bash MountableFs sandbox (shared with bash_run). By default, bash_run uses 'auto' sync mode so edits under /workspace persist to Ion automatically without calling bash_fs; use bash_fs mainly to inspect sandbox status, clear /tmp or reset the cache, or manage staged diffs/sync/discard when bash_run's syncMode is set to 'staged'.\n\nACTIONS:\n- 'status': Show mount info, lazy vs. cached file counts, and any unsynced changes under /workspace.\n- 'diff': Show unified line diffs between Ion's current host files and unsynced virtual edits under /workspace (optionally scoped to 'path' or 'paths').\n- 'sync': Manually write unsynced /workspace edits (and deletions, unless disabled) back to Ion's host workspace.\n- 'discard': Revert unsynced /workspace edits/deletions back to Ion's host state (optionally scoped to 'path' or 'paths').\n- 'refresh': Re-scan Ion's workspace file list and invalidate cached clean files edited outside bash.\n- 'list': Recursively list virtual files under 'path' (defaults to '/workspace').\n- 'read': Read a virtual file at 'path' (triggers lazy load if uncached).\n- 'write': Create or overwrite a virtual file at 'path' with 'content'.\n- 'delete': Delete a virtual file or directory at 'path' (pass 'recursive: true' for directories).\n- 'reset': Wipe /tmp, reset cwd to /workspace, and remount a clean lazy view of Ion's workspace.",
     parameters: {
         type: "object",
         properties: {
@@ -54,11 +54,11 @@ const BASH_FS_BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|gz|tar|tgz|7z|
 
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&',
-        '<': '<',
-        '>': '>',
-        '"': '"',
-        "'": '''
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
     }[c]));
 }
 
@@ -209,17 +209,19 @@ async function handler(args, api) {
             const res = await bridge.fsOp({ op: 'status' }, api);
             const rt = res.runtime || {};
             const ws = res.workspace || {};
+            const modeLabel = rt.syncMode || 'auto';
+            const changeLabel = modeLabel === 'auto' ? 'Unsynced' : 'Staged';
             const lines = [
                 `Runtime: just-bash@${rt.version || '?'} (${rt.mountMode || 'in-memory'})`,
                 `CWD: ${res.cwd || '/workspace'}`,
-                `Sync mode: ${rt.syncMode || 'staged'}`
+                `Sync mode: ${modeLabel}`
             ];
             if (ws.enabled) {
                 lines.push(`Workspace files: ${ws.hostKnownCount} known (${ws.lazyCount} lazy, ${ws.materializedCount} cached in memory)`);
                 if (ws.dirtyTotal === 0) {
-                    lines.push('Staged changes: clean (no uncommitted /workspace modifications)');
+                    lines.push(`${changeLabel} changes: clean (no unsynced /workspace modifications)`);
                 } else {
-                    lines.push(`Staged changes (${ws.dirtyTotal}):`);
+                    lines.push(`${changeLabel} changes (${ws.dirtyTotal}):`);
                     for (const p of ws.created) lines.push(`  A  ${p}`);
                     for (const p of ws.modified) lines.push(`  M  ${p}`);
                     for (const p of ws.deleted) lines.push(`  D  ${p}`);
@@ -229,14 +231,14 @@ async function handler(args, api) {
             }
 
             const badge = ws.dirtyTotal > 0
-                ? [`${ws.dirtyTotal} STAGED`, '#e5c07b', 'rgba(229,192,123,0.18)']
+                ? [`${ws.dirtyTotal} ${changeLabel.toUpperCase()}`, '#e5c07b', 'rgba(229,192,123,0.18)']
                 : okBadge;
             await api.showUI(renderCard(
                 'bash_fs status',
                 badge,
                 `<div style="background:var(--bg-input,#1a1a1d); border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`
             ));
-            return { output: lines.join('\n'), summary: ws.dirtyTotal > 0 ? `bash_fs status (${ws.dirtyTotal} staged)` : 'bash_fs status (clean)' };
+            return { output: lines.join('\n'), summary: ws.dirtyTotal > 0 ? `bash_fs status (${ws.dirtyTotal} ${changeLabel.toLowerCase()})` : 'bash_fs status (clean)' };
         }
 
         if (action === 'diff') {
