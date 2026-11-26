@@ -111,11 +111,16 @@ window.generateSessionTitleViaLLM = generateSessionTitleViaLLM;
 
 // --- hideSessionPopover.js ---
 function hideSessionPopover() {
+    _sessRenameId = null;
     sessionsPopoverOverlay.style.display = 'none';
     btnSessionToggle.classList.remove('active');
     if (sessionRunTickInterval) {
         clearInterval(sessionRunTickInterval);
         sessionRunTickInterval = null;
+    }
+    if (sessionsPopover && sessionsPopover.contains(document.activeElement)) {
+        document.activeElement.blur();
+        if (typeof focusPrompt === 'function') focusPrompt();
     }
 }
 
@@ -145,6 +150,7 @@ async function maybeUpdateSessionTitleFromPrompt(prompt, sessionId) {
     if (sid === state.activeSessionId) updateSessionPillLabel();
     const title = await generateSessionTitleViaLLM(prompt);
     if (!state.sessions[sid]) return;
+    if (state.sessions[sid].title !== 'Generating title...') return; // user renamed while generating
     if (title && title !== 'Untitled Session') {
         state.sessions[sid]._titleGenerated = true;
         state.sessions[sid].title = title;
@@ -199,8 +205,34 @@ function reconcileLiveGenUI(outgoingId, incomingId) {
 window.reconcileLiveGenUI = reconcileLiveGenUI;
 // --- AST_EXPORTS_END ---
 
+// --- sessionPopoverState.js ---
+let _sessPopoverEntries = [];       // ids currently listed (filtered + sorted)
+let _sessPopoverSelectedId = null;  // keyboard / hover highlight
+let _sessRenameId = null;           // id of the row being renamed inline, if any
+let _sessPopoverBound = false;
+
+function formatSessionStamp(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const dayDiff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
+    if (dayDiff === 0) return `Today ${time}`;
+    if (dayDiff === 1) return `Yesterday ${time}`;
+    if (dayDiff > 1 && dayDiff < 7) return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+    const opts = d.getFullYear() === now.getFullYear()
+        ? { month: 'short', day: 'numeric' }
+        : { month: 'short', day: 'numeric', year: 'numeric' };
+    return `${d.toLocaleDateString([], opts)}, ${time}`;
+}
+
+// --- AST_EXPORTS_START ---
+window.formatSessionStamp = formatSessionStamp;
+// --- AST_EXPORTS_END ---
+
 // --- renderSessionPopoverList.js ---
-function renderSessionPopoverList() {
+function renderSessionPopoverList(opts = {}) {
     const ids = ((state.sessionIds && state.sessionIds.length) ? state.sessionIds : Object.keys(state.sessions))
         .filter(id => typeof id === 'string' && id);
     const metaFor = (id) => {
@@ -217,8 +249,32 @@ function renderSessionPopoverList() {
         }
         return (state.sessionMeta && state.sessionMeta[id]) || { id, title: 'Untitled Session', createdAt: 0, runningTimeMs: 0, msgCount: 0 };
     };
+    const metas = new Map(ids.map(id => [id, metaFor(id)]));
+    const recency = (m) => m.updatedAt || m.createdAt || 0;
 
-    const keys = ids.slice().sort((a, b) => (metaFor(a).createdAt || 0) - (metaFor(b).createdAt || 0));
+    const sorted = ids.slice().sort((a, b) => {
+        if (a === state.activeSessionId) return -1;
+        if (b === state.activeSessionId) return 1;
+        const d = recency(metas.get(b)) - recency(metas.get(a));
+        if (d) return d;
+        return (metas.get(b).createdAt || 0) - (metas.get(a).createdAt || 0);
+    });
+
+    // Filter by the search box, if any. Always keep the row currently being
+    // renamed so the inline input doesn't disappear mid-edit.
+    const searchEl = document.getElementById('session-switcher-search');
+    const query = (searchEl && searchEl.value ? searchEl.value : '').trim().toLowerCase();
+    let keys = sorted;
+    if (query) {
+        keys = sorted.filter(k => {
+            const m = metas.get(k);
+            const hay = `${sanitizeSessionTitle(m.title || '')} ${m.id} ${formatSessionStamp(recency(m))}`.toLowerCase();
+            return hay.includes(query);
+        });
+        if (_sessRenameId && sorted.includes(_sessRenameId) && !keys.includes(_sessRenameId)) keys.push(_sessRenameId);
+    }
+    _sessPopoverEntries = keys;
+    if (!keys.includes(_sessPopoverSelectedId)) _sessPopoverSelectedId = keys[0] || null;
 
     // Reconcile rows in place instead of wiping and rebuilding:
     // reusing existing <div>s avoids re-creating DOM nodes on every tick,
@@ -232,10 +288,10 @@ function renderSessionPopoverList() {
     const seen = new Set();
     keys.forEach(k => {
         seen.add(k);
-        const s = metaFor(k);
+        const s = metas.get(k);
         const isActive = k === state.activeSessionId;
         const msgCount = s.msgCount || 0;
-        const dateStr = new Date(s.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const stamp = formatSessionStamp(recency(s));
         const displayTitle = s.title ? sanitizeSessionTitle(s.title) : s.id;
         const runMs = getSessionRunningMs(s);
         const isGeneratingNow = isSessionRunning(s.id);
@@ -250,22 +306,39 @@ function renderSessionPopoverList() {
             info.className = 'session-item-info';
             const actions = document.createElement('div');
             actions.className = 'session-item-actions';
+            const renBtn = document.createElement('button');
+            renBtn.className = 'btn-rename-session icon-btn';
+            renBtn.title = 'Rename session';
+            renBtn.innerHTML = '<span class="icon" style="font-size:14px;">edit</span>';
+            renBtn.addEventListener('click', (e) => { e.stopPropagation(); beginSessionRename(k, row); });
             const delBtn = document.createElement('button');
             delBtn.className = 'btn-del-session icon-btn';
             delBtn.innerHTML = '<span class="icon" style="font-size:14px;">delete</span>';
             delBtn.addEventListener('click', (e) => deleteSession(k, e));
+            actions.appendChild(renBtn);
             actions.appendChild(delBtn);
             row.appendChild(info);
             row.appendChild(actions);
             row.addEventListener('click', () => switchSession(k));
+            row.addEventListener('mousemove', () => {
+                if (_sessPopoverSelectedId !== k) {
+                    _sessPopoverSelectedId = k;
+                    for (const el of sessionsList.children) {
+                        if (el.classList && el.classList.contains('session-item-row')) {
+                            el.classList.toggle('highlighted', el.dataset.sessionId === k);
+                        }
+                    }
+                }
+            });
             existingRows.set(k, row);
-            sessionsList.appendChild(row);
         }
 
         // Only toggle the active class when it actually changes, so the
         // CSS transition fires at most once per state change.
         const wantClass = `session-item-row ${isActive ? 'active' : ''} ${isGeneratingNow ? 'running' : ''}`.replace(/\s+/g, ' ').trim();
-        if (row.className !== wantClass) row.className = wantClass;
+        const curClass = row.className.replace(/\bhighlighted\b/g, '').replace(/\s+/g, ' ').trim();
+        if (curClass !== wantClass) row.className = wantClass;
+        row.classList.toggle('highlighted', k === _sessPopoverSelectedId);
 
         // Update the title, run meta and id rows independently and only when their HTML changes.
         // The title node must persist across the 1s run-time tick, otherwise its shimmer animation restarts every second.
@@ -280,27 +353,180 @@ function renderSessionPopoverList() {
         const parts = [
             `${escapeHTML(displayTitle)}${isActive ? '<span class="green" style="font-size:11px; margin-left:4px;">●</span>' : ''}`,
             `<span class="meta-field">${msgCount} msgs</span><span class="meta-field">· run ${runStr}</span>`,
-            `<span class="meta-id">${escapeHTML(s.id)}</span><span class="meta-field">· ${dateStr}</span>`
+            `<span class="meta-field meta-date">${escapeHTML(stamp)}</span><span class="meta-id">· ${escapeHTML(s.id)}</span>`
         ];
         parts.forEach((html, i) => {
+            if (i === 0 && k === _sessRenameId) return; // keep the inline rename input intact
             const el = info.children[i];
             if (el._html !== html) { el.innerHTML = html; el._html = html; }
         });
+        const rowTitle = `Created ${new Date(s.createdAt || Date.now()).toLocaleString()} · Last active ${new Date(recency(s) || Date.now()).toLocaleString()}`;
+        if (row.title !== rowTitle) row.title = rowTitle;
         const delBtn = row.querySelector('.btn-del-session');
-        if (delBtn) delBtn.title = keys.length > 1 ? 'Delete session' : 'Clear session';
+        if (delBtn) delBtn.title = ids.length > 1 ? 'Delete session' : 'Clear session';
     });
 
-    // Drop rows for sessions that no longer exist.
-    for (const [id, el] of existingRows) {
+    // Drop rows for sessions that no longer exist (includes filtered-out rows).
+    for (const [id, el] of Array.from(existingRows)) {
         if (!seen.has(id)) {
             el.remove();
             existingRows.delete(id);
         }
     }
+
+    // Empty state
+    const emptyEl = sessionsList.querySelector('.session-list-empty');
+    if (keys.length === 0) {
+        if (!emptyEl) {
+            const d = document.createElement('div');
+            d.className = 'session-list-empty';
+            d.textContent = query ? 'No sessions match your filter' : 'No sessions';
+            sessionsList.appendChild(d);
+        } else {
+            const text = query ? 'No sessions match your filter' : 'No sessions';
+            if (emptyEl.textContent !== text) emptyEl.textContent = text;
+        }
+    } else if (emptyEl) {
+        emptyEl.remove();
+    }
+
+    // Order rows to match keys (only move the ones out of place)
+    keys.forEach((k, i) => {
+        const row = existingRows.get(k);
+        if (row && sessionsList.children[i] !== row) sessionsList.insertBefore(row, sessionsList.children[i] || null);
+    });
+
+    if (opts.scrollToSelected) {
+        const sel = _sessPopoverSelectedId ? existingRows.get(_sessPopoverSelectedId) : null;
+        if (sel) sel.scrollIntoView({ block: 'nearest' });
+    }
 }
 
 // --- AST_EXPORTS_START ---
 window.renderSessionPopoverList = renderSessionPopoverList;
+// --- AST_EXPORTS_END ---
+
+// --- renameSession.js ---
+async function renameSession(sessionId, rawTitle) {
+    if (window.isWorkspaceReadOnly?.()) { showToast('Workspace is read-only', 'error'); return false; }
+    const title = sanitizeSessionTitle(rawTitle);
+    if (!title || !sessionId) return false;
+    const now = Date.now();
+    const s = state.sessions[sessionId];
+    if (s) { s.title = title; s._titleGenerated = true; s.updatedAt = now; }
+    if (!state.sessionMeta) state.sessionMeta = {};
+    const prev = state.sessionMeta[sessionId] || { id: sessionId, createdAt: (s && s.createdAt) || now, runningTimeMs: 0, msgCount: 0 };
+    state.sessionMeta[sessionId] = { ...prev, title, updatedAt: now };
+    const wsKey = getWorkspaceSessionKey();
+    await patchSessionRecordInDB(wsKey, sessionId, { title, _titleGenerated: true, updatedAt: now });
+    const nextIndex = { sessionIds: (state.sessionIds || []).slice(), activeSessionId: state.activeSessionId, meta: { ...state.sessionMeta } };
+    await saveSessionIndexToDB(wsKey, nextIndex);
+    state._lastSavedIndex = nextIndex;
+    state._lastSavedWsKey = wsKey;
+    if (sessionId === state.activeSessionId) updateSessionPillLabel();
+    return true;
+}
+
+// --- AST_EXPORTS_START ---
+window.renameSession = renameSession;
+// --- AST_EXPORTS_END ---
+
+// --- beginSessionRename.js ---
+function beginSessionRename(sessionId, row) {
+    if (window.isWorkspaceReadOnly?.()) return;
+    const titleEl = row && row.querySelector('.session-item-title');
+    if (!titleEl) return;
+    if (titleEl.querySelector('.session-title-input')) {
+        titleEl.querySelector('.session-title-input').focus();
+        return;
+    }
+    const orig = sanitizeSessionTitle((state.sessions[sessionId] && state.sessions[sessionId].title) || (state.sessionMeta && state.sessionMeta[sessionId] && state.sessionMeta[sessionId].title) || '') || '';
+    _sessRenameId = sessionId;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'session-title-input';
+    input.value = orig;
+    input.maxLength = 140;
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+
+    let done = false;
+    const finish = async (save) => {
+        if (done) return;
+        done = true;
+        const val = input.value;
+        _sessRenameId = null;
+        titleEl._html = null;
+        if (save && sanitizeSessionTitle(val) && sanitizeSessionTitle(val) !== orig) {
+            await renameSession(sessionId, val);
+        }
+        renderSessionPopoverList();
+        if (sessionsPopoverOverlay && sessionsPopoverOverlay.style.display === 'block') {
+            const se = document.getElementById('session-switcher-search');
+            if (se) se.focus();
+        }
+    };
+
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+    input.addEventListener('blur', () => finish(false));
+
+    titleEl.innerHTML = '';
+    titleEl._html = null;
+    titleEl.appendChild(input);
+    input.focus();
+    input.select();
+}
+
+// --- AST_EXPORTS_START ---
+window.beginSessionRename = beginSessionRename;
+// --- AST_EXPORTS_END ---
+
+// --- sessionPopoverKeyboard.js ---
+function moveSessionSelection(delta) {
+    const n = _sessPopoverEntries.length;
+    if (!n) return;
+    let i = _sessPopoverEntries.indexOf(_sessPopoverSelectedId);
+    i = i < 0 ? 0 : (i + delta + n) % n;
+    _sessPopoverSelectedId = _sessPopoverEntries[i];
+    renderSessionPopoverList({ scrollToSelected: true });
+}
+
+function _ensureSessionPopoverBound() {
+    if (_sessPopoverBound) return;
+    _sessPopoverBound = true;
+    const searchEl = document.getElementById('session-switcher-search');
+    if (searchEl) {
+        searchEl.addEventListener('input', () => {
+            _sessPopoverSelectedId = null;
+            renderSessionPopoverList({ scrollToSelected: true });
+        });
+    }
+    sessionsPopover.addEventListener('keydown', (e) => {
+        if (e.target && e.target.tagName === 'INPUT' && e.target !== searchEl) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); moveSessionSelection(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); moveSessionSelection(-1); return; }
+        if (e.key === 'Enter') {
+            if (e.target && e.target.closest && e.target.closest('button')) return;
+            e.preventDefault();
+            if (_sessPopoverSelectedId) switchSession(_sessPopoverSelectedId);
+            return;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            hideSessionPopover();
+        }
+    });
+}
+
+// --- AST_EXPORTS_START ---
+window.moveSessionSelection = moveSessionSelection;
 // --- AST_EXPORTS_END ---
 
 // --- restoreActiveSessionContent.js ---
@@ -548,7 +774,13 @@ window.saveSession = saveSession;
 
 // --- showSessionPopover.js ---
 function showSessionPopover() {
-    renderSessionPopoverList();
+    _ensureSessionPopoverBound();
+    if (typeof hideWorkspacePopover === 'function') hideWorkspacePopover();
+    const se = document.getElementById('session-switcher-search');
+    if (se) se.value = '';
+    _sessPopoverSelectedId = null;
+    _sessRenameId = null;
+    renderSessionPopoverList({ scrollToSelected: true });
     sessionsPopoverOverlay.style.display = 'block';
     if (btnSessionToggle) btnSessionToggle.classList.add('active');
     if (btnSessionToggle && sessionsPopover) {
@@ -566,6 +798,7 @@ function showSessionPopover() {
             renderSessionPopoverList();
         }
     }, 1000);
+    if (se) requestAnimationFrame(() => se.focus());
 }
 
 // --- AST_EXPORTS_START ---
