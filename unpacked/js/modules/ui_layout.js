@@ -2330,3 +2330,48 @@ document.addEventListener('keydown', (e) => {
         e.stopPropagation();
     }
 }, true); // Use capture phase to intercept the keys before the Monaco editor can
+
+// --- goToShortcuts.js ---
+(function initGoToShortcuts() {
+    const GO_TIMEOUT_MS = 1200;
+    let gPendingAt = 0;
+
+    function isEditable(el) {
+        if (!el || el === document.body || el === document.documentElement) return false;
+        if (el.isContentEditable) return true;
+        const tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        return !!(el.closest && el.closest('.monaco-editor, [contenteditable="true"], [contenteditable=""]'));
+    }
+
+    function blockingModalOpen() {
+        const flex = ['yesno-modal-overlay', 'settings-modal-overlay', 'cleardata-modal-overlay', 'webdav-modal-overlay'];
+        const block = ['model-picker-overlay', 'model-select-overlay', 'explorer-context-menu'];
+        const visible = ['msg-delete-modal-overlay', 'msg-edit-modal-overlay'];
+        const byId = (id) => document.getElementById(id);
+        if (flex.some(id => byId(id)?.style.display === 'flex')) return true;
+        if (block.some(id => byId(id)?.style.display === 'block')) return true;
+        if (visible.some(id => byId(id)?.classList.contains('visible'))) return true;
+        return false;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) { gPendingAt = 0; return; }
+        if (isEditable(e.target) || isEditable(document.activeElement)) { gPendingAt = 0; return; }
+        if (!window.rootHandle) { gPendingAt = 0; return; }
+
+        if (e.key === 'g' && !e.shiftKey && !e.repeat) { gPendingAt = Date.now(); return; }
+
+        const pending = gPendingAt && (Date.now() - gPendingAt) <= GO_TIMEOUT_MS;
+        gPendingAt = 0;
+        if (!pending || e.shiftKey || blockingModalOpen()) return;
+
+        if (e.key === 'c') {
+            e.preventDefault();
+            if (typeof window.showSessionPopover === 'function') window.showSessionPopover();
+        } else if (e.key === 'w') {
+            e.preventDefault();
+            if (typeof window.showWorkspacePopover === 'function') window.showWorkspacePopover();
+        }
+    });
+})();

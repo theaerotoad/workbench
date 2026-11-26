@@ -1027,7 +1027,6 @@ async function submitPrompt() {
 
             if (cmd === '/session') {
                 showSessionPopover();
-                focusPrompt();
                 return;
             }
 
@@ -1047,6 +1046,7 @@ async function submitPrompt() {
 - <span class="cyan">/skill:&lt;name&gt;</span> — Invoke skill from .agent/skills/&lt;name&gt;/SKILL.md<br>
 
 - <span class="cyan">Ctrl+S</span> / <span class="cyan">Ctrl+Shift+S</span> — Save / Save As (editor)<br>
+- <span class="cyan">g c</span> / <span class="cyan">g w</span> — Open sessions / workspaces switcher (when not typing)<br>
 - <span class="cyan">@&lt;file&gt;</span> — Reference file context in prompt<br>
 - <span class="yellow">ESC</span> — Cancel current generation</div>`, "dim");
                 focusPrompt();
