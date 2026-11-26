@@ -155,11 +155,11 @@ const BASH_IGNORED_DIRS = new Set([
 // --- UI & formatting helpers -------------------------------------------------
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-        '&': '&',
-        '<': '<',
-        '>': '>',
-        '"': '"',
-        "'": '''
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
     }[c]));
 }
 
@@ -659,6 +659,7 @@ function __bashWorkerMain() {
         const deletedSet = new Set();       // host-known paths deleted in /workspace
         const inFlight = new Map();         // path -> Promise (dedupes concurrent reads)
         const execCounters = { lazyReads: 0, lazyStats: 0 };
+        const seenMethods = new Set();
 
         function norm(p) {
             return normalizePath(p || '/', '/');
@@ -681,9 +682,21 @@ function __bashWorkerMain() {
             return np;
         }
 
+        async function resolveLazyKey(rawPath) {
+            const np = norm(rawPath);
+            if (lazySet.has(np)) return np;
+            const real = await resolveSymlinkIfNeeded(np);
+            if (lazySet.has(real)) return real;
+            if (np.startsWith('/workspace/')) {
+                const stripped = np.slice('/workspace'.length);
+                if (lazySet.has(stripped)) return stripped;
+            }
+            return null;
+        }
+
         async function materializeOne(rawPath) {
-            const p = await resolveSymlinkIfNeeded(rawPath);
-            if (!lazySet.has(p)) return;
+            const p = await resolveLazyKey(rawPath);
+            if (!p) return;
             if (inFlight.has(p)) return inFlight.get(p);
 
             const job = (async () => {
@@ -937,142 +950,198 @@ function __bashWorkerMain() {
                 deleted,
                 dirtyTotal: created.length + modified.length + deleted.length,
                 execLazyReads: execCounters.lazyReads,
-                execLazyStats: execCounters.lazyStats
+                execLazyStats: execCounters.lazyStats,
+                seenMethods: [...seenMethods]
             };
         }
 
-        // Proxy over real InMemoryFs so every IFileSystem method (including private fields) works natively.
-        const proxy = new Proxy(mem, {
+        // Plain-object IFileSystem adapter (NOT `instanceof InMemoryFs`, and hides `*Sync`
+        // shortcuts like `readFileSync` / `writeFileSync`) so just-bash always takes the async
+        // IFileSystem path and never reads 0-byte placeholders directly from `mem`.
+        const HIDDEN_PROPS = new Set(['writeFileLazy']);
+        const PASSTHROUGH_METHODS = new Set([
+            'exists', 'readdir', 'readdirWithFileTypes', 'mkdir', 'chmod', 'utimes',
+            'symlink', 'readlink', 'realpath', 'resolvePath', 'getAllPaths', 'getMemoryUsage',
+            'toString', 'valueOf'
+        ]);
+        const READ_LIKE_RE = /read|open|stream|byte|buf|text|content|slice|range|chunk|limit|load/i;
+
+        function isHiddenProp(prop) {
+            if (typeof prop !== 'string') return false;
+            return HIDDEN_PROPS.has(prop) || prop.endsWith('Sync');
+        }
+
+        const explicit = {
+            async readFile(p, opts) {
+                seenMethods.add('readFile');
+                await materializeOne(p);
+                return mem.readFile(p, opts);
+            },
+            async readFileBuffer(p, opts) {
+                seenMethods.add('readFileBuffer');
+                await materializeOne(p);
+                return mem.readFileBuffer(p, opts);
+            },
+            async stat(p) {
+                seenMethods.add('stat');
+                const np = await resolveLazyKey(p);
+                const st = await mem.stat(p);
+                if (!np) return st;
+                let meta = statCache.get(np);
+                if (!meta) {
+                    try {
+                        meta = await hostRpc('statFile', { path: toHostRel(np) });
+                        if (meta) {
+                            statCache.set(np, meta);
+                            execCounters.lazyStats += 1;
+                        }
+                    } catch (_) { meta = null; }
+                }
+                if (!meta) return st;
+                const copy = Object.assign(Object.create(Object.getPrototypeOf(st)), st);
+                if (typeof meta.size === 'number') copy.size = meta.size;
+                if (typeof meta.mtime === 'number') copy.mtime = new Date(meta.mtime * 1000);
+                return copy;
+            },
+            async lstat(p) {
+                seenMethods.add('lstat');
+                const np = lazySet.has(norm(p)) ? norm(p) : null;
+                const st = await mem.lstat(p);
+                if (!np) return st;
+                let meta = statCache.get(np);
+                if (!meta) {
+                    try {
+                        meta = await hostRpc('statFile', { path: toHostRel(np) });
+                        if (meta) {
+                            statCache.set(np, meta);
+                            execCounters.lazyStats += 1;
+                        }
+                    } catch (_) { meta = null; }
+                }
+                if (!meta) return st;
+                const copy = Object.assign(Object.create(Object.getPrototypeOf(st)), st);
+                if (typeof meta.size === 'number') copy.size = meta.size;
+                if (typeof meta.mtime === 'number') copy.mtime = new Date(meta.mtime * 1000);
+                return copy;
+            },
+            async writeFile(p, content, opts) {
+                seenMethods.add('writeFile');
+                const np = norm(p);
+                lazySet.delete(np);
+                materialized.delete(np);
+                statCache.delete(np);
+                const r = await mem.writeFile(p, content, opts);
+                dirtySet.add(np);
+                deletedSet.delete(np);
+                return r;
+            },
+            async appendFile(p, content, opts) {
+                seenMethods.add('appendFile');
+                const np = norm(p);
+                if (lazySet.has(np)) await materializeOne(np);
+                const r = await mem.appendFile(p, content, opts);
+                materialized.delete(np);
+                statCache.delete(np);
+                dirtySet.add(np);
+                deletedSet.delete(np);
+                return r;
+            },
+            async rm(p, opts) {
+                seenMethods.add('rm');
+                const np = norm(p);
+                const beforeFiles = await filterFilesOnly(listMemFilesUnder(np));
+                const r = await mem.rm(p, opts);
+                for (const fp of beforeFiles) {
+                    lazySet.delete(fp);
+                    materialized.delete(fp);
+                    statCache.delete(fp);
+                    dirtySet.delete(fp);
+                    if (hostKnown.has(fp)) deletedSet.add(fp);
+                }
+                return r;
+            },
+            async mv(src, dest) {
+                seenMethods.add('mv');
+                const ns = norm(src);
+                const nd = norm(dest);
+                await materializeSubtree(ns);
+                const beforeFiles = await filterFilesOnly(listMemFilesUnder(ns));
+                const r = await mem.mv(src, dest);
+                for (const oldP of beforeFiles) {
+                    const newP = oldP === ns ? nd : norm(nd + oldP.slice(ns.length));
+                    lazySet.delete(oldP);
+                    materialized.delete(oldP);
+                    statCache.delete(oldP);
+                    dirtySet.delete(oldP);
+                    if (hostKnown.has(oldP)) deletedSet.add(oldP);
+
+                    lazySet.delete(newP);
+                    materialized.delete(newP);
+                    statCache.delete(newP);
+                    deletedSet.delete(newP);
+                    dirtySet.add(newP);
+                }
+                return r;
+            },
+            async cp(src, dest, opts) {
+                seenMethods.add('cp');
+                const ns = norm(src);
+                const nd = norm(dest);
+                await materializeSubtree(ns);
+                const r = await mem.cp(src, dest, opts);
+                const afterFiles = await filterFilesOnly(listMemFilesUnder(nd));
+                for (const fp of afterFiles) {
+                    lazySet.delete(fp);
+                    materialized.delete(fp);
+                    statCache.delete(fp);
+                    deletedSet.delete(fp);
+                    dirtySet.add(fp);
+                }
+                return r;
+            },
+            async link(existingPath, newPath) {
+                seenMethods.add('link');
+                const ne = norm(existingPath);
+                const nn = norm(newPath);
+                if (lazySet.has(ne)) await materializeOne(ne);
+                const r = await mem.link(existingPath, newPath);
+                lazySet.delete(nn);
+                deletedSet.delete(nn);
+                dirtySet.add(nn);
+                return r;
+            }
+        };
+
+        const proxy = new Proxy(explicit, {
+            has(target, prop) {
+                if (isHiddenProp(prop)) return false;
+                if (prop in target) return true;
+                return prop in mem;
+            },
             get(target, prop) {
-                if (prop === 'readFile') {
-                    return async (p, opts) => {
-                        await materializeOne(p);
-                        return target.readFile(p, opts);
-                    };
+                if (isHiddenProp(prop)) return undefined;
+                if (Object.prototype.hasOwnProperty.call(target, prop)) {
+                    return target[prop];
                 }
-                if (prop === 'readFileBuffer') {
-                    return async (p) => {
-                        await materializeOne(p);
-                        return target.readFileBuffer(p);
-                    };
+                const val = mem[prop];
+                if (typeof val !== 'function') return val;
+                if (typeof prop === 'string') {
+                    seenMethods.add(prop);
+                    if (PASSTHROUGH_METHODS.has(prop)) {
+                        return val.bind(mem);
+                    }
+                    // Catch any additional async read/open/stream/bytes method added in just-bash 3.x
+                    // (e.g. readFileBytes, readFileStream, readFileWithLimit, open) before delegating.
+                    if (READ_LIKE_RE.test(prop)) {
+                        return async (...args) => {
+                            if (typeof args[0] === 'string') {
+                                await materializeOne(args[0]);
+                            }
+                            return val.apply(mem, args);
+                        };
+                    }
                 }
-                if (prop === 'stat' || prop === 'lstat') {
-                    return async (p) => {
-                        const np = prop === 'stat' ? await resolveSymlinkIfNeeded(p) : norm(p);
-                        const st = await target[prop](p);
-                        if (!lazySet.has(np)) return st;
-                        let meta = statCache.get(np);
-                        if (!meta) {
-                            try {
-                                meta = await hostRpc('statFile', { path: toHostRel(np) });
-                                if (meta) {
-                                    statCache.set(np, meta);
-                                    execCounters.lazyStats += 1;
-                                }
-                            } catch (_) { meta = null; }
-                        }
-                        if (!meta) return st;
-                        const copy = Object.assign(Object.create(Object.getPrototypeOf(st)), st);
-                        if (typeof meta.size === 'number') copy.size = meta.size;
-                        if (typeof meta.mtime === 'number') copy.mtime = new Date(meta.mtime * 1000);
-                        return copy;
-                    };
-                }
-                if (prop === 'writeFile') {
-                    return async (p, content, opts) => {
-                        const np = norm(p);
-                        lazySet.delete(np);
-                        materialized.delete(np);
-                        statCache.delete(np);
-                        const r = await target.writeFile(p, content, opts);
-                        dirtySet.add(np);
-                        deletedSet.delete(np);
-                        return r;
-                    };
-                }
-                if (prop === 'appendFile') {
-                    return async (p, content, opts) => {
-                        const np = norm(p);
-                        if (lazySet.has(np)) await materializeOne(np);
-                        const r = await target.appendFile(p, content, opts);
-                        materialized.delete(np);
-                        statCache.delete(np);
-                        dirtySet.add(np);
-                        deletedSet.delete(np);
-                        return r;
-                    };
-                }
-                if (prop === 'rm') {
-                    return async (p, opts) => {
-                        const np = norm(p);
-                        const beforeFiles = await filterFilesOnly(listMemFilesUnder(np));
-                        const r = await target.rm(p, opts);
-                        for (const fp of beforeFiles) {
-                            lazySet.delete(fp);
-                            materialized.delete(fp);
-                            statCache.delete(fp);
-                            dirtySet.delete(fp);
-                            if (hostKnown.has(fp)) deletedSet.add(fp);
-                        }
-                        return r;
-                    };
-                }
-                if (prop === 'mv') {
-                    return async (src, dest) => {
-                        const ns = norm(src);
-                        const nd = norm(dest);
-                        await materializeSubtree(ns);
-                        const beforeFiles = await filterFilesOnly(listMemFilesUnder(ns));
-                        const r = await target.mv(src, dest);
-                        for (const oldP of beforeFiles) {
-                            const newP = oldP === ns ? nd : norm(nd + oldP.slice(ns.length));
-                            lazySet.delete(oldP);
-                            materialized.delete(oldP);
-                            statCache.delete(oldP);
-                            dirtySet.delete(oldP);
-                            if (hostKnown.has(oldP)) deletedSet.add(oldP);
-
-                            lazySet.delete(newP);
-                            materialized.delete(newP);
-                            statCache.delete(newP);
-                            deletedSet.delete(newP);
-                            dirtySet.add(newP);
-                        }
-                        return r;
-                    };
-                }
-                if (prop === 'cp') {
-                    return async (src, dest, opts) => {
-                        const ns = norm(src);
-                        const nd = norm(dest);
-                        await materializeSubtree(ns);
-                        const r = await target.cp(src, dest, opts);
-                        const afterFiles = await filterFilesOnly(listMemFilesUnder(nd));
-                        for (const fp of afterFiles) {
-                            lazySet.delete(fp);
-                            materialized.delete(fp);
-                            statCache.delete(fp);
-                            deletedSet.delete(fp);
-                            dirtySet.add(fp);
-                        }
-                        return r;
-                    };
-                }
-                if (prop === 'link') {
-                    return async (existingPath, newPath) => {
-                        const ne = norm(existingPath);
-                        const nn = norm(newPath);
-                        if (lazySet.has(ne)) await materializeOne(ne);
-                        const r = await target.link(existingPath, newPath);
-                        lazySet.delete(nn);
-                        deletedSet.delete(nn);
-                        dirtySet.add(nn);
-                        return r;
-                    };
-                }
-
-                const val = target[prop];
-                return typeof val === 'function' ? val.bind(target) : val;
+                return val.bind(mem);
             }
         });
 
@@ -1154,6 +1223,9 @@ function __bashWorkerMain() {
                         `workspace: ${st.hostKnownCount} host files (${st.lazyCount} lazy, ${st.materializedCount} cached)`,
                         `dirty: ${st.created.length} created, ${st.modified.length} modified, ${st.deleted.length} deleted`
                     );
+                    if (st.seenMethods && st.seenMethods.length) {
+                        lines.push(`fsMethods: ${st.seenMethods.join(', ')}`);
+                    }
                 }
                 return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
             }));
