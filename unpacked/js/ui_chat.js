@@ -800,15 +800,6 @@ document.addEventListener('keydown', (e) => {
             window.showAllCheckpoints();
             return;
         }
-        if (permBanner.style.display === 'flex') {
-            abortGeneration({ toast: 'Generation stopped (Esc)' });
-            return;
-        }
-        if (isSessionRunning(state.activeSessionId)) {
-            const gen = getGenState(state.activeSessionId);
-            abortGeneration({ toast: gen.compressionInFlight ? 'Compression cancelled (Esc)' : 'Generation stopped (Esc)' });
-            return;
-        }
         const editingWrap = document.querySelector('.chat-prompt-wrap.editing');
         if (editingWrap) {
             cancelInlineEdit(editingWrap.getAttribute('data-msg-id'));
@@ -1435,3 +1426,16 @@ document.addEventListener('keydown', (e) => {
         initObserver();
     }
 })();
+
+
+// --- ESC blur fallback ---
+// ESC must never stop generation. If focus is in any editable element, blur it so
+// keyboard-driven navigation (g-c / g-w) works. Installed after the main keydown handler.
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('yesno-modal-overlay').style.display === 'flex') return;
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) return;
+    const isEditable = !!(active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || (active.closest && active.closest('.monaco-editor, [contenteditable="true"], [contenteditable=""]')));
+    if (isEditable) active.blur();
+});
