@@ -234,7 +234,9 @@ function _fastHashString(str) {
 
 function _countLines(text) {
     if (typeof window.lineCount === 'function') return window.lineCount(text);
-    return text === '' ? 0 : text.split('\n').length;
+    if (!text) return 0;
+    const n = text.split('\n').length;
+    return text.endsWith('\n') ? n - 1 : n;
 }
 
 // Uses the same visibility rules as TOOL_API_METHODS.listFiles, excluding transient

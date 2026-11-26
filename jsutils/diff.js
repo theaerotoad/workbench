@@ -137,12 +137,13 @@ async function handler(args, api) {
         for (let d = trace.length - 1; d > 0; d--) {
             const k = x - y;
             let prevK;
-            if (k === -d || (k !== d && (trace[d - 1][k - 1] < trace[d - 1][k + 1]))) {
+            // trace[d] is the V snapshot taken at the start of step d (i.e. the end of step d-1).
+            if (k === -d || (k !== d && (trace[d][k - 1] < trace[d][k + 1]))) {
                 prevK = k + 1;
             } else {
                 prevK = k - 1;
             }
-            const prevX = trace[d - 1][prevK];
+            const prevX = trace[d][prevK];
             const prevY = prevX - prevK;
 
             while (x > prevX && y > prevY) {

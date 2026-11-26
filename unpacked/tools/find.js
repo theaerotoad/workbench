@@ -1,13 +1,13 @@
 // find - tool definition.
 const TOOL_META = {
     "name": "find",
-    "description": "Find files by filename/path pattern or extension (e.g. *.html, demo.rs, src/**/*.py). Shows file sizes and line counts for text files.",
+    "description": "Find files by filename/path pattern or extension (e.g. *.html, demo.rs, src/*.py). Patterns with a '/' match that folder at any depth unless they start with '/', which anchors to the workspace root. Shows file sizes and line counts for text files.",
     "parameters": {
         "type": "object",
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "Filename or path glob/substring pattern (e.g. *.py, demo.rs, *test*)."
+                "description": "Glob or substring. '*.py' matches file names anywhere; 'src/*.py' matches that folder at any depth; '/src/*.py' anchors to the workspace root; no wildcard = case-insensitive substring of the path."
             },
             "path": {
                 "type": "string",
@@ -58,7 +58,13 @@ const TOOL_META = {
 
 // --- Pure helpers ------------------------------------------------------------
 
-const READ_SAMPLE_THRESHOLD = 500;
+const READ_LIMIT_DEFAULT = 500;
+
+function countLines(txt) {
+    if (!txt) return 0;
+    const n = txt.split('\n').length;
+    return txt.endsWith('\n') ? n - 1 : n;
+}
 
 function normalizePathPrefix(raw) {
     if (!raw || typeof raw !== 'string') return '';
@@ -92,16 +98,21 @@ function globToRegex(glob, pathScoped) {
 }
 
 function compileFindPattern(rawPattern) {
-    const clean = String(rawPattern || '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+    const normalized = String(rawPattern || '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '');
+    const anchored = normalized.startsWith('/');
+    const clean = normalized.replace(/^\/+/, '');
     if (!clean || clean === '*' || clean === '**' || clean === '**/*') {
         return () => true;
     }
     const hasWildcard = /[*?]/.test(clean);
     const hasSlash = clean.includes('/');
     if (hasWildcard) {
-        const re = globToRegex(clean, hasSlash);
+        // Unanchored slash patterns match that folder at any depth ('**/' becomes '(?:.*/)?').
+        // A leading '/' anchors the pattern to the workspace root (or to path= when given).
+        const source = hasSlash && !anchored && !clean.startsWith('**/') ? '**/' + clean : clean;
+        const re = globToRegex(source, hasSlash);
         return (fp, relPath) => {
-            if (hasSlash) return re.test(relPath) || re.test(fp);
+            if (hasSlash) return anchored ? re.test(relPath) : (re.test(relPath) || re.test(fp));
             const base = fp.split('/').pop() || fp;
             return re.test(base);
         };
@@ -127,7 +138,7 @@ function formatSize(bytes) {
     return `${parseFloat(gb.toFixed(1))} GB`;
 }
 
-function formatMetaSummary(entry) {
+function formatMetaSummary(entry, readLimit = READ_LIMIT_DEFAULT, lineCountMaxBytes = null) {
     if (!entry.statted) return '';
     const sizeStr = formatSize(entry.size);
     if (entry.isBinary) {
@@ -136,16 +147,20 @@ function formatMetaSummary(entry) {
     if (entry.lineCount !== null) {
         const lineStr = `${entry.lineCount.toLocaleString('en-US')} line${entry.lineCount === 1 ? '' : 's'}`;
         const parts = sizeStr ? `${lineStr}, ${sizeStr}` : lineStr;
-        if (entry.lineCount > READ_SAMPLE_THRESHOLD) {
-            return `${parts} — read will sample >${READ_SAMPLE_THRESHOLD}`;
+        if (entry.lineCount > readLimit) {
+            return `${parts} — read returns ≤${readLimit} lines per call`;
         }
         return parts;
+    }
+    if (entry.lineCountSkipped) {
+        const capStr = lineCountMaxBytes != null ? formatSize(lineCountMaxBytes) : 'size cap';
+        return sizeStr ? `${sizeStr}, line count skipped (>${capStr})` : `line count skipped (>${capStr})`;
     }
     return sizeStr;
 }
 
-function formatFindLine(entry) {
-    const meta = formatMetaSummary(entry);
+function formatFindLine(entry, readLimit, lineCountMaxBytes) {
+    const meta = formatMetaSummary(entry, readLimit, lineCountMaxBytes);
     return meta ? `${entry.fp}  (${meta})` : entry.fp;
 }
 
@@ -202,8 +217,17 @@ async function handler(args, api) {
         statted: false,
         size: null,
         isBinary: false,
-        lineCount: null
+        lineCount: null,
+        lineCountSkipped: false
     }));
+
+    let readLimit = READ_LIMIT_DEFAULT;
+    if (typeof api.getToolSetting === 'function') {
+        try {
+            const v = Number(await api.getToolSetting('read', 'maxLines'));
+            if (Number.isFinite(v) && v >= 1) readLimit = v;
+        } catch (e) { /* older host without getToolSetting: keep default */ }
+    }
 
     const statCount = Math.min(entries.length, maxStat);
     const BATCH = 24;
@@ -215,6 +239,9 @@ async function handler(args, api) {
             entry.statted = true;
             entry.size = typeof st.size === 'number' ? st.size : null;
             entry.isBinary = !!st.isBinary;
+            if (!entry.isBinary && entry.size !== null && entry.size > lineCountMaxBytes) {
+                entry.lineCountSkipped = true;
+            }
             if (!entry.isBinary && entry.size !== null && entry.size <= lineCountMaxBytes) {
                 const bin = await api.isBinary(entry.fp);
                 if (bin) {
@@ -223,7 +250,7 @@ async function handler(args, api) {
                 }
                 const txt = await api.readFile(entry.fp);
                 if (!isErrorResult(txt)) {
-                    entry.lineCount = txt === '' ? 0 : txt.split('\n').length;
+                    entry.lineCount = countLines(txt);
                 }
             }
         }));
@@ -232,7 +259,18 @@ async function handler(args, api) {
     const summary = prefix
         ? `"${args.pattern}" in ${prefix}: ${matches.length} file(s)`
         : `"${args.pattern}": ${matches.length} file(s)`;
-    const output = entries.length ? entries.map(formatFindLine).join('\n') : "(no files matched)";
+    let output;
+    if (entries.length) {
+        output = entries.map(e => formatFindLine(e, readLimit, lineCountMaxBytes)).join('\n');
+        if (entries.length > maxStat) {
+            output = `[sizes/line counts shown for the first ${maxStat} of ${entries.length} files; narrow with path= or a more specific pattern]\n\n${output}`;
+        }
+    } else {
+        const pat = String(args.pattern || '');
+        output = pat.includes('/') || pat.includes('\\')
+            ? `(no files matched; "dir/*.ext" matches that folder at any depth, a leading "/" anchors to the workspace root)`
+            : `(no files matched "${pat}")`;
+    }
 
     // --- Display ---------------------------------------------------------------
 
@@ -242,15 +280,15 @@ async function handler(args, api) {
     const hidden = entries.length - shown.length;
 
     let rowsHtml = shown.map(entry => {
-        const meta = formatMetaSummary(entry);
-        const isSampled = entry.lineCount !== null && entry.lineCount > READ_SAMPLE_THRESHOLD;
+        const meta = formatMetaSummary(entry, readLimit, lineCountMaxBytes);
+        const exceedsReadLimit = entry.lineCount !== null && entry.lineCount > readLimit;
         return `
         <div class="tool-ui-line-row" style="align-items:center; justify-content:space-between; padding:0 8px; gap:8px;">
             <div style="display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden;">
                 <span class="icon" style="font-size:12px; color:var(--dim); flex-shrink:0;">${entry.isBinary ? 'deployed_code' : 'draft'}</span>
                 <div class="tool-ui-path">${pathHtml(entry.fp)}</div>
             </div>
-            ${meta ? `<span style="color:${isSampled ? 'var(--yellow)' : 'var(--dim)'}; font-size:10px; white-space:nowrap; flex-shrink:0;">${esc(meta)}</span>` : ''}
+            ${meta ? `<span style="color:${exceedsReadLimit ? 'var(--yellow)' : 'var(--dim)'}; font-size:10px; white-space:nowrap; flex-shrink:0;">${esc(meta)}</span>` : ''}
         </div>`;
     }).join('');
     if (hidden > 0) {

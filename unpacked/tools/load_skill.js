@@ -193,5 +193,5 @@ ${skill.description ? `Description: ${skill.description}\n` : ''}
 ${skill.body}
 </skill_instructions>`;
 
-    return { output: api.cleanupText(output), summary: header };
+    return { output: api.cleanupText(output, { preserveTrailingWhitespace: true }), summary: header };
 }

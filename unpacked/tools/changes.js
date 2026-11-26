@@ -67,9 +67,31 @@ function normalizePathFilter(raw) {
     return raw.trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
 }
 
+// Marks a last line that has no trailing newline, so "x" and "x\n" compare as different lines.
+// \u0000 never appears in text content (binary files are never diffed).
+const NO_EOL = '\u0000noeol';
+
+// A trailing newline terminates the last line; it does not start a new empty one.
 function splitLines(text) {
     if (text === null || text === undefined || text === '') return [];
-    return String(text).replace(/\r\n/g, '\n').split('\n');
+    const norm = String(text).replace(/\r\n/g, '\n');
+    const lines = norm.split('\n');
+    if (norm.endsWith('\n')) {
+        lines.pop();
+    } else {
+        lines[lines.length - 1] += NO_EOL;
+    }
+    return lines;
+}
+
+// Pushes one diff line, plus git's marker when that line has no trailing newline.
+function pushDiffLine(out, prefix, text) {
+    if (text.endsWith(NO_EOL)) {
+        out.push(prefix + text.slice(0, -NO_EOL.length));
+        out.push('\\ No newline at end of file');
+    } else {
+        out.push(prefix + text);
+    }
 }
 
 function backtrackMyers(trace, a, b, offsetA, offsetB) {
@@ -80,12 +102,13 @@ function backtrackMyers(trace, a, b, offsetA, offsetB) {
     for (let d = trace.length - 1; d > 0; d--) {
         const k = x - y;
         let prevK;
-        if (k === -d || (k !== d && (trace[d - 1][k - 1] < trace[d - 1][k + 1]))) {
+        // trace[d] is the V snapshot taken at the start of step d (i.e. the end of step d-1).
+        if (k === -d || (k !== d && (trace[d][k - 1] < trace[d][k + 1]))) {
             prevK = k + 1;
         } else {
             prevK = k - 1;
         }
-        const prevX = trace[d - 1][prevK];
+        const prevX = trace[d][prevK];
         const prevY = prevX - prevK;
 
         while (x > prevX && y > prevY) {
@@ -209,7 +232,9 @@ function buildUnifiedDiff(filepath, beforeText, afterText, contextSize) {
     const hunks = [];
     let currentHunk = [changeIndices[0]];
     for (let i = 1; i < changeIndices.length; i++) {
-        if (changeIndices[i] - changeIndices[i - 1] <= contextSize * 2) {
+        // Merge when the unchanged gap between two changes fits in both hunks' context
+        // (adjacent changes, e.g. a delete followed by its add, always merge, even with context 0).
+        if (changeIndices[i] - changeIndices[i - 1] - 1 <= contextSize * 2) {
             currentHunk.push(changeIndices[i]);
         } else {
             hunks.push(currentHunk);
@@ -217,6 +242,19 @@ function buildUnifiedDiff(filepath, beforeText, afterText, contextSize) {
         }
     }
     hunks.push(currentHunk);
+
+    // Lines of A and B consumed before each edit index, so every hunk header is positional
+    // (a side with no lines uses git's convention: the line number just before the hunk).
+    const aBefore = new Array(fullEdits.length);
+    const bBefore = new Array(fullEdits.length);
+    let aSeen = 0;
+    let bSeen = 0;
+    for (let i = 0; i < fullEdits.length; i++) {
+        aBefore[i] = aSeen;
+        bBefore[i] = bSeen;
+        if (fullEdits[i].type !== 'add') aSeen++;
+        if (fullEdits[i].type !== 'delete') bSeen++;
+    }
 
     const out = [headerA, headerB];
     for (const hunk of hunks) {
@@ -226,32 +264,19 @@ function buildUnifiedDiff(filepath, beforeText, afterText, contextSize) {
 
         let aCount = 0;
         let bCount = 0;
-        let aStart = null;
-        let bStart = null;
-
         for (const item of slice) {
-            if (item.type === 'keep') {
-                if (aStart === null) aStart = item.lineA;
-                if (bStart === null) bStart = item.lineB;
-                aCount++;
-                bCount++;
-            } else if (item.type === 'delete') {
-                if (aStart === null) aStart = item.lineA;
-                aCount++;
-            } else if (item.type === 'add') {
-                if (bStart === null) bStart = item.lineB;
-                bCount++;
-            }
+            if (item.type !== 'add') aCount++;
+            if (item.type !== 'delete') bCount++;
         }
 
-        const hdrA = aCount === 0 ? '0,0' : `${aStart || 1},${aCount}`;
-        const hdrB = bCount === 0 ? '0,0' : `${bStart || 1},${bCount}`;
+        const hdrA = `${aCount === 0 ? aBefore[startIdx] : aBefore[startIdx] + 1},${aCount}`;
+        const hdrB = `${bCount === 0 ? bBefore[startIdx] : bBefore[startIdx] + 1},${bCount}`;
         out.push(`@@ -${hdrA} +${hdrB} @@`);
 
         for (const item of slice) {
-            if (item.type === 'keep') out.push(` ${item.text}`);
-            else if (item.type === 'delete') out.push(`-${item.text}`);
-            else if (item.type === 'add') out.push(`+${item.text}`);
+            if (item.type === 'keep') pushDiffLine(out, ' ', item.text);
+            else if (item.type === 'delete') pushDiffLine(out, '-', item.text);
+            else if (item.type === 'add') pushDiffLine(out, '+', item.text);
         }
     }
 
@@ -452,7 +477,7 @@ async function handler(args, api) {
         }
     }
 
-    const output = api.cleanupText(outLines.join('\n'));
+    const output = api.cleanupText(outLines.join('\n'), { preserveTrailingWhitespace: true });
     const summary = `${files.length} changed file${files.length === 1 ? '' : 's'} (+${totalAdded} / -${totalRemoved})${wantDiff ? ' [diff]' : ''}`;
 
     // --- Display ---------------------------------------------------------------

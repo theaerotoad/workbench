@@ -112,6 +112,12 @@ function normalizeEol(s) {
     return String(s == null ? '' : s).replace(/\r\n/g, '\n');
 }
 
+function countLines(txt) {
+    if (!txt) return 0;
+    const n = txt.split('\n').length;
+    return txt.endsWith('\n') ? n - 1 : n;
+}
+
 function countNewlines(s) {
     let n = 0;
     for (let i = 0; i < s.length; i++) {
@@ -227,7 +233,8 @@ function applySearchReplace(original, searchBlock, replaceBlock, opts = {}) {
             appliedRanges,
             stepChanges,
             oldLines: sBlock.split('\n'),
-            newLines: rBlock === '' ? [] : rBlock.split('\n')
+            newLines: rBlock === '' ? [] : rBlock.split('\n'),
+            matchMode: 'exact'
         };
     }
 
@@ -273,7 +280,8 @@ function applySearchReplace(original, searchBlock, replaceBlock, opts = {}) {
 
                 let relativeIndent = curLead.startsWith(sLead) ? curLead.slice(sLead.length) : curLead;
                 if (fileIndent.type === 'tab') {
-                    relativeIndent = relativeIndent.replace(/ {4}/g, '\t').replace(/ {2}/g, '\t');
+                    // Only convert leading groups of 4 spaces; leave any leftover spaces as-is.
+                    relativeIndent = relativeIndent.replace(/^( {4})+/, m => '\t'.repeat(m.length / 4));
                 }
 
                 return origLead + relativeIndent + lineContent;
@@ -303,7 +311,8 @@ function applySearchReplace(original, searchBlock, replaceBlock, opts = {}) {
             appliedRanges,
             stepChanges,
             oldLines: firstOrigSlice || sLines,
-            newLines: firstAdjustedLines || rLines
+            newLines: firstAdjustedLines || rLines,
+            matchMode: 'whitespace-insensitive'
         };
     }
 
@@ -583,7 +592,8 @@ function applyEditBatch(original, items, isBatch = false) {
             replacedCount: 1,
             matchCount: 1,
             matchLines: [item.startLine],
-            occurrence: null
+            occurrence: null,
+            matchMode: 'line'
         });
     }
 
@@ -612,7 +622,8 @@ function applyEditBatch(original, items, isBatch = false) {
                 replacedCount: res.replacedCount || 1,
                 matchCount: res.matchCount || 1,
                 matchLines: res.matchLines || [res.lineNumber],
-                occurrence: spec.occurrence
+                occurrence: spec.occurrence,
+                matchMode: res.matchMode
             });
         } catch (err) {
             err.editIndex = spec.index;
@@ -648,6 +659,8 @@ function formatChangedRegions(newContent, appliedRanges, contextLines = 4) {
     const norm = normalizeEol(newContent);
     if (norm === '') return '(file is now empty)';
     const lines = norm.split('\n');
+    // A trailing newline terminates the last line; don't show an extra empty numbered line.
+    if (norm.endsWith('\n') && lines.length > 1) lines.pop();
     const total = lines.length;
     const ctx = Math.max(0, Number.isFinite(contextLines) ? Math.floor(contextLines) : 4);
 
@@ -1144,7 +1157,9 @@ async function handler(args, api) {
             rangeText = `L${startLineNum} (ins)`;
         }
 
-        const totalFileLines = batchResult.content === '' ? 0 : batchResult.content.split(/\r?\n/).length;
+        const totalFileLines = countLines(normalizeEol(batchResult.content));
+
+        const fuzzyRecords = records.filter(r => r.matchMode === 'whitespace-insensitive');
 
         const pathParts = args.filepath.split('/');
         const fileName  = pathParts.pop();
@@ -1209,6 +1224,7 @@ async function handler(args, api) {
         } else {
             statusText = `Applied at line ${startLineNum}`;
         }
+        if (fuzzyRecords.length > 0) statusText += ' (whitespace-insensitive match)';
 
         // --- Compose Final HTML ---------------------------------------------
 
@@ -1264,6 +1280,10 @@ async function handler(args, api) {
             headline = `Edited ${args.filepath}: replaced ${firstRec.replacedCount} occurrences (lines ${firstRec.matchLines.join(', ')})`;
         } else {
             headline = `Edited ${args.filepath} at ${rangeText}`;
+        }
+        if (fuzzyRecords.length > 0) {
+            const which = multiEdit ? ` (edits ${fuzzyRecords.map(r => `#${r.index}`).join(', ')})` : '';
+            headline += `\nNote: search_block did not match exactly; matched ignoring leading/trailing whitespace per line, and the replacement was re-indented to the file's indentation. Verify indentation below.${which}`;
         }
 
         const changedSnippet = formatChangedRegions(batchResult.content, batchResult.appliedRanges, contextLines);

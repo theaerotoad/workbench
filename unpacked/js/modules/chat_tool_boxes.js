@@ -151,6 +151,23 @@ async function executeTool(name, args, sessionId, runningBox) {
         return { output, summary: summarizeToolError(output) };
     }
 
+    // write's overwrite guard, checked BEFORE asking permission so the user isn't prompted to approve
+    // a call that would only fail. Mirrors tools/write.js (which still enforces it as the source of truth).
+    // Skipped in plan/ask mode so write.js reports its mode restriction instead.
+    const curMode = window.state && window.state.mode;
+    if (name === 'write' && curMode !== 'plan' && curMode !== 'ask' && args && args.overwrite !== true && typeof args.filepath === 'string') {
+        try {
+            const normPath = (p) => String(p || '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+            const fp = args.filepath;
+            const isPlanFile = normPath(fp) === normPath(window.PLAN_FILE);
+            const existsFn = window.TOOL_API_METHODS && window.TOOL_API_METHODS.fileExists;
+            if (!isPlanFile && typeof existsFn === 'function' && await existsFn(name, [fp])) {
+                const output = `ERROR: ${fp} already exists. Use edit for targeted changes, or call write again with overwrite: true to replace it.`;
+                return { output, summary: summarizeToolError(output) };
+            }
+        } catch (_) { /* fall through: write.js enforces the guard itself */ }
+    }
+
     const perm = await checkPermission(name, describeToolAction(name, args), sessionId);
     if (!perm.allowed) {
         const output = `ERROR: ${perm.error}`;

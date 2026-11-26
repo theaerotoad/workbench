@@ -11,14 +11,19 @@ const TOOL_META = {
             },
             "path": {
                 "type": "string",
-                "description": "Optional subfolder or filename substring filter."
+                "description": "Optional workspace-relative folder or file to search (prefix from the workspace root, e.g. 'src/utils' or 'src/app.py')."
             },
             "include": {
                 "type": "string",
                 "description": "Optional glob filter for file paths (e.g. '*.py', 'src/**/*.ts', or comma-separated '*.js,*.ts')."
             },
             "case_sensitive": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Default false (case-insensitive). Set true for exact-case matching, e.g. to tell `Map` from `map`."
+            },
+            "literal": {
+                "type": "boolean",
+                "description": "Treat pattern as plain text, not regex (default false)."
             },
             "context": {
                 "type": "integer",
@@ -52,7 +57,7 @@ const TOOL_META = {
             "default": 500,
             "min": 1,
             "max": 100000,
-            "description": "Largest number of matching lines returned before results are truncated."
+            "description": "Maximum matching lines returned (or matching files when files_only=true). Context lines do not count."
         },
         {
             "key": "previewLines",
@@ -67,6 +72,16 @@ const TOOL_META = {
 };
 
 // --- Pure helpers ------------------------------------------------------------
+
+// Same normalization as find.normalizePathPrefix (tools cannot import from each other).
+function normalizePathPrefix(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw.trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+|\/+$/g, '');
+}
+
+function escapeRegex(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function globToRegex(glob, pathScoped) {
     let re = '^';
@@ -168,28 +183,49 @@ function highlight(text, re) {
 
 async function handler(args, api) {
     const flags = args.case_sensitive ? '' : 'i';
+    const pattern = String(args.pattern == null ? '' : args.pattern);
+    let isLiteral = args.literal === true;
+    let regexFallbackNote = '';
     let re;
-    try {
-        re = new RegExp(args.pattern, flags);
-    } catch (e) {
-        re = new RegExp(args.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+    if (isLiteral) {
+        re = new RegExp(escapeRegex(pattern), flags);
+    } else {
+        try {
+            re = new RegExp(pattern, flags);
+        } catch (e) {
+            re = new RegExp(escapeRegex(pattern), flags);
+            isLiteral = true;
+            regexFallbackNote = `[note: pattern is not a valid regex (${e.message}); searched as literal text. Pass literal=true to do this on purpose.]`;
+        }
     }
+    const modeLabel = `${args.case_sensitive ? 'case-sensitive' : 'case-insensitive'} ${isLiteral ? 'literal' : 'regex'}`;
+    const noMatches = `(no matches; ${modeLabel})`;
 
     const maxLines = Math.max(1, Number(await api.getSetting('maxMatches')) || 500);
     const contextLines = Number.isInteger(args.context) && args.context > 0 ? Math.min(args.context, 20) : 0;
     const filesOnly = args.files_only === true;
     const maxPerFile = Number.isInteger(args.max_per_file) && args.max_per_file > 0 ? args.max_per_file : Infinity;
-    const pathFilter = args.path ? String(args.path).replace(/\\/g, '/') : '';
+    const pathFilter = normalizePathPrefix(args.path);
     const includeFilter = compileIncludeFilter(args.include);
 
-    // Filter by path, include, and known-binary extensions BEFORE hitting api.isBinary/readFile.
+    // Filter by path prefix, include, and known-binary extensions BEFORE hitting api.isBinary/readFile.
     const allFiles = await api.listFiles();
+    const underPrefix = (fp) => fp === pathFilter || fp.startsWith(pathFilter + '/');
     const candidates = allFiles.filter(fp => {
         if (GREP_BINARY_EXT.test(fp)) return false;
-        if (pathFilter && !fp.includes(pathFilter)) return false;
+        if (pathFilter && !underPrefix(fp)) return false;
         if (includeFilter && !includeFilter(fp)) return false;
         return true;
     });
+
+    // path is a prefix; if nothing is under it but the string appears elsewhere, say so.
+    let pathHint = '';
+    if (pathFilter && !allFiles.some(underPrefix)) {
+        const substringHits = allFiles.filter(fp => fp.includes(pathFilter));
+        if (substringHits.length > 0) {
+            pathHint = `(no files under "${args.path}"; path is a folder/file prefix from the workspace root. "${args.path}" appears inside ${substringHits.length} other path(s), e.g. ${substringHits[0]})`;
+        }
+    }
 
     const scopeParts = [];
     if (pathFilter) scopeParts.push(pathFilter);
@@ -254,7 +290,8 @@ async function handler(args, api) {
                     }
                     hitIndices.push(i);
                     totalMatches++;
-                    matches.push({ fp, n: i + 1, text: line.trim() });
+                    // Keep leading indentation so results can be copied into an edit search_block.
+                    matches.push({ fp, n: i + 1, text: line.replace(/\s+$/, '') });
                 }
             }
 
@@ -289,10 +326,10 @@ async function handler(args, api) {
     if (filesOnly) {
         rawOutput = fileGroups.length
             ? fileGroups.map(g => `${g.fp}  (${g.count} match${g.count === 1 ? '' : 'es'})`).join('\n')
-            : "(no matches)";
+            : noMatches;
     } else if (contextLines > 0) {
         if (!fileGroups.length) {
-            rawOutput = "(no matches)";
+            rawOutput = noMatches;
         } else {
             const sections = fileGroups.map(g => {
                 const headerLine = g.capped ? `${g.fp}  (capped at ${maxPerFile} matches)` : g.fp;
@@ -305,7 +342,7 @@ async function handler(args, api) {
         }
     } else {
         if (!matches.length) {
-            rawOutput = "(no matches)";
+            rawOutput = noMatches;
         } else {
             const cappedFiles = fileGroups.filter(g => g.capped);
             rawOutput = matches.map(m => `${m.fp}:${m.n}: ${m.text}`).join('\n');
@@ -315,12 +352,17 @@ async function handler(args, api) {
         }
     }
 
-    const truncNote = truncated
-        ? (filesOnly
-            ? `\n\n[truncated: showing first ${maxLines} matching files]`
-            : `\n\n[truncated: showing ${maxLines} of many matches]`)
-        : '';
-    const output = api.cleanupText(rawOutput) + truncNote;
+    if (pathHint) rawOutput = pathHint;
+
+    // Notices go first: regex fallback, then truncation, then results.
+    const topNotices = [];
+    if (regexFallbackNote) topNotices.push(regexFallbackNote);
+    if (truncated) {
+        topNotices.push(filesOnly
+            ? `[TRUNCATED: showing first ${maxLines} matching files; more exist. Narrow with path/include.]`
+            : `[TRUNCATED: showing first ${maxLines} matching lines; more exist. Narrow with path/include, set max_per_file, or use files_only=true.]`);
+    }
+    const output = (topNotices.length ? topNotices.join('\n') + '\n\n' : '') + api.cleanupText(rawOutput);
     const summary = filesOnly
         ? `Grep: ${fileGroups.length} file(s) (${totalMatches} matches)${truncated ? ` (truncated)` : ''}`
         : `Grep: ${totalMatches} match(es) in ${fileCounts.size} file(s)${truncated ? ` (truncated at ${maxLines})` : ''}`;
@@ -417,6 +459,7 @@ async function handler(args, api) {
                     <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg); font-weight:600;">${esc(args.pattern)}</div>
                     ${badge(scope, 'var(--primary)')}
                     ${args.case_sensitive ? badge('Aa', 'var(--dim)') : ''}
+                    ${isLiteral ? badge('literal', 'var(--dim)') : ''}
                     ${contextLines > 0 ? badge(`-C ${contextLines}`, 'var(--dim)') : ''}
                     ${filesOnly ? badge('files only', 'var(--dim)') : ''}
                     ${truncated ? badge('truncated', 'var(--yellow)') : ''}

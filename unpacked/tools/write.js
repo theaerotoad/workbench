@@ -1,7 +1,7 @@
 // write - tool definition.
 const TOOL_META = {
     "name": "write",
-    "description": "Create a new file, or fully overwrite an existing one. Use this for creating new files. For changes to an existing file, prefer the \"edit\" tool instead.",
+    "description": "Create a new file, or fully overwrite an existing one (requires overwrite: true). For changes to an existing file, prefer edit. The result says whether the file was created or overwritten.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -12,6 +12,10 @@ const TOOL_META = {
                 "type": "string",
                 "description": "Full file content. Use an empty string to create an empty file.",
                 "allowEmpty": true
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "Required (true) to replace an existing file. Omit when creating a new file."
             }
         },
         "required": [
@@ -79,6 +83,16 @@ async function fail(api, fp, msg) {
     return { output: `ERROR: ${clean}` };
 }
 
+function countLines(txt) {
+    if (!txt) return 0;
+    const n = txt.split('\n').length;
+    return txt.endsWith('\n') ? n - 1 : n;
+}
+
+function normalizePath(p) {
+    return String(p || '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+}
+
 function formatBytes(n) {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -108,9 +122,15 @@ async function handler(args, api) {
             try {
                 if (!(await api.isBinary(fp))) {
                     const old = await api.readFile(fp);
-                    if (typeof old === 'string' && !/^ERROR: [^\n]*$/.test(old)) oldLineCount = old.split(/\r?\n/).length;
+                    if (typeof old === 'string' && !/^ERROR: [^\n]*$/.test(old)) oldLineCount = countLines(old.replace(/\r\n/g, '\n'));
                 }
             } catch (e) { /* preview only */ }
+        }
+
+        // Guard against accidental overwrites. The plan file is exempt: plan mode rewrites it in full.
+        const isPlanFile = !!api.planFile && normalizePath(fp) === normalizePath(api.planFile);
+        if (existed && args.overwrite !== true && !isPlanFile) {
+            return fail(api, fp, `${fp} already exists (${oldLineCount === null ? '?' : oldLineCount} line${oldLineCount === 1 ? '' : 's'}). Use edit for targeted changes, or call write again with overwrite: true to replace it.`);
         }
 
         const err = await api.writeFile(fp, content);
@@ -118,7 +138,10 @@ async function handler(args, api) {
 
         // --- Display -----------------------------------------------------------
 
-        const lines = content === '' ? [] : content.split(/\r?\n/);
+        const normContent = content.replace(/\r\n/g, '\n');
+        const lines = normContent === '' ? [] : normContent.split('\n');
+        if (normContent.endsWith('\n')) lines.pop();
+        const newLineCount = countLines(normContent);
         const bytes = new TextEncoder().encode(content).length;
 
         let previewLines = Number(await api.getSetting('previewLines'));
@@ -176,7 +199,16 @@ async function handler(args, api) {
             </div>`;
 
         await api.showUI(displayHtml);
-        return { output: `Written ${fp}`, summary: header };
+        const plural = (n) => `${n} line${n === 1 ? '' : 's'}`;
+        let resultText;
+        if (!existed) {
+            resultText = `Created ${fp} (${plural(newLineCount)})`;
+        } else if (oldLineCount !== null) {
+            resultText = `Overwrote existing file ${fp} (was ${plural(oldLineCount)}, now ${newLineCount})`;
+        } else {
+            resultText = `Overwrote existing file ${fp} (now ${plural(newLineCount)})`;
+        }
+        return { output: resultText, summary: header };
     } catch (e) {
         return fail(api, fp, e.message);
     }

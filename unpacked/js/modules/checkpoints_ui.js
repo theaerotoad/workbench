@@ -410,8 +410,13 @@ async function renderFileDiffView(filepath, checkpointRange) {
     if (isBinaryDiff) {
         diffStats.innerHTML = `<span class="dim">Binary file</span>`;
     } else {
-        const beforeLines = origContent ? origContent.split('\n').length : 0;
-        const afterLines = modContent ? modContent.split('\n').length : 0;
+        const countLines = (t) => {
+            if (!t) return 0;
+            const n = t.split('\n').length;
+            return t.endsWith('\n') ? n - 1 : n;
+        };
+        const beforeLines = countLines(origContent);
+        const afterLines = countLines(modContent);
         diffStats.innerHTML = checkpointRange
             ? `<span class="dim">${beforeLines} lines → ${afterLines} lines</span>`
             : `<span class="dim">${beforeLines} baseline lines → ${afterLines} modified lines</span>`;

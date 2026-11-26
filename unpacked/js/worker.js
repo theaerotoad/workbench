@@ -23,7 +23,8 @@ self.addEventListener('message', (e) => {
     }
 });
 
-function cleanupText(text) {
+// Keep in sync with js/modules/chat_render.js (cleanupText)
+function cleanupText(text, opts = {}) {
     if (text === undefined) return '';
     let s = String(text);
 
@@ -53,7 +54,8 @@ function cleanupText(text) {
         s = s.slice(0, MAX_TOTAL_CHARS) + \`\\n\\n[…output truncated: \${s.length - MAX_TOTAL_CHARS} more characters omitted]\`;
     }
 
-    return s.replace(/\\s+$/gm, '').replace(/\\n{3,}/g, '\\n\\n').trim();
+    if (!(opts && opts.preserveTrailingWhitespace)) s = s.replace(/[ \\t]+$/gm, '');
+    return s.replace(/^\\n+|\\n+$/g, '');
 }
 
 async function runTool(runId, toolMeta, args) {
@@ -75,8 +77,9 @@ async function runTool(runId, toolMeta, args) {
         getSessionChanges: (path, opts) => callApi(runId, 'getSessionChanges', [path, opts || {}]),
         isBinary: (fp) => callApi(runId, 'isBinary', [fp]),
         isSensitiveFile: (fp) => callApi(runId, 'isSensitiveFile', [fp]),
-        cleanupText: (text) => cleanupText(text),
+        cleanupText: (text, opts) => cleanupText(text, opts),
         getSetting: (key) => callApi(runId, 'getSetting', [key]),
+        getToolSetting: (tool, key) => callApi(runId, 'getToolSetting', [tool, key]),
         validateDisplayHtml: (html, opts) => callApi(runId, 'validateDisplayHtml', [html, opts || {}]),
         showUI: (html, opts) => {
             if (!(opts && opts.live)) lastDisplayHtml = String(html); // live frames are transient; last display call wins

@@ -44,13 +44,23 @@ function computeLineDiffCounts(beforeText, afterText) {
 
     const normA = beforeText.replace(/\r\n/g, '\n');
     const normB = afterText.replace(/\r\n/g, '\n');
-    const aFull = normA === '' ? [] : normA.split('\n');
-    const bFull = normB === '' ? [] : normB.split('\n');
+    // A trailing newline terminates the last line; it is not an extra empty line.
+    const toLines = (s) => {
+        if (s === '') return [];
+        const arr = s.split('\n');
+        if (s.endsWith('\n')) arr.pop();
+        return arr;
+    };
+    const aFull = toLines(normA);
+    const bFull = toLines(normB);
 
     // Trim identical leading/trailing lines first (like git hunks), which also shrinks the LCS region.
     const { a, b } = trimCommonLines(aFull, bFull);
     const n = a.length, m = b.length;
-    if (n === 0 && m === 0) return { added: 0, removed: 0 };
+    if (n === 0 && m === 0) {
+        // Only the final newline was added/removed: count it as a changed last line (like git), so it stays visible.
+        return normA === normB ? { added: 0, removed: 0 } : { added: 1, removed: 1 };
+    }
 
     const LCS_LINE_CAP = 4000;
     if (n * m > LCS_LINE_CAP * LCS_LINE_CAP || n > LCS_LINE_CAP * 4 || m > LCS_LINE_CAP * 4) {
@@ -92,12 +102,25 @@ function computeLineDiffHunks(beforeText, afterText) {
         return { added: 0, removed: 0, lineEndingsOnly: true, approximate: false, hunks: [] };
     }
 
-    const aFull = normA === '' ? [] : normA.split('\n');
-    const bFull = normB === '' ? [] : normB.split('\n');
+    // Same line model as computeLineDiffCounts: a trailing newline does not add an empty line.
+    const toLines = (s) => {
+        if (s === '') return [];
+        const arr = s.split('\n');
+        if (s.endsWith('\n')) arr.pop();
+        return arr;
+    };
+    const aFull = toLines(normA);
+    const bFull = toLines(normB);
     const { a, b, start } = trimCommonLines(aFull, bFull);
     const n = a.length, m = b.length;
     if (n === 0 && m === 0) {
-        return { added: 0, removed: 0, lineEndingsOnly: true, approximate: false, hunks: [] };
+        // Only the final newline was added/removed: report the last line as changed (like git).
+        const last = Math.max(aFull.length, 1);
+        const lastText = aFull.length ? aFull[aFull.length - 1] : '';
+        return {
+            added: 1, removed: 1, lineEndingsOnly: false, approximate: false,
+            hunks: [{ oldStart: last, newStart: last, oldLines: [lastText], newLines: [lastText] }]
+        };
     }
 
     const LCS_LINE_CAP = 4000;
@@ -738,9 +761,12 @@ window.getFileTimeline = getFileTimeline;
 // --- AST_EXPORTS_END ---
 
 // --- lineCount.js ---
-// Counts newline-terminated lines; '' counts as zero lines.
+// Counts lines; a trailing newline terminates the last line rather than starting a new one.
+// '' counts as zero lines, "a\nb" and "a\nb\n" both count as 2.
 function lineCount(text) {
-    return text === '' ? 0 : text.split('\n').length;
+    if (!text) return 0;
+    const n = text.split('\n').length;
+    return text.endsWith('\n') ? n - 1 : n;
 }
 
 // --- AST_EXPORTS_START ---

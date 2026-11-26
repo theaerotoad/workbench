@@ -1477,7 +1477,8 @@ async function mapOneFile(fp, content, ctx) {
     const langName = EXT_TO_LANG[ext];
     const nonAstLang = NON_AST_EXTS[ext];
 
-    const linesCount = content.split('\n').length;
+    // A trailing newline terminates the last line; it is not an extra line.
+    const linesCount = !content ? 0 : content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
     const sizeBytes = utf8ByteLength(content);
 
     if (sizeBytes > ctx.maxFileBytes) {

@@ -990,6 +990,12 @@ const TOOL_API_METHODS = {
         }
         return v;
     },
+    // Read-only access to another tool's setting, limited to an allowlist.
+    getToolSetting: async (toolName, [otherTool, key]) => {
+        const ALLOWED = { read: ['maxLines'] };
+        if (!(ALLOWED[otherTool] || []).includes(key)) return undefined;
+        return window.getToolSettingValue(otherTool, key);
+    },
     validateDisplayHtml: async (toolName, [html, opts]) => {
         if (typeof html !== 'string' || !html.trim()) {
             return { ok: false, error: 'Empty displayHtml' };

@@ -170,7 +170,8 @@ window.attachAssistantCopyAction = attachAssistantCopyAction;
 // --- AST_EXPORTS_END ---
 
 // --- cleanupText.js ---
-function cleanupText(text) {
+// Keep in sync with js/worker.js (cleanupText)
+function cleanupText(text, opts = {}) {
     if (text === undefined) return '';
     let s = String(text);
 
@@ -200,10 +201,8 @@ function cleanupText(text) {
         s = s.slice(0, MAX_TOTAL_CHARS) + `\n\n[…output truncated: ${s.length - MAX_TOTAL_CHARS} more characters omitted]`;
     }
 
-    return s
-        .replace(/\s+$/gm, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+    if (!(opts && opts.preserveTrailingWhitespace)) s = s.replace(/[ \t]+$/gm, '');
+    return s.replace(/^\n+|\n+$/g, '');
 }
 
 // --- AST_EXPORTS_START ---
