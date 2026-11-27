@@ -640,6 +640,8 @@ function renderAutocomplete() {
         });
         acPopup.appendChild(row);
     });
+    const selectedRow = acPopup.querySelector('.ac-item.selected');
+    if (selectedRow) selectedRow.scrollIntoView({ block: 'nearest' });
 }
 
 // --- AST_EXPORTS_START ---
