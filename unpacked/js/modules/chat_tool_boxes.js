@@ -117,12 +117,20 @@ function describeToolAction(name, args) {
             }
             return args.recursive ? `Delete ${displayPath} (recursive)` : `Delete ${displayPath}`;
         }
+        case 'preview_image':
         case 'PreviewImage': {
             if (Array.isArray(args.files) && args.files.length) {
                 return `Preview ${args.files.length} image(s): ${args.files.map(f => f && f.filepath).join(', ')}`;
             }
             const hasCrop = [args.x, args.y, args.width, args.height].some(v => v !== undefined && v !== null);
             return `Preview ${args.filepath || ''}${hasCrop ? ` (region ${args.x || 0},${args.y || 0} ${args.width || '?'}x${args.height || '?'})` : ''}`;
+        }
+        case 'view_pdf': {
+            const parts = [];
+            if (args.pages) parts.push(`pages ${args.pages}`);
+            if (args.mode && args.mode !== 'text') parts.push(`mode=${args.mode}`);
+            const suffix = parts.length ? ` (${parts.join(', ')})` : '';
+            return `View PDF ${args.filepath || ''}${suffix}`;
         }
         default: {
             const preview = summarizeToolArgs(args);

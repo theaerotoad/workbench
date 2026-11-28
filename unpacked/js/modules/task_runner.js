@@ -685,9 +685,15 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                             const content = [];
                             const name = call.function.name;
                             const fp = args.filepath || (args.files && args.files.map(f => f.filepath).join(', ')) || '';
-                            const text = imgs.length === 1
-                                ? (imgs[0].label || `(Image result from ${name} tool call for ${fp})`)
-                                : `(${imgs.length} image results from ${name} tool call for ${fp})`;
+                            let text;
+                            if (imgs.length === 1) {
+                                text = imgs[0].label || `(Image result from ${name} tool call for ${fp})`;
+                            } else {
+                                const hasLabels = imgs.some(im => im.label);
+                                text = hasLabels
+                                    ? `(${imgs.length} image results from ${name} tool call for ${fp}, in order: ${imgs.map((im, i) => `[${i + 1}] ${im.label || `image ${i + 1}`}`).join(', ')})`
+                                    : `(${imgs.length} image results from ${name} tool call for ${fp})`;
+                            }
                             content.push({ type: "text", text });
                             for (const im of imgs) content.push({ type: "image_url", image_url: { url: im.url } });
                             runCtx.messages.push({ role: "user", content });
