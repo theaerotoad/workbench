@@ -241,7 +241,12 @@ async function fail(api, fp, msg) {
 async function handler(args, api) {
     const fp = args.filepath;
 
-    if (await api.isBinary(fp)) return fail(api, fp, `${fp} is a binary file and cannot be read as text.`);
+    if (await api.isBinary(fp)) {
+        if (/\.pdf$/i.test(fp)) {
+            return fail(api, fp, `${fp} is a PDF file and cannot be read as plain text. Use view_pdf(filepath="${fp}") instead.`);
+        }
+        return fail(api, fp, `${fp} is a binary file and cannot be read as text.`);
+    }
 
     const txt = await api.readFile(fp);
     if (txt === undefined) return fail(api, fp, `${fp} not found`);

@@ -386,6 +386,7 @@ OTHER TOOLS
 - read: use ranges=[[a,b],[c,d]] taken from map/grep line numbers. Reads over the limit (default 500 lines) are TRUNCATED with a notice at the top listing the ranges not returned; continue with the ranges it gives.
 - changes(diff=true): everything modified this session.
 - preview_image: vision-capable models only.
+- view_pdf: read PDF files (metadata, outline, per-page text by default on all models; mode="image" or "both" on vision models for diagrams/scans).
 
 WORKING EFFICIENTLY
 - Batch independent tool calls in ONE turn (e.g. map two packages + grep a usage). Only sequence calls when one result determines the next.
