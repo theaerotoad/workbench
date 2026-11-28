@@ -177,13 +177,29 @@ All paths are workspace-relative (e.g., src/index.js):
   - api.readFileBytes(filepath) -> Promise<Uint8Array | string> Reads binary
     data (up to 64MB). Returns Uint8Array or "ERROR: ..." string.
   - api.readImage(filepath, crop?, opts?) -> Promise<Object> Reads and crops an
-    image file. crop accepts normalized coordinates: { x: 0.0-1.0, y: 0.0-1.0,
-    width: 0.0-1.0, height: 0.0-1.0 }. opts: { maxMegapixels?: number } — an
-    additional per-image size budget in megapixels, applied after the standard
-    1568px long-side cap (i.e. it only shrinks the image further). Returns {
-    dataUrl, width, height, sourceWidth, sourceHeight, crop } or { error }. A
-    tool may call readImage multiple times to aggregate several images (e.g. PDF
-    pages) into one `images` response (see section 7).
+      image file. crop accepts normalized coordinates: { x: 0.0-1.0, y: 0.0-1.0,
+      width: 0.0-1.0, height: 0.0-1.0 }. opts: { maxMegapixels?: number } — an
+      additional per-image size budget in megapixels, applied after the standard
+      1568px long-side cap (i.e. it only shrinks the image further). Returns {
+      dataUrl, width, height, sourceWidth, sourceHeight, crop } or { error }. A
+      tool may call readImage multiple times to aggregate several images (e.g. PDF
+      pages) into one `images` response (see section 7).
+  - api.pdfInfo(filepath, opts?) -> Promise<Object> Loads a workspace or attached
+      PDF host-side via PDF.js (path-safety checked, LRU-cached) and returns
+      `{ numPages, fileSize, title, author, subject, creator, producer, encrypted,
+      outline: [{ title, page, level }], outlineTruncated }` or `{ error }`.
+      opts: `{ password?: string }`.
+  - api.pdfText(filepath, opts?) -> Promise<Object> Extracts layout-preserved
+      text per page via PDF.js without requiring canvas or vision. opts:
+      `{ pages?: number[] | "all", password?: string, maxChars?: number }`.
+      Returns `{ numPages, pages: [{ page, text, charCount, lowText }],
+      totalChars, truncatedByChars }` or `{ error }`.
+  - api.pdfRenderPage(filepath, pageNum, opts?) -> Promise<Object> Renders a
+      single 1-based PDF page onto a white-background host canvas (JPEG, capped
+      to 1568px long side and optional `maxMegapixels`). opts:
+      `{ password?: string, maxMegapixels?: number, crop?: { x?, y?, width?,
+      height? } }` (normalized 0.0–1.0 coordinates). Returns `{ page, numPages,
+      dataUrl, width, height, sourceWidth, sourceHeight, crop }` or `{ error }`.
   - api.writeFile(filepath, content) -> Promise<string | null> Writes string or
     Uint8Array to workspace. Returns null on success or an error string.
   - api.renameFile(oldPath, newPath) -> Promise<string | null> Renames or moves
@@ -217,9 +233,11 @@ All paths are workspace-relative (e.g., src/index.js):
 
 Context & Configuration
 
-  - api.mode string Active execution mode: "plan", "ask", or "code".
-  - api.planFile string Path to implementation plan file (".agent_plan.md").
-  - api.getSetting(key) -> Promise<any> Retrieves setting value defined in
+- api.mode string Active execution mode: "plan", "ask", or "code".
+- api.planFile string Path to implementation plan file (".agent_plan.md").
+- api.hasVision boolean True when the session's active model supports vision
+    (useful for tools with `require_vision: false` that optionally emit images).
+- api.getSetting(key) -> Promise<any> Retrieves setting value defined in
     TOOL_META.settings.
   - api.cleanupText(text) -> string Helper that truncates lines exceeding 2000
     chars and caps string to 100k characters.
