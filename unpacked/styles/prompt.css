@@ -163,6 +163,53 @@
     display: block; flex-shrink: 0;
 }
 #model-select-btn:hover, #model-select-btn.open { border-color: var(--primary); }
+/* Effort / Thinking-level Select Dropdown (Top Row) */
+#effort-group { position: relative; display: inline-flex; align-items: center; }
+#effort-select-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-card, #181a22); border: 1px solid var(--border);
+    color: var(--fg); padding: 4px 10px; border-radius: 6px;
+    font-size: 11px; font-family: var(--font-mono);
+    cursor: pointer; max-width: 160px;
+    transition: background 0.15s, border-color 0.15s;
+}
+#effort-select-btn:hover, #effort-select-btn.open { border-color: var(--primary); }
+#effort-select-btn .esb-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 600; color: var(--fg);
+}
+#effort-select-btn .esb-icon { color: var(--yellow); font-size: 15px; flex-shrink: 0; }
+#effort-select-btn .esb-caret { color: var(--dim); font-size: 14px; flex-shrink: 0; margin-left: 2px; }
+#effort-select-overlay {
+    display: none; position: fixed; inset: 0; z-index: 1200;
+}
+#effort-select-dropdown {
+    display: none; position: absolute; z-index: 1201;
+    bottom: calc(100% + 6px); right: 0;
+    width: 160px;
+    background: var(--bg-secondary); border: 1px solid var(--border-highlight);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    flex-direction: column; overflow: hidden;
+}
+#effort-select-list { padding: 4px; }
+.esb-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 8px; border-radius: 6px; cursor: pointer; font-family: var(--font-mono);
+}
+.esb-item:hover, .esb-item.highlighted { background: rgba(var(--primary-rgb), 0.15); }
+.esb-item.current .esb-item-name { color: var(--primary); }
+.esb-item-name { font-size: 12px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.esb-item-check { font-size: 11px; color: var(--primary); flex-shrink: 0; }
+.esb-item.disabled { opacity: 0.38; cursor: not-allowed; }
+.esb-item.disabled:hover, .esb-item.disabled.highlighted { background: transparent; }
+.esb-item.disabled .esb-item-name { text-decoration: line-through; }
+.esb-footer {
+    margin-top: 4px; padding: 6px 8px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--dim); font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.esb-footer:hover { color: var(--fg); }
+
 #model-select-btn .msb-name {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-weight: 600; color: var(--fg);

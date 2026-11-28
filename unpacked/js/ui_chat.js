@@ -348,6 +348,41 @@ input.addEventListener('input', () => {
     checkAutocomplete();
 });
 
+effortSelectBtn.addEventListener('click', () => {
+    if (_effortSelectState.visible) closeEffortSelect(); else openEffortSelect();
+});
+effortSelectOverlay.addEventListener('click', closeEffortSelect);
+
+document.addEventListener('keydown', (e) => {
+    if (!_effortSelectState.visible) return;
+    const { options } = getEffortOptions();
+    const lastIndex = options.length - 1;
+    // Skip disabled (unsupported) entries while navigating.
+    const step = (delta) => {
+        let idx = _effortSelectState.selectedIdx;
+        for (let stepCount = 0; stepCount < options.length; stepCount++) {
+            idx = Math.max(0, Math.min(lastIndex, idx + delta));
+            if (options[idx] && options[idx].available) break;
+        }
+        _effortSelectState.selectedIdx = idx;
+        renderEffortSelectList();
+    };
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        step(1);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        step(-1);
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const opt = options[_effortSelectState.selectedIdx];
+        if (opt && opt.available) selectEffort(opt.value);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeEffortSelect();
+    }
+});
+
 modelSelectBtn.addEventListener('click', () => {
     if (_modelSelectState.visible) closeModelSelect(); else openModelSelect();
 });
@@ -1193,6 +1228,7 @@ document.addEventListener('keydown', (e) => {
         { id: 'sessions-popover-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-picker-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'model-select-overlay', isOpen: el => el.style.display === 'block' },
+        { id: 'effort-select-overlay', isOpen: el => el.style.display === 'block' },
         { id: 'explorer-context-menu', isOpen: el => el.style.display === 'block' },
         { id: 'sidebar', isOpen: el => el.classList.contains('mobile-open') }
     ];
@@ -1264,6 +1300,14 @@ document.addEventListener('keydown', (e) => {
             if (typeof closeModelSelect === 'function') closeModelSelect();
             else if (window.closeModelSelect) window.closeModelSelect();
             else modelSelect.style.display = 'none';
+            return true;
+        }
+        // Priority 7b: Thinking-level (reasoning effort) dropdown above prompt bar
+        const effortSelect = document.getElementById('effort-select-overlay');
+        if (effortSelect && effortSelect.style.display === 'block') {
+            if (typeof closeEffortSelect === 'function') closeEffortSelect();
+            else if (window.closeEffortSelect) window.closeEffortSelect();
+            else effortSelect.style.display = 'none';
             return true;
         }
         // Priority 8: Unified Settings modal

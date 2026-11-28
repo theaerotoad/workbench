@@ -53,6 +53,7 @@ let _mmSelectedIdx = 0;
 let _modelPickerState = { visible: false, targetLine: null, targetColumn: null, editorOffset: null, modelName: '', modelInfo: null, apiModels: [], loading: false, error: null, filter: '', selectedIdx: 0 };
 let _modelPickerWidget = null;
 let _modelSelectState = { visible: false, filter: '', selectedIdx: 0 };
+let _effortSelectState = { visible: false, selectedIdx: 0 };
 const _modelsEndpointCache = {};
 let _pendingDeleteMsgId = null;
 let _pendingEditMsgId = null;
@@ -192,7 +193,7 @@ window.wsMutationEpoch = wsMutationEpoch;
 window.wsUploadTargetDir = wsUploadTargetDir;
 
 export {
-    state, _cp1252Rev, _crcTable, _gutterDecorationIds, _gutterDiffEditor, _gutterDiffHost, _gutterDiffTimer, _lastAutoSync, _lastTermScrollTop, _mmSelectedIdx, _modelPickerState, _modelPickerWidget, _modelSelectState, _modelsEndpointCache, _pendingDeleteMsgId, _pendingEditMsgId, _pendingEditRevertIds, _pendingEditRevert, _pendingEditText, _permCtrlDown, _permHoverBtn, _railRaf, _railWrapCount, _settleRaf, _sharedToolErrorTip, _spPressOrigin, _toolModelPicker, accentSwatchesBuilt, acMatches, acSelectedIdx, attachmentIdCounter, currentPendingTool, deletedSessionIds, dynamicModes, explorerAnchor, explorerDeleteBusy, explorerSelectionCleared, explorerSelection, fIdx, frames, githubLocalShaCache, gitignoreCache, graphBadgeLabelMap, imgPanX, imgPanY, imgZoom, isSidebarCollapsed, jumpBtn, monacoDiffEditor, monacoEditor, monacoModels, newToolActivePane, newToolBrowseFetchedAt, newToolBrowseFiles, newToolBrowseSelected, newToolDroppedSource, newToolNameAutoFilled, pastedImageCounter, pastedTextCounter, pendingUIQueue, permQueue, programmaticScroll, promptRailTicks, railObserver, registry, resizing, rootHandle, savedSidebarWidth, searchDebounceTimer, sessionRunTickInterval, sniffCache, syncQueuedJob, syncWorkspaceChain, toolRegistry, toolWorkerIframe, toolWorker, toolWorkerOutbox, toolWorkerPending, toolWorkerReady, toolWorkerRunId, wsMutationEpoch, wsUploadTargetDir
+    state, _cp1252Rev, _crcTable, _gutterDecorationIds, _gutterDiffEditor, _gutterDiffHost, _gutterDiffTimer, _lastAutoSync, _lastTermScrollTop, _mmSelectedIdx, _modelPickerState, _modelPickerWidget, _modelSelectState, _effortSelectState, _modelsEndpointCache, _pendingDeleteMsgId, _pendingEditMsgId, _pendingEditRevertIds, _pendingEditRevert, _pendingEditText, _permCtrlDown, _permHoverBtn, _railRaf, _railWrapCount, _settleRaf, _sharedToolErrorTip, _spPressOrigin, _toolModelPicker, accentSwatchesBuilt, acMatches, acSelectedIdx, attachmentIdCounter, currentPendingTool, deletedSessionIds, dynamicModes, explorerAnchor, explorerDeleteBusy, explorerSelectionCleared, explorerSelection, fIdx, frames, githubLocalShaCache, gitignoreCache, graphBadgeLabelMap, imgPanX, imgPanY, imgZoom, isSidebarCollapsed, jumpBtn, monacoDiffEditor, monacoEditor, monacoModels, newToolActivePane, newToolBrowseFetchedAt, newToolBrowseFiles, newToolBrowseSelected, newToolDroppedSource, newToolNameAutoFilled, pastedImageCounter, pastedTextCounter, pendingUIQueue, permQueue, programmaticScroll, promptRailTicks, railObserver, registry, resizing, rootHandle, savedSidebarWidth, searchDebounceTimer, sessionRunTickInterval, sniffCache, syncQueuedJob, syncWorkspaceChain, toolRegistry, toolWorkerIframe, toolWorker, toolWorkerOutbox, toolWorkerPending, toolWorkerReady, toolWorkerRunId, wsMutationEpoch, wsUploadTargetDir
 };
 
 window.state = state;
@@ -208,6 +209,7 @@ window._mmSelectedIdx = _mmSelectedIdx;
 window._modelPickerState = _modelPickerState;
 window._modelPickerWidget = _modelPickerWidget;
 window._modelSelectState = _modelSelectState;
+window._effortSelectState = _effortSelectState;
 window._modelsEndpointCache = _modelsEndpointCache;
 window._pendingDeleteMsgId = _pendingDeleteMsgId;
 window._pendingEditMsgId = _pendingEditMsgId;

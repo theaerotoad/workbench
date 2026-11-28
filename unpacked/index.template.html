@@ -1183,6 +1183,17 @@
                         <div id="model-group">
                             <span id="status-model" class="dim" style="display:none !important;" title=""></span>
                             <span id="status-tokens" class="status-token-metric" style="display:none;" title="Context tokens usage"></span>
+                            <div id="effort-group">
+                                <button type="button" id="effort-select-btn" title="Thinking level (reasoning effort)">
+                                    <span class="esb-name" id="esb-name">Default</span>
+                                    <span class="icon esb-icon" id="esb-icon" style="display:none;" title="Thinking level">lightbulb</span>
+                                    <span class="icon esb-caret">expand_more</span>
+                                </button>
+                                <div id="effort-select-overlay"></div>
+                                <div id="effort-select-dropdown">
+                                    <div id="effort-select-list"></div>
+                                </div>
+                            </div>
                             <button type="button" id="model-select-btn" title="Model (from .agent/models.json)">
                                 <span class="msb-name" id="msb-name">—</span>
                                 <span class="msb-provider" id="msb-provider">—</span>

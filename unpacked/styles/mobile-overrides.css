@@ -73,6 +73,13 @@
     #model-group { flex: 0 1 auto; }
     #model-select-btn { max-width: 140px; }
 
+    /* Thinking-level control collapses to a lightbulb icon on narrow screens */
+    #effort-select-btn { max-width: none; padding: 4px 8px; }
+    #effort-select-btn .esb-name { display: none; }
+    #effort-select-btn .esb-caret { display: none; }
+    #effort-select-btn .esb-icon { display: inline-block !important; font-size: 16px; }
+    #effort-select-dropdown { width: 150px; }
+
     #doc-control-bar { padding: 0 8px; gap: 6px; }
     #doc-bar-badge { display: none !important; }
     .editor-tab { flex: 0 1 132px; min-width: 64px; max-width: 145px; }

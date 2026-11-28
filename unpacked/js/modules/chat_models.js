@@ -279,6 +279,89 @@ function openModelSelect() {
 window.openModelSelect = openModelSelect;
 // --- AST_EXPORTS_END ---
 
+// --- openEffortSelect.js ---
+function openEffortSelect() {
+    _effortSelectState.visible = true;
+    const { options } = getEffortOptions();
+    const current = (typeof getReasoningEffort === 'function') ? getReasoningEffort() : 'Default';
+    const currentIdx = options.findIndex(o => o.value === current);
+    _effortSelectState.selectedIdx = currentIdx >= 0 ? currentIdx : 0;
+    effortSelectBtn.classList.add('open');
+    effortSelectDropdown.style.display = 'flex';
+    effortSelectOverlay.style.display = 'block';
+    renderEffortSelectList();
+}
+
+// --- AST_EXPORTS_START ---
+window.openEffortSelect = openEffortSelect;
+// --- AST_EXPORTS_END ---
+
+// --- closeEffortSelect.js ---
+function closeEffortSelect() {
+    _effortSelectState.visible = false;
+    effortSelectBtn.classList.remove('open');
+    effortSelectDropdown.style.display = 'none';
+    effortSelectOverlay.style.display = 'none';
+}
+
+// --- AST_EXPORTS_START ---
+window.closeEffortSelect = closeEffortSelect;
+// --- AST_EXPORTS_END ---
+
+// --- renderEffortSelectList.js ---
+function renderEffortSelectList() {
+    const { options, supported } = getEffortOptions();
+    const current = (typeof getReasoningEffort === 'function') ? getReasoningEffort() : 'Default';
+    _effortSelectState.selectedIdx = Math.min(_effortSelectState.selectedIdx, options.length - 1);
+    const rows = options.map((o, i) => {
+        const isCurrent = o.value === current;
+        const isHighlighted = i === _effortSelectState.selectedIdx;
+        const classes = ['esb-item'];
+        if (isHighlighted) classes.push('highlighted');
+        if (isCurrent) classes.push('current');
+        if (!o.available) classes.push('disabled');
+        let title = o.value === 'Default' ? 'Model default — no reasoning_effort sent' : `Sent as reasoning_effort: ${o.value.toLowerCase()}`;
+        if (!o.available) title = `${title} — not supported by this model`;
+        return `<div class="${classes.join(' ')}" data-value="${escapeHTML(o.value)}" data-available="${o.available}" title="${escapeHTML(title)}">
+            <span class="esb-item-name">${escapeHTML(o.value)}</span>
+            <span class="esb-item-check">${isCurrent ? '✓' : ''}</span>
+        </div>`;
+    }).join('');
+    const footer = supported
+        ? `<div class="esb-footer" title="Learned from the model's 'supported levels' error — click to clear">Supports: ${escapeHTML(supported.join(', '))} · clear</div>`
+        : '';
+    effortSelectList.innerHTML = rows + footer;
+    effortSelectList.querySelectorAll('.esb-item').forEach(el => {
+        el.addEventListener('click', () => {
+            if (el.getAttribute('data-available') !== 'true') return;
+            const value = el.getAttribute('data-value');
+            selectEffort(value);
+        });
+    });
+    const footerEl = effortSelectList.querySelector('.esb-footer');
+    if (footerEl) {
+        footerEl.addEventListener('click', () => {
+            const info = getCurrentModelInfo();
+            clearSupportedEfforts(info.providerName, info.model);
+            renderEffortDropdown();
+        });
+    }
+}
+
+// --- AST_EXPORTS_START ---
+window.renderEffortSelectList = renderEffortSelectList;
+// --- AST_EXPORTS_END ---
+
+// --- selectEffort.js ---
+function selectEffort(value) {
+    if (typeof setReasoningEffort === 'function') setReasoningEffort(value);
+    closeEffortSelect();
+}
+
+// --- AST_EXPORTS_START ---
+window.selectEffort = selectEffort;
+// --- AST_EXPORTS_END ---
+
 // --- openModelsModal.js ---
 function openModelsModal(opts = {}) {
     _mmSelectedIdx = 0;

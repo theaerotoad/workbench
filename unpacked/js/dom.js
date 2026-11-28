@@ -57,6 +57,12 @@ export const editorBinaryNotice = document.getElementById('editor-binary-notice'
 export const editorImagePreview = document.getElementById('editor-image-preview');
 export const editorModeToggle = docViewToggle;
 export const editorView = document.getElementById('editor-view');
+export const effortSelectBtn = document.getElementById('effort-select-btn');
+export const effortSelectNameEl = document.getElementById('esb-name');
+export const effortSelectIconEl = document.getElementById('esb-icon');
+export const effortSelectDropdown = document.getElementById('effort-select-dropdown');
+export const effortSelectList = document.getElementById('effort-select-list');
+export const effortSelectOverlay = document.getElementById('effort-select-overlay');
 export const fileCountEl = document.getElementById('file-count');
 export const fileTreeEl = document.getElementById('file-tree');
 export const graphBreadcrumb = document.getElementById('graph-breadcrumb');
@@ -172,7 +178,10 @@ Object.entries({
     btnPopoverCloseWorkspace, changesCountEl,
     changesList, chatView, checkpointTimelineList, contextMenu, diffLayoutIcon,
     diffLayoutText, diffStats, diffTitle, diffView, editorBinaryMsg, editorBinaryNotice,
-    editorImagePreview, editorModeToggle, editorView, fileCountEl, fileTreeEl,
+    editorImagePreview, editorModeToggle, editorView,
+    effortSelectBtn, effortSelectNameEl, effortSelectIconEl,
+    effortSelectDropdown, effortSelectList, effortSelectOverlay,
+    fileCountEl, fileTreeEl,
     graphBreadcrumb, graphBreadcrumbFile, graphPanelLabel, htmlPreviewFrame,
     imageZoomBar, imgScaleLabel, imgZoomIn, imgZoomOut, input, mmAddProviderBtn,
     mmDetailEl, mmProviderListEl, modelPickerClose, modelPickerDropdown,

@@ -282,6 +282,173 @@ function renderModelDropdown() {
 
     if (typeof _modelSelectState !== 'undefined' && _modelSelectState.visible) renderModelSelectList();
     applyVisionCapabilityToUI();
+    renderEffortDropdown();
+}
+
+// --- Reasoning effort (thinking level) ---
+const REASONING_EFFORTS = ['Default', 'Off', 'Minimal', 'Low', 'Medium', 'High', 'Max'];
+
+// Per-workspace persisted thinking level. Same keying as the model selection:
+// a plain `reasoning_effort` fallback plus `reasoning_effort_<wsKey>` for WebDAV workspaces.
+function getReasoningEffort() {
+    let stored = null;
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) stored = localStorage.getItem(`reasoning_effort_${wsKey}`);
+    }
+    if (!stored) stored = localStorage.getItem('reasoning_effort');
+    if (REASONING_EFFORTS.includes(stored)) return stored;
+    // Also accept discovered levels (e.g. "xhigh") if the active model's capability
+    // list includes them, matching case-insensitively. (Uses the primitive lookup,
+    // NOT getCurrentModelInfo — which itself calls getReasoningEffort.)
+    let activeModel = null;
+    try {
+        const sel = getSelectedModelKey();
+        activeModel = sel ? findModelEntryFlexible(sel.providerName, sel.modelName) : null;
+    } catch (_) {}
+    const supported = activeModel ? getSupportedEfforts(activeModel.providerName, activeModel.name) : null;
+    const norm = typeof stored === 'string' ? stored.trim().toLowerCase() : '';
+    if (supported && supported.includes(norm)) {
+        return norm.charAt(0).toUpperCase() + norm.slice(1);
+    }
+    return 'Default';
+}
+
+function setReasoningEffort(value) {
+    const valid = REASONING_EFFORTS.includes(value)
+        || (typeof getEffortOptions === 'function' && getEffortOptions().options.some(o => o.value === value && o.available));
+    if (!valid) value = 'Default';
+    localStorage.setItem('reasoning_effort', value);
+    if (typeof rootHandle !== 'undefined' && rootHandle && rootHandle.isWebDAV && typeof wsStorageName === 'function') {
+        const wsKey = wsStorageName(rootHandle);
+        if (wsKey) localStorage.setItem(`reasoning_effort_${wsKey}`, value);
+    }
+    renderEffortDropdown();
+}
+
+// Wire value for the request body: 'Default' sends nothing, otherwise the lowercase value ('' also means omit).
+function getReasoningEffortWireValue() {
+    const v = getReasoningEffort();
+    return v === 'Default' ? '' : v.toLowerCase();
+}
+
+// Known per-model capability lists, learned from "supported levels: ..." errors.
+// localStorage `reasoning_effort_caps`: { "Provider::model": ["low","medium","xhigh"] }
+const EFFORT_RANKS = { off: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 };
+
+function getEffortCaps() {
+    try {
+        const raw = localStorage.getItem('reasoning_effort_caps');
+        const obj = raw ? JSON.parse(raw) : {};
+        return (obj && typeof obj === 'object') ? obj : {};
+    } catch (e) { return {}; }
+}
+
+function getSupportedEfforts(providerName, modelName) {
+    const list = getEffortCaps()[`${providerName || ''}::${modelName || ''}`];
+    return Array.isArray(list) && list.length ? list : null;
+}
+
+function setSupportedEfforts(providerName, modelName, levels) {
+    const caps = getEffortCaps();
+    caps[`${providerName || ''}::${modelName || ''}`] = levels;
+    localStorage.setItem('reasoning_effort_caps', JSON.stringify(caps));
+}
+
+function clearSupportedEfforts(providerName, modelName) {
+    const caps = getEffortCaps();
+    const key = `${providerName || ''}::${modelName || ''}`;
+    if (key in caps) {
+        delete caps[key];
+        localStorage.setItem('reasoning_effort_caps', JSON.stringify(caps));
+        return true;
+    }
+    return false;
+}
+
+// Dropdown options for the active model: the base list plus any discovered levels,
+// each flagged available per the model's known capability list.
+function getEffortOptions() {
+    const info = (typeof getCurrentModelInfo === 'function') ? getCurrentModelInfo() : {};
+    const supported = getSupportedEfforts(info.providerName, info.model);
+    const options = REASONING_EFFORTS.map(v => ({
+        value: v,
+        available: !supported || v === 'Default' || supported.includes(v.toLowerCase())
+    }));
+    if (supported) {
+        supported.forEach(s => {
+            if (!REASONING_EFFORTS.some(v => v.toLowerCase() === s)) {
+                options.push({ value: s.charAt(0).toUpperCase() + s.slice(1), available: true });
+            }
+        });
+    }
+    return { options, supported };
+}
+
+// Nearest supported level by rank distance, or null if no ranking is possible.
+function closestSupportedEffort(value, supported) {
+    const cur = String(value || '').toLowerCase();
+    if (supported.includes(cur)) return cur;
+    const rank = EFFORT_RANKS[cur];
+    if (rank === undefined) return null;
+    let best = null, bestDiff = Infinity;
+    supported.forEach(s => {
+        const r = EFFORT_RANKS[s];
+        if (r === undefined) return;
+        const diff = Math.abs(r - rank);
+        if (diff < bestDiff) { best = s; bestDiff = diff; }
+    });
+    return best;
+}
+
+// Called from the chat runner when a model rejects the current reasoning_effort.
+// Records the model's supported levels and reverts the selection to the closest
+// supported level (or 'Default') so the automatic retry sends a valid value.
+function handleReasoningEffortError(message, providerName, modelName) {
+    const m = /supported levels:\s*([a-zA-Z][a-zA-Z]*(?:\s*,\s*[a-zA-Z][a-zA-Z]*)*)/.exec(String(message || ''));
+    if (!m) return false;
+    const supported = [...new Set(m[1].split(',').map(s => s.trim().toLowerCase()).filter(Boolean))];
+    if (!supported.length) return false;
+    setSupportedEfforts(providerName, modelName, supported);
+    const current = getReasoningEffort();
+    if (current !== 'Default' && !supported.includes(current.toLowerCase())) {
+        const fallback = closestSupportedEffort(current, supported) || 'Default';
+        setReasoningEffort(fallback);
+        if (typeof showToast === 'function') {
+            showToast(`Model ${shortenModelName(modelName) || modelName} supports: ${supported.join(', ')} — thinking level set to ${fallback}`, 'info');
+        }
+    }
+    renderEffortDropdown();
+    return true;
+}
+
+function renderEffortDropdown() {
+    const nameEl = document.getElementById('esb-name');
+    const iconEl = document.getElementById('esb-icon');
+    const btn = document.getElementById('effort-select-btn');
+    if (!nameEl) return;
+    let value = getReasoningEffort();
+    // If the active model is known not to support the current level, revert to the
+    // closest supported one (or Default) so the button always reflects what will be sent.
+    const info = (typeof getCurrentModelInfo === 'function') ? getCurrentModelInfo() : {};
+    const supported = getSupportedEfforts(info.providerName, info.model);
+    if (supported && value !== 'Default' && !supported.includes(value.toLowerCase())) {
+        const fallback = closestSupportedEffort(value, supported) || 'Default';
+        setReasoningEffort(fallback);
+        return; // setReasoningEffort re-renders with the now-valid value
+    }
+    nameEl.textContent = value;
+    // The icon only shows on narrow screens (mobile-overrides.css forces it with
+    // !important); inline display still applies on wide screens, where "Default"
+    // is the text alone.
+    if (iconEl) iconEl.style.display = value === 'Default' ? 'none' : '';
+    if (nameEl) nameEl.style.display = value === 'Default' ? '' : 'none';
+    if (btn) {
+        btn.title = value === 'Default'
+            ? 'Thinking level: model default'
+            : `Thinking level: ${value} (sent as reasoning_effort: ${value.toLowerCase()})`;
+    }
+    if (typeof _effortSelectState !== 'undefined' && _effortSelectState.visible) renderEffortSelectList();
 }
 
 function getCurrentModelInfo(sessionId) {
@@ -331,7 +498,8 @@ function getCurrentModelInfo(sessionId) {
             vision: entry.vision,
             useProxy: !!entry.useProxy,
             providerName: entry.providerName,
-            displayName: entry.displayName || shortenModelName(entry.name)
+            displayName: entry.displayName || shortenModelName(entry.name),
+            reasoningEffort: getReasoningEffort()
         }
         : {
             url: '',
@@ -341,7 +509,8 @@ function getCurrentModelInfo(sessionId) {
             vision: false,
             useProxy: false,
             providerName: '',
-            displayName: 'No model'
+            displayName: 'No model',
+            reasoningEffort: getReasoningEffort()
         };
 }
 
@@ -509,6 +678,17 @@ window.findModelEntryById = findModelEntryById;
 window.getSelectedModelKey = getSelectedModelKey;
 window.setSelectedModel = setSelectedModel;
 window.renderModelDropdown = renderModelDropdown;
+window.REASONING_EFFORTS = REASONING_EFFORTS;
+window.getReasoningEffort = getReasoningEffort;
+window.setReasoningEffort = setReasoningEffort;
+window.getReasoningEffortWireValue = getReasoningEffortWireValue;
+window.getSupportedEfforts = getSupportedEfforts;
+window.setSupportedEfforts = setSupportedEfforts;
+window.clearSupportedEfforts = clearSupportedEfforts;
+window.getEffortOptions = getEffortOptions;
+window.closestSupportedEffort = closestSupportedEffort;
+window.handleReasoningEffortError = handleReasoningEffortError;
+window.renderEffortDropdown = renderEffortDropdown;
 window.getCurrentModelInfo = getCurrentModelInfo;
 window.currentModelHasVision = currentModelHasVision;
 window.applyVisionCapabilityToUI = applyVisionCapabilityToUI;

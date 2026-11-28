@@ -145,18 +145,23 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                 const reqUrl = useProxy ? '/proxy' : targetUrl;
                 if (useProxy) headers["x-proxy-target"] = targetUrl;
                 
+                const requestBody = {
+                    model: model,
+                    messages: reqMessages,
+                    tools: activeTools,
+                    tool_choice: "auto",
+                    stream: true,
+                    stream_options: { include_usage: true }
+                };
+                // Thinking level: 'Default' (or empty) sends nothing; otherwise the lowercase value.
+                const wireEffort = typeof getReasoningEffortWireValue === 'function' ? getReasoningEffortWireValue() : '';
+                if (wireEffort) requestBody.reasoning_effort = wireEffort;
+
                 resp = await fetch(reqUrl, {
                     method: "POST",
                     headers: headers,
                     signal: runGen.activeController.signal,
-                    body: JSON.stringify({
-                        model: model,
-                        messages: reqMessages,
-                        tools: activeTools,
-                        tool_choice: "auto",
-                        stream: true,
-                        stream_options: { include_usage: true }
-                    })
+                    body: JSON.stringify(requestBody)
                 });
             } catch(fetchErr) {
                 if (fetchErr.name === 'AbortError') {
@@ -172,7 +177,13 @@ async function runTask(task, msgId, imageUrls, sessionId) {
 
             if (!resp.ok) {
                 const errJson = await resp.json().catch(() => ({}));
-                throw new Error(errJson.error?.message || `HTTP ${resp.status}`);
+                const errMsg = errJson.error?.message || `HTTP ${resp.status}`;
+                // A model rejecting the reasoning_effort level ("supported levels: low, medium, xhigh")
+                // teaches us its capability list and reverts to a supported level before the retry.
+                if (typeof handleReasoningEffortError === 'function' && /reasoning_effort/i.test(errMsg)) {
+                    try { handleReasoningEffortError(errMsg, providerName, model); } catch (_) {}
+                }
+                throw new Error(errMsg);
             }
 
             // Reconnected: strip the retry/reconnect message.
