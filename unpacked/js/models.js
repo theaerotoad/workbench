@@ -438,9 +438,9 @@ function renderEffortDropdown() {
         return; // setReasoningEffort re-renders with the now-valid value
     }
     nameEl.textContent = value;
-    // The icon only shows on narrow screens (mobile-overrides.css forces it with
-    // !important); inline display still applies on wide screens, where "Default"
-    // is the text alone.
+    // Wide screen: "Default" shows as text, other levels show the lightbulb icon
+    // only. When the pane is compact (mobile-overrides.css / .prompt-narrow) the
+    // CSS forces the icon with !important, overriding the inline display below.
     if (iconEl) iconEl.style.display = value === 'Default' ? 'none' : '';
     if (nameEl) nameEl.style.display = value === 'Default' ? '' : 'none';
     if (btn) {

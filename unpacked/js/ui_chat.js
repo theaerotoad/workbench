@@ -383,6 +383,16 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// The chat pane can get narrow even on a wide screen (e.g. both sidebars open),
+// which @media queries can't see. Toggle a class on the prompt bar when it is
+// constrained so the top row can shed secondary details (see .prompt-narrow CSS).
+const promptBarEl = document.getElementById('prompt-bar');
+if (promptBarEl && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+        promptBarEl.classList.toggle('prompt-narrow', promptBarEl.offsetWidth < 950);
+    }).observe(promptBarEl);
+}
+
 modelSelectBtn.addEventListener('click', () => {
     if (_modelSelectState.visible) closeModelSelect(); else openModelSelect();
 });

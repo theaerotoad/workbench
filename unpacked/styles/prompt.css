@@ -191,6 +191,21 @@
     border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     flex-direction: column; overflow: hidden;
 }
+/* Compact top row when the chat pane itself is constrained (e.g. both sidebars
+   open on a wide screen) — toggled by a ResizeObserver in ui_chat.js. Only
+   relevant on wide viewports; @media (max-width: 768px) already handles phones. */
+@media (min-width: 769px) {
+    #prompt-bar.prompt-narrow #status-info { display: none; }
+    #prompt-bar.prompt-narrow #effort-select-btn { max-width: none; padding: 4px 8px; }
+    #prompt-bar.prompt-narrow #effort-select-btn .esb-name { display: none; }
+    #prompt-bar.prompt-narrow #effort-select-btn .esb-caret { display: none; }
+    /* Lightbulb always (even at "Default"), like the phone layout */
+    #prompt-bar.prompt-narrow #effort-select-btn .esb-icon { display: inline-block !important; font-size: 16px; }
+    #prompt-bar.prompt-narrow #model-select-btn .msb-provider { display: none; }
+    #prompt-bar.prompt-narrow #effort-select-dropdown { width: 150px; }
+    #prompt-bar.prompt-narrow #model-select-dropdown { width: min(360px, 80vw); }
+}
+
 #effort-select-list { padding: 4px; }
 .esb-item {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
