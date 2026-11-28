@@ -1,7 +1,7 @@
 // grep - tool definition.
 const TOOL_META = {
     "name": "grep",
-    "description": "Search for regex or text string across files with line numbers. Supports context lines, glob include filters, files-only summaries, and per-file match caps.",
+    "description": "Search for regex or text string across text files and PDFs with line numbers (PDF matches report file.pdf:pN:line, ready for view_pdf). Supports context lines, glob include filters, files-only summaries, and per-file match caps.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -67,6 +67,13 @@ const TOOL_META = {
             "min": 0,
             "max": 500,
             "description": "How many matches are shown in the chat box (the model always receives the full result)."
+        },
+        {
+            "key": "searchPdfs",
+            "label": "Search PDF Files",
+            "type": "boolean",
+            "default": true,
+            "description": "Extract and search text inside .pdf files (results include page numbers as file.pdf:pN:line)."
         }
     ]
 };
@@ -145,7 +152,31 @@ function buildContextHunks(totalLines, hitIndices, context) {
     return hunks;
 }
 
-const GREP_BINARY_EXT = /\.(png|jpg|jpeg|gif|ico|bmp|webp|tif|tiff|heic|avif|psd|pdf|zip|tar|gz|xz|bz2|zst|lzma|7z|rar|exe|dll|so|dylib|mp4|mkv|webm|mp3|m4a|aac|wav|flac|ogg|avi|mov|pyc|pyo|ttf|otf|woff|woff2|eot|sqlite|sqlite3|gguf|ggml|ppu|o|a|lib|class|jar|wasm|node|swf|iso|apk|dmg|pkl|npy|npz|parquet|onnx|safetensors|docx|xlsx|pptx|odt|ods|odp|mdb|accdb|dds|tga|pdb)$/i;
+const GREP_BINARY_EXT = /\.(png|jpg|jpeg|gif|ico|bmp|webp|tif|tiff|heic|avif|psd|zip|tar|gz|xz|bz2|zst|lzma|7z|rar|exe|dll|so|dylib|mp4|mkv|webm|mp3|m4a|aac|wav|flac|ogg|avi|mov|pyc|pyo|ttf|otf|woff|woff2|eot|sqlite|sqlite3|gguf|ggml|ppu|o|a|lib|class|jar|wasm|node|swf|iso|apk|dmg|pkl|npy|npz|parquet|onnx|safetensors|docx|xlsx|pptx|odt|ods|odp|mdb|accdb|dds|tga|pdb)$/i;
+const GREP_PDF_EXT = /\.pdf$/i;
+
+function formatPageRanges(pageSet, maxRanges = 12) {
+    const nums = Array.from(pageSet).sort((a, b) => a - b);
+    if (!nums.length) return '';
+    const ranges = [];
+    let start = nums[0];
+    let prev = nums[0];
+    for (let i = 1; i < nums.length; i++) {
+        const cur = nums[i];
+        if (cur === prev) continue;
+        if (cur === prev + 1) {
+            prev = cur;
+        } else {
+            ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+            start = prev = cur;
+        }
+    }
+    ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+    if (ranges.length > maxRanges) {
+        return ranges.slice(0, maxRanges).join(', ') + ', …';
+    }
+    return ranges.join(', ');
+}
 
 function isErrorResult(txt) {
     return typeof txt !== 'string' || (txt.length < 500 && /^ERROR: [^\n]*$/.test(txt));
@@ -205,18 +236,30 @@ async function handler(args, api) {
     const contextLines = Number.isInteger(args.context) && args.context > 0 ? Math.min(args.context, 20) : 0;
     const filesOnly = args.files_only === true;
     const maxPerFile = Number.isInteger(args.max_per_file) && args.max_per_file > 0 ? args.max_per_file : Infinity;
+    const rawSearchPdfs = await api.getSetting('searchPdfs');
+    const searchPdfs = (rawSearchPdfs === undefined ? true : !!rawSearchPdfs) && typeof api.pdfText === 'function';
     const pathFilter = normalizePathPrefix(args.path);
     const includeFilter = compileIncludeFilter(args.include);
 
     // Filter by path prefix, include, and known-binary extensions BEFORE hitting api.isBinary/readFile.
     const allFiles = await api.listFiles();
     const underPrefix = (fp) => fp === pathFilter || fp.startsWith(pathFilter + '/');
-    const candidates = allFiles.filter(fp => {
-        if (GREP_BINARY_EXT.test(fp)) return false;
-        if (pathFilter && !underPrefix(fp)) return false;
-        if (includeFilter && !includeFilter(fp)) return false;
-        return true;
-    });
+    const textCandidates = [];
+    const pdfCandidates = [];
+    let skippedPdfsDisabled = 0;
+
+    for (const fp of allFiles) {
+        if (GREP_BINARY_EXT.test(fp)) continue;
+        if (pathFilter && !underPrefix(fp)) continue;
+        if (includeFilter && !includeFilter(fp)) continue;
+        if (GREP_PDF_EXT.test(fp)) {
+            if (searchPdfs) pdfCandidates.push(fp);
+            else skippedPdfsDisabled++;
+        } else {
+            textCandidates.push(fp);
+        }
+    }
+    const totalCandidates = textCandidates.length + pdfCandidates.length;
 
     // path is a prefix; if nothing is under it but the string appears elsewhere, say so.
     let pathHint = '';
@@ -234,16 +277,20 @@ async function handler(args, api) {
     const header = `pattern "${args.pattern}" in ${scope}`;
     await api.setHeaderMsg(header);
 
-    const matches = [];       // { fp, n, text } (used when !filesOnly && contextLines === 0)
-    const fileGroups = [];    // { fp, count, capped, hunks: [{ start, end, hits, lines }] }
+    const matches = [];       // { fp, page?, n, text } (used when !filesOnly && contextLines === 0)
+    const fileGroups = [];    // { fp, count, capped, pagesLabel?, hunks: [{ lines: [{ page?, n, text, isMatch }] }] }
     const fileCounts = new Map();
+    const skippedPdfErrors = []; // { fp, reason }
+    const scannedPdfsNoHits = [];
     let totalMatches = 0;
     let truncated = false;
     let searched = 0;
+    let pdfsSearched = 0;
 
+    // 1. Search text files in fast concurrent batches.
     const BATCH = 20;
-    for (let start = 0; start < candidates.length && !truncated; start += BATCH) {
-        const slice = candidates.slice(start, start + BATCH);
+    for (let start = 0; start < textCandidates.length && !truncated; start += BATCH) {
+        const slice = textCandidates.slice(start, start + BATCH);
         const batchData = await Promise.all(slice.map(async (fp) => {
             if (await api.isBinary(fp)) return { fp, skip: true };
             const txt = await api.readFile(fp);
@@ -315,8 +362,120 @@ async function handler(args, api) {
             if (truncated) break;
         }
 
-        if (!truncated && start + BATCH < candidates.length) {
-            await api.setHeaderMsg(`${header} (${searched}/${candidates.length} files scanned)`);
+        if (!truncated && start + BATCH < textCandidates.length) {
+            await api.setHeaderMsg(`${header} (${searched}/${totalCandidates} files scanned)`);
+        }
+    }
+
+    // 2. Search PDF files in small batches (2 at a time) to avoid thrashing PDF.js memory/LRU cache.
+    const PDF_BATCH = 2;
+    for (let start = 0; start < pdfCandidates.length && !truncated; start += PDF_BATCH) {
+        const slice = pdfCandidates.slice(start, start + PDF_BATCH);
+        if (pdfCandidates.length > 0) {
+            const labelFp = slice[0].split('/').pop() || slice[0];
+            await api.setHeaderMsg(`${header} (PDF ${start + 1}/${pdfCandidates.length}: ${labelFp})`);
+        }
+
+        const pdfBatchData = await Promise.all(slice.map(async (fp) => {
+            try {
+                const res = await api.pdfText(fp, { pages: 'all' });
+                if (!res || res.error) {
+                    return { fp, error: (res && res.error) || 'Failed to read PDF' };
+                }
+                return { fp, res };
+            } catch (e) {
+                return { fp, error: e.message || String(e) };
+            }
+        }));
+
+        for (const item of pdfBatchData) {
+            const { fp, res, error } = item;
+            if (error) {
+                skippedPdfErrors.push({ fp, reason: String(error).replace(/^ERROR:\s*/, '') });
+                continue;
+            }
+            searched++;
+            pdfsSearched++;
+            const pdfPages = Array.isArray(res.pages) ? res.pages : [];
+            const allLowText = pdfPages.length > 0 && pdfPages.every(p => p.lowText);
+
+            if (filesOnly) {
+                let count = 0;
+                const matchedPages = new Set();
+                for (const p of pdfPages) {
+                    if (!p.text) continue;
+                    const lines = p.text.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
+                        if (re.test(line)) {
+                            count++;
+                            matchedPages.add(p.page);
+                        }
+                    }
+                }
+                if (count > 0) {
+                    if (fileGroups.length >= maxLines) {
+                        truncated = true;
+                        break;
+                    }
+                    fileGroups.push({ fp, count, capped: false, pagesLabel: formatPageRanges(matchedPages), hunks: [] });
+                    fileCounts.set(fp, count);
+                    totalMatches += count;
+                } else if (allLowText) {
+                    scannedPdfsNoHits.push(fp);
+                }
+                continue;
+            }
+
+            let fileHitCount = 0;
+            let capped = false;
+            const fileHunks = [];
+
+            for (const p of pdfPages) {
+                if (!p.text) continue;
+                const lines = p.text.split('\n');
+                const pageHits = [];
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
+                    if (re.test(line)) {
+                        if (totalMatches >= maxLines) {
+                            truncated = true;
+                            break;
+                        }
+                        if (fileHitCount >= maxPerFile) {
+                            capped = true;
+                            break;
+                        }
+                        pageHits.push(i);
+                        fileHitCount++;
+                        totalMatches++;
+                        matches.push({ fp, page: p.page, n: i + 1, text: line.replace(/\s+$/, '') });
+                    }
+                }
+
+                if (contextLines > 0 && pageHits.length > 0) {
+                    for (const h of buildContextHunks(lines.length, pageHits, contextLines)) {
+                        const hunkLines = [];
+                        for (let idx = h.start; idx <= h.end; idx++) {
+                            const raw = lines[idx].endsWith('\r') ? lines[idx].slice(0, -1) : lines[idx];
+                            hunkLines.push({ page: p.page, n: idx + 1, text: raw, isMatch: h.hits.has(idx) });
+                        }
+                        fileHunks.push({ lines: hunkLines });
+                    }
+                }
+
+                if (truncated || capped) break;
+            }
+
+            if (fileHitCount > 0) {
+                fileCounts.set(fp, fileHitCount);
+                fileGroups.push({ fp, count: fileHitCount, capped, hunks: fileHunks });
+            } else if (allLowText) {
+                scannedPdfsNoHits.push(fp);
+            }
+
+            if (truncated) break;
         }
     }
 
@@ -325,7 +484,7 @@ async function handler(args, api) {
     let rawOutput;
     if (filesOnly) {
         rawOutput = fileGroups.length
-            ? fileGroups.map(g => `${g.fp}  (${g.count} match${g.count === 1 ? '' : 'es'})`).join('\n')
+            ? fileGroups.map(g => `${g.fp}  (${g.count} match${g.count === 1 ? '' : 'es'}${g.pagesLabel ? `; pages ${g.pagesLabel}` : ''})`).join('\n')
             : noMatches;
     } else if (contextLines > 0) {
         if (!fileGroups.length) {
@@ -334,7 +493,7 @@ async function handler(args, api) {
             const sections = fileGroups.map(g => {
                 const headerLine = g.capped ? `${g.fp}  (capped at ${maxPerFile} matches)` : g.fp;
                 const hunkStrs = g.hunks.map(h =>
-                    h.lines.map(l => `${l.n}${l.isMatch ? ':' : '-'} ${l.text}`).join('\n')
+                    h.lines.map(l => `${l.page ? `p${l.page}:` : ''}${l.n}${l.isMatch ? ':' : '-'} ${l.text}`).join('\n')
                 );
                 return headerLine + '\n' + hunkStrs.join('\n--\n');
             });
@@ -345,7 +504,7 @@ async function handler(args, api) {
             rawOutput = noMatches;
         } else {
             const cappedFiles = fileGroups.filter(g => g.capped);
-            rawOutput = matches.map(m => `${m.fp}:${m.n}: ${m.text}`).join('\n');
+            rawOutput = matches.map(m => `${m.fp}:${m.page ? `p${m.page}:` : ''}${m.n}: ${m.text}`).join('\n');
             if (cappedFiles.length > 0) {
                 rawOutput += `\n\n[capped at ${maxPerFile} matches/file in ${cappedFiles.length} file${cappedFiles.length === 1 ? '' : 's'}: ${cappedFiles.map(g => g.fp).slice(0, 10).join(', ')}${cappedFiles.length > 10 ? '…' : ''}]`;
             }
@@ -354,9 +513,22 @@ async function handler(args, api) {
 
     if (pathHint) rawOutput = pathHint;
 
-    // Notices go first: regex fallback, then truncation, then results.
+    // Notices go first: regex fallback, PDF notes, truncation, then results.
     const topNotices = [];
     if (regexFallbackNote) topNotices.push(regexFallbackNote);
+    if (skippedPdfsDisabled > 0 && pathFilter && GREP_PDF_EXT.test(pathFilter)) {
+        topNotices.push(`[note: PDF searching is disabled in grep settings (searchPdfs=false); enable it or use view_pdf(filepath="${pathFilter}").]`);
+    }
+    if (skippedPdfErrors.length > 0) {
+        const shown = skippedPdfErrors.slice(0, 5).map(e => `${e.fp} (${e.reason})`).join('; ');
+        const more = skippedPdfErrors.length > 5 ? `; +${skippedPdfErrors.length - 5} more` : '';
+        topNotices.push(`[note: skipped ${skippedPdfErrors.length} unreadable PDF${skippedPdfErrors.length === 1 ? '' : 's'}: ${shown}${more}]`);
+    }
+    if (scannedPdfsNoHits.length > 0) {
+        const shown = scannedPdfsNoHits.slice(0, 5).join(', ');
+        const more = scannedPdfsNoHits.length > 5 ? `, +${scannedPdfsNoHits.length - 5} more` : '';
+        topNotices.push(`[note: ${scannedPdfsNoHits.length} PDF${scannedPdfsNoHits.length === 1 ? '' : 's'} had little/no extractable text (likely scanned): ${shown}${more}; inspect visually with view_pdf(..., mode="image").]`);
+    }
     if (truncated) {
         topNotices.push(filesOnly
             ? `[TRUNCATED: showing first ${maxLines} matching files; more exist. Narrow with path/include.]`
@@ -379,7 +551,7 @@ async function handler(args, api) {
         rowsHtml = shown.map(g => `
             <div class="tool-ui-row">
                 <div class="tool-ui-path">${pathHtml(g.fp)}</div>
-                <span style="color:var(--dim); font-size:10px; flex-shrink:0; margin-left:8px;">${g.count} match${g.count === 1 ? '' : 'es'}</span>
+                <span style="color:var(--dim); font-size:10px; flex-shrink:0; margin-left:8px;">${g.count} match${g.count === 1 ? '' : 'es'}${g.pagesLabel ? ` · p. ${esc(g.pagesLabel)}` : ''}</span>
             </div>`).join('');
         if (hidden > 0) {
             rowsHtml += `<div class="tool-ui-more">… ${hidden} more file${hidden === 1 ? '' : 's'} (full list was sent to the model)</div>`;
@@ -409,9 +581,11 @@ async function handler(args, api) {
                     shownRows++;
                     const style = l.isMatch ? '' : ' style="opacity:0.55;"';
                     const content = l.isMatch ? highlight(l.text, re) : esc(l.text.length > 200 ? l.text.slice(0, 200) + '…' : l.text);
+                    const locLabel = l.page ? `p${l.page}:${l.n}` : `${l.n}`;
+                    const locTitle = l.page ? ` title="Page ${l.page}, line ${l.n}"` : '';
                     rowsHtml += `
                         <div class="tool-ui-line-row"${style}>
-                            <div class="tool-ui-line-no">${l.n}</div>
+                            <div class="tool-ui-line-no"${locTitle}>${locLabel}</div>
                             <div class="tool-ui-line-content">${content}</div>
                         </div>`;
                 }
@@ -437,9 +611,11 @@ async function handler(args, api) {
                         <span style="color:var(--dim); font-size:10px; flex-shrink:0; margin-left:8px;">${fileCounts.get(m.fp)}</span>
                     </div>`;
             }
+            const locLabel = m.page ? `p${m.page}:${m.n}` : `${m.n}`;
+            const locTitle = m.page ? ` title="Page ${m.page}, line ${m.n}"` : '';
             rowsHtml += `
                 <div class="tool-ui-line-row">
-                    <div class="tool-ui-line-no">${m.n}</div>
+                    <div class="tool-ui-line-no"${locTitle}>${locLabel}</div>
                     <div class="tool-ui-line-content">${highlight(m.text, re)}</div>
                 </div>`;
         });
@@ -473,7 +649,7 @@ async function handler(args, api) {
             <div style="display:flex; align-items:center; justify-content:space-between; font-size:10.5px; color:var(--dim); padding:0 2px;">
                 <div style="display:flex; align-items:center; gap:4px;">
                     <span class="icon" style="font-size:12px; color:var(--green);">check_circle</span>
-                    <span>Searched ${searched} file${searched === 1 ? '' : 's'}</span>
+                    <span>Searched ${searched} file${searched === 1 ? '' : 's'}${pdfsSearched ? ` (incl. ${pdfsSearched} PDF${pdfsSearched === 1 ? '' : 's'})` : ''}</span>
                 </div>
             </div>
         </div>`;

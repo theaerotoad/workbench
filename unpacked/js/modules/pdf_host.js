@@ -2,6 +2,8 @@ const PDFJS_VERSION = '6.5.438';
 const PDFJS_BASE = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}`;
 const MAX_PDF_BYTES = 64 * 1024 * 1024;
 const MAX_CACHED_DOCS = 3;
+const MAX_TEXT_CACHE_DOCS = 64;
+const MAX_TEXT_CACHE_CHARS = 10 * 1024 * 1024;
 const MAX_OUTLINE_ITEMS = 80;
 const MAX_RENDER_SIDE = 1568;
 const JPEG_QUALITY = 0.85;
@@ -14,6 +16,9 @@ let _lastRootHandle = null;
 const _docCache = new Map();
 // cacheKey -> Promise<entry>
 const _inFlightLoads = new Map();
+// cacheKey -> { key, numPages, pagesByNum: Map<number, { page, text, charCount, lowText }>, charCount, complete, lastUsed }
+const _textCache = new Map();
+let _textCacheTotalChars = 0;
 
 async function loadPdfJs() {
     if (_pdfjsPromise) return _pdfjsPromise;
@@ -134,6 +139,52 @@ function clearPdfCache() {
         destroyEntryIfIdle(entry);
     }
     _docCache.clear();
+    _textCache.clear();
+    _textCacheTotalChars = 0;
+}
+
+function evictTextCacheIfNeeded(keepKey = null) {
+    while (_textCache.size > MAX_TEXT_CACHE_DOCS || _textCacheTotalChars > MAX_TEXT_CACHE_CHARS) {
+        let oldest = null;
+        for (const entry of _textCache.values()) {
+            if (entry.key === keepKey) continue;
+            if (!oldest || entry.lastUsed < oldest.lastUsed) {
+                oldest = entry;
+            }
+        }
+        if (!oldest) break;
+        _textCache.delete(oldest.key);
+        _textCacheTotalChars = Math.max(0, _textCacheTotalChars - oldest.charCount);
+    }
+}
+
+function storePageTextInCache(key, numPages, pageRecord) {
+    let entry = _textCache.get(key);
+    if (!entry) {
+        entry = {
+            key,
+            numPages,
+            pagesByNum: new Map(),
+            charCount: 0,
+            complete: false,
+            lastUsed: Date.now()
+        };
+        _textCache.set(key, entry);
+    }
+    entry.numPages = numPages;
+    entry.lastUsed = Date.now();
+    const prev = entry.pagesByNum.get(pageRecord.page);
+    if (prev) {
+        entry.charCount -= prev.charCount;
+        _textCacheTotalChars = Math.max(0, _textCacheTotalChars - prev.charCount);
+    }
+    entry.pagesByNum.set(pageRecord.page, pageRecord);
+    entry.charCount += pageRecord.charCount;
+    _textCacheTotalChars += pageRecord.charCount;
+    if (entry.pagesByNum.size >= numPages) {
+        entry.complete = true;
+    }
+    evictTextCacheIfNeeded(key);
 }
 
 function ensureWorkspaceCacheCurrent() {
@@ -302,11 +353,11 @@ async function resolvePdfSource(fp, password) {
     };
 }
 
-async function acquirePdfDoc(fp, password, signal) {
+async function acquirePdfDoc(fp, password, signal, preResolvedSrc = null) {
     ensureWorkspaceCacheCurrent();
     if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 
-    const src = await resolvePdfSource(fp, password);
+    const src = preResolvedSrc || await resolvePdfSource(fp, password);
     if (src.error) throw new Error(src.error);
 
     const existing = _docCache.get(src.key);
@@ -561,72 +612,155 @@ async function pdfInfo(fp, opts = {}, signal = null) {
     });
 }
 
-async function pdfText(fp, opts = {}, signal = null) {
+function resolveTargetPageList(rawPages, numPages) {
+    if (rawPages === 'all' || rawPages === undefined || rawPages === null) {
+        const all = [];
+        for (let p = 1; p <= numPages; p++) all.push(p);
+        return { pages: all };
+    }
+    if (!Array.isArray(rawPages)) {
+        return { error: 'ERROR: pages must be an array of 1-based page numbers or "all".' };
+    }
+    const targetPages = [];
+    const seen = new Set();
+    for (const p of rawPages) {
+        const n = Number(p);
+        if (Number.isInteger(n) && n >= 1 && n <= numPages && !seen.has(n)) {
+            seen.add(n);
+            targetPages.push(n);
+        }
+    }
+    return { pages: targetPages };
+}
+
+function buildBudgetedTextResult(numPages, targetPages, pagesByNum, maxChars) {
+    const pages = [];
+    let totalChars = 0;
+    let truncatedByChars = false;
+
+    for (const pageNum of targetPages) {
+        const rec = pagesByNum.get(pageNum);
+        if (!rec) continue;
+        let text = rec.text;
+        if (maxChars !== null && totalChars + text.length > maxChars) {
+            const remaining = Math.max(0, maxChars - totalChars);
+            if (pages.length > 0 && remaining < 200) {
+                truncatedByChars = true;
+                break;
+            }
+            text = text.slice(0, remaining);
+            truncatedByChars = true;
+        }
+        totalChars += text.length;
+        pages.push({
+            page: pageNum,
+            text,
+            charCount: text.length,
+            lowText: rec.lowText
+        });
+        if (truncatedByChars) break;
+    }
+
+    return { numPages, pages, totalChars, truncatedByChars };
+}
+
+async function pdfText(rawFp, opts = {}, signal = null) {
+    const fp = normalizeFp(rawFp);
+    const accessErr = checkPdfPathAccess(fp);
+    if (accessErr) return { error: accessErr };
+
     const password = typeof opts?.password === 'string' ? opts.password : undefined;
     const rawPages = opts?.pages;
+    if (rawPages !== 'all' && rawPages !== undefined && rawPages !== null && !Array.isArray(rawPages)) {
+        return { error: 'ERROR: pages must be an array of 1-based page numbers or "all".' };
+    }
     const maxChars = (typeof opts?.maxChars === 'number' && Number.isFinite(opts.maxChars) && opts.maxChars > 0)
         ? Math.floor(opts.maxChars)
         : null;
 
-    return withPdfDoc(fp, password, signal, async (entry) => {
+    ensureWorkspaceCacheCurrent();
+    if (signal?.aborted) return { error: 'ERROR: PDF operation was cancelled.' };
+
+    const src = await resolvePdfSource(fp, password);
+    if (src.error) return { error: src.error };
+
+    // Fast path: serve from extracted-text LRU cache without reopening PDFDocumentProxy or hitting WebDAV.
+    const cachedText = _textCache.get(src.key);
+    if (cachedText) {
+        const wantAll = rawPages === 'all' || rawPages === undefined || rawPages === null;
+        const resolved = resolveTargetPageList(rawPages, cachedText.numPages);
+        if (!resolved.error) {
+            const hasAllNeeded = wantAll
+                ? cachedText.complete
+                : resolved.pages.every(p => cachedText.pagesByNum.has(p));
+            if (hasAllNeeded) {
+                cachedText.lastUsed = Date.now();
+                return buildBudgetedTextResult(cachedText.numPages, resolved.pages, cachedText.pagesByNum, maxChars);
+            }
+        }
+    }
+
+    let entry = null;
+    try {
+        entry = await acquirePdfDoc(fp, password, signal, src);
         const doc = entry.doc;
         const numPages = doc.numPages;
 
-        let targetPages = [];
-        if (rawPages === 'all' || rawPages === undefined || rawPages === null) {
-            for (let p = 1; p <= numPages; p++) targetPages.push(p);
-        } else if (Array.isArray(rawPages)) {
-            const seen = new Set();
-            for (const p of rawPages) {
-                const n = Number(p);
-                if (Number.isInteger(n) && n >= 1 && n <= numPages && !seen.has(n)) {
-                    seen.add(n);
-                    targetPages.push(n);
-                }
-            }
-        } else {
-            return { error: 'ERROR: pages must be an array of 1-based page numbers or "all".' };
-        }
+        const resolved = resolveTargetPageList(rawPages, numPages);
+        if (resolved.error) return { error: resolved.error };
+        const targetPages = resolved.pages;
 
         const pages = [];
         let totalChars = 0;
         let truncatedByChars = false;
+        const cacheEntry = _textCache.get(src.key);
 
         for (const pageNum of targetPages) {
             if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 
-            let page = null;
-            try {
-                page = await doc.getPage(pageNum);
-                const tc = await page.getTextContent();
-                let text = reconstructPageText(tc);
-                const nonWsLen = text.replace(/\s+/g, '').length;
-                const lowText = nonWsLen < 20;
-
-                if (maxChars !== null && totalChars + text.length > maxChars) {
-                    const remaining = Math.max(0, maxChars - totalChars);
-                    if (pages.length > 0 && remaining < 200) {
-                        truncatedByChars = true;
-                        break;
+            let rec = cacheEntry?.pagesByNum?.get(pageNum) || null;
+            if (!rec) {
+                let page = null;
+                try {
+                    page = await doc.getPage(pageNum);
+                    const tc = await page.getTextContent();
+                    const fullText = reconstructPageText(tc);
+                    const nonWsLen = fullText.replace(/\s+/g, '').length;
+                    rec = {
+                        page: pageNum,
+                        text: fullText,
+                        charCount: fullText.length,
+                        lowText: nonWsLen < 20
+                    };
+                    // Always cache full untruncated page text so later grep / view_pdf calls stay accurate.
+                    storePageTextInCache(src.key, numPages, rec);
+                } finally {
+                    if (page) {
+                        try { page.cleanup(); } catch (_) {}
                     }
-                    text = text.slice(0, remaining);
-                    truncatedByChars = true;
-                }
-
-                totalChars += text.length;
-                pages.push({
-                    page: pageNum,
-                    text,
-                    charCount: text.length,
-                    lowText
-                });
-
-                if (truncatedByChars) break;
-            } finally {
-                if (page) {
-                    try { page.cleanup(); } catch (_) {}
                 }
             }
+
+            let text = rec.text;
+            if (maxChars !== null && totalChars + text.length > maxChars) {
+                const remaining = Math.max(0, maxChars - totalChars);
+                if (pages.length > 0 && remaining < 200) {
+                    truncatedByChars = true;
+                    break;
+                }
+                text = text.slice(0, remaining);
+                truncatedByChars = true;
+            }
+
+            totalChars += text.length;
+            pages.push({
+                page: pageNum,
+                text,
+                charCount: text.length,
+                lowText: rec.lowText
+            });
+
+            if (truncatedByChars) break;
         }
 
         return {
@@ -635,7 +769,19 @@ async function pdfText(fp, opts = {}, signal = null) {
             totalChars,
             truncatedByChars
         };
-    });
+    } catch (err) {
+        if (!(err?.name === 'AbortError' && signal?.aborted)) {
+            console.error('[pdf_host] error for', fp, err);
+        }
+        return { error: formatPdfError(fp, err, signal) };
+    } finally {
+        if (entry) {
+            entry.refs = Math.max(0, entry.refs - 1);
+            if (entry.pendingDestroy && entry.refs === 0) {
+                destroyEntryIfIdle(entry);
+            }
+        }
+    }
 }
 
 function clampVal(v, lo, hi) {
