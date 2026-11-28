@@ -64,10 +64,14 @@ async function runTool(runId, toolMeta, args) {
     const api = {
         mode: toolMeta.mode,
         planFile: toolMeta.planFile,
+        hasVision: !!toolMeta.hasVision,
         readFile: (fp) => callApi(runId, 'readFile', [fp]),
         readFileBytes: (fp) => callApi(runId, 'readFileBytes', [fp]),
         // Reads an image (path-safety checked) and returns it cropped/scaled: { dataUrl, width, height, sourceWidth, sourceHeight, crop } or { error }.
         readImage: (fp, crop, opts) => callApi(runId, 'readImage', [fp, crop || {}, opts || {}]),
+        pdfInfo: (fp, opts) => callApi(runId, 'pdfInfo', [fp, opts || {}]),
+        pdfText: (fp, opts) => callApi(runId, 'pdfText', [fp, opts || {}]),
+        pdfRenderPage: (fp, pageNum, opts) => callApi(runId, 'pdfRenderPage', [fp, pageNum, opts || {}]),
         writeFile: (fp, content) => callApi(runId, 'writeFile', [fp, content]),
         renameFile: (oldPath, newPath) => callApi(runId, 'renameFile', [oldPath, newPath]),
         deleteFile: (fp, opts) => callApi(runId, 'deleteFile', [fp, opts || {}]),
@@ -106,20 +110,33 @@ async function runTool(runId, toolMeta, args) {
         );
         const raw = await factory(args, api);
 
-        let output, displayHtml = null, summary = null, image = null;
+        let output, displayHtml = null, summary = null, image = null, images = null;
         if (raw && typeof raw === 'object' && !Array.isArray(raw) && 'output' in raw) {
             output = raw.output === undefined ? '(no output)' : String(raw.output);
             // raw.displayHtml is deprecated (kept so existing tools keep working); prefer api.showUI().
             displayHtml = (typeof raw.displayHtml === 'string' && raw.displayHtml) ? raw.displayHtml : lastDisplayHtml;
             if (typeof raw.summary === 'string' && raw.summary.trim()) summary = raw.summary;
-            // Optional image handed to a vision model alongside the text result (never shown as text).
+            // Optional images handed to a vision model alongside the text result (never shown as text).
+            if (Array.isArray(raw.images)) {
+                const cleaned = [];
+                for (const it of raw.images) {
+                    if (typeof it === 'string' && it.startsWith('data:image/')) {
+                        cleaned.push({ url: it });
+                    } else if (it && typeof it === 'object' && typeof it.url === 'string' && it.url.startsWith('data:image/')) {
+                        const imgObj = { url: it.url };
+                        if (typeof it.label === 'string' && it.label.trim()) imgObj.label = it.label.trim();
+                        cleaned.push(imgObj);
+                    }
+                }
+                if (cleaned.length) images = cleaned;
+            }
             if (typeof raw.image === 'string' && raw.image.startsWith('data:image/')) image = raw.image;
         } else {
             output = raw === undefined ? '(no output)' : String(raw);
             displayHtml = lastDisplayHtml;
         }
 
-        self.postMessage({ type: 'done', runId, output, displayHtml, summary, image });
+        self.postMessage({ type: 'done', runId, output, displayHtml, summary, image, images });
     } catch (e) {
         self.postMessage({ type: 'done', runId, error: e.message || String(e) });
     }
@@ -232,7 +249,8 @@ function handleToolWorkerMessage(msg) {
                 output: msg.output,
                 displayHtml: msg.displayHtml || entry.displayHtml || null,
                 summary: msg.summary || (failed ? null : entry.headerMsg) || null,
-                image: msg.image || null
+                image: msg.image || null,
+                images: Array.isArray(msg.images) && msg.images.length ? msg.images : null
             });
         }
     }
@@ -249,16 +267,23 @@ function runToolInWorker(toolName, toolMeta, args, sessionId, runningBox) {
             if (toolWorker) { toolWorker.terminate(); toolWorker = null; }
             reapDeadPendingUI();
         }, timeoutMs);
+        const effectiveSessionId = sessionId || state.activeSessionId;
+        const hasVision = !!(
+            (typeof window.getCurrentModelInfo === 'function'
+                ? window.getCurrentModelInfo(effectiveSessionId)?.vision
+                : undefined) ??
+            (typeof window.currentModelHasVision === 'function' ? window.currentModelHasVision() : false)
+        );
         toolWorkerPending.set(runId, {
             resolve, reject, timeoutId, toolName,
-            sessionId: sessionId || state.activeSessionId,
+            sessionId: effectiveSessionId,
             box: runningBox || null,
             abortCtrl: new AbortController()
         });
         worker.postMessage({
             type: 'run',
             runId,
-            toolMeta: { mode: state.mode, planFile: PLAN_FILE, code: toolMeta.code, toolName, interactive: !!toolMeta.interactive },
+            toolMeta: { mode: state.mode, planFile: PLAN_FILE, code: toolMeta.code, toolName, interactive: !!toolMeta.interactive, hasVision },
             args
         });
     });

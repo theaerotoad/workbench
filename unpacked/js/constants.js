@@ -48,6 +48,7 @@ function toolsDefaults() {
             rename: 'ask',
             delete: 'ask',
             preview_image: 'always',
+            view_pdf: 'always',
             load_skill: 'always',
             changes: 'always'
         },
@@ -60,6 +61,7 @@ function toolsDefaults() {
             rename: false,
             delete: false,
             preview_image: false,
+            view_pdf: false,
             load_skill: false,
             changes: false
         },
@@ -146,7 +148,7 @@ const BINARY_MAGIC = [
     [0x66, 0x4C, 0x61, 0x43],                        // fLaC
     [0x52, 0x49, 0x46, 0x46]                         // RIFF (wav, avi, webp)
 ];
-const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete', 'preview_image', 'load_skill', 'map', 'changes'];
+const BUILTIN_TOOL_NAMES = ['read', 'edit', 'write', 'grep', 'find', 'rename', 'delete', 'preview_image', 'view_pdf', 'load_skill', 'map', 'changes'];
 const CLEARDATA_LS_KEYS = {
     models: ['models_json', 'selected_model'],
     customTools: ['tool_files_json', 'tool_lock_state', 'tool_deleted_names', 'tool_perm_state', 'tool_settings_state'],
@@ -211,6 +213,7 @@ const FILE_ICON_MAP = {
     jpg: { icon: 'image', color: 'var(--green)' },
     jpeg: { icon: 'image', color: 'var(--green)' },
     svg: { icon: 'image', color: 'var(--primary)' },
+    pdf: { icon: 'picture_as_pdf', color: 'var(--red)' },
     gguf: { icon: 'deployed_code', color: 'var(--primary)' },
     bin: { icon: 'deployed_code', color: 'var(--dim)' },
     exe: { icon: 'chat', color: 'var(--fg)' },
@@ -544,6 +547,24 @@ const TOOL_API_METHODS = {
         } catch (e) {
             return { error: `ERROR: Failed to preview ${fp}: ${e.message}` };
         }
+    },
+    pdfInfo: async (toolName, [fp, opts = {}], sessionId, runEntry) => {
+        if (!window.pdfHost || typeof window.pdfHost.pdfInfo !== 'function') {
+            return { error: 'ERROR: PDF host module is not loaded.' };
+        }
+        return await window.pdfHost.pdfInfo(fp, opts || {}, runEntry?.abortCtrl?.signal);
+    },
+    pdfText: async (toolName, [fp, opts = {}], sessionId, runEntry) => {
+        if (!window.pdfHost || typeof window.pdfHost.pdfText !== 'function') {
+            return { error: 'ERROR: PDF host module is not loaded.' };
+        }
+        return await window.pdfHost.pdfText(fp, opts || {}, runEntry?.abortCtrl?.signal);
+    },
+    pdfRenderPage: async (toolName, [fp, pageNum, opts = {}], sessionId, runEntry) => {
+        if (!window.pdfHost || typeof window.pdfHost.pdfRenderPage !== 'function') {
+            return { error: 'ERROR: PDF host module is not loaded.' };
+        }
+        return await window.pdfHost.pdfRenderPage(fp, pageNum, opts || {}, runEntry?.abortCtrl?.signal);
     },
     readFileBytes: async (toolName, [fp]) => {
         const MAX_BYTES = 64 * 1024 * 1024; // 64 MB
@@ -1142,13 +1163,13 @@ const TOOL_API_METHODS = {
     }
 };
 
-const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'load_skill', 'changes']);
+const TOOL_IO_READ_ONLY = new Set(['read', 'grep', 'find', 'preview_image', 'view_pdf', 'load_skill', 'changes']);
 const TOOL_IO_WRITE = new Set(['edit', 'write', 'rename', 'delete']);
 const TOOLS_DIR = '.agent/tools';
 const TOOL_SETTING_TYPES = ['number', 'text', 'boolean', 'select', 'model'];
 const TOOL_TIMEOUT_DEFAULT_MS = 120000;
 const TRANSIENT_LIVE_SELECTOR = '[data-live-spinner], .retry-status, [data-pending-tool], .tool-ui-wait';
-const VFS_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon' };
+const VFS_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', pdf: 'application/pdf' };
 const VIRTUAL_AGENT_FILES = [MODELS_FILE, CONFIG_FILE, TOOLS_FILE];
 
 window.ACCENT_PRESETS = ACCENT_PRESETS;
