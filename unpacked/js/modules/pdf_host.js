@@ -19,10 +19,19 @@ async function loadPdfJs() {
     if (_pdfjsPromise) return _pdfjsPromise;
     _pdfjsPromise = (async () => {
         const moduleUrl = `${PDFJS_BASE}/build/pdf.min.mjs`;
+        const workerUrl = `${PDFJS_BASE}/build/pdf.worker.min.mjs`;
         const pdfjsLib = await import(moduleUrl);
         if (!_workerBlobUrl) {
-            const workerCode = `import "${PDFJS_BASE}/build/pdf.worker.min.mjs";`;
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            let workerSource;
+            try {
+                const resp = await fetch(workerUrl);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                workerSource = await resp.text();
+            } catch (_) {
+                // Fallback re-exports WorkerMessageHandler in case pdf.js falls back to fake worker.
+                workerSource = `export * from "${workerUrl}";`;
+            }
+            const blob = new Blob([workerSource], { type: 'text/javascript' });
             _workerBlobUrl = URL.createObjectURL(blob);
         }
         pdfjsLib.GlobalWorkerOptions.workerSrc = _workerBlobUrl;
@@ -157,7 +166,7 @@ function evictLruIfNeeded() {
     }
 }
 
-function formatPdfError(fp, err) {
+function formatPdfError(fp, err, signal) {
     if (!err) return `ERROR: Failed to read ${fp}.`;
     const name = err.name || '';
     if (name === 'PasswordException') {
@@ -169,11 +178,21 @@ function formatPdfError(fp, err) {
     if (name === 'InvalidPDFException') {
         return `ERROR: ${fp} is not a valid or supported PDF file.`;
     }
-    if (name === 'AbortError') {
+    if (name === 'AbortError' && signal?.aborted) {
         return 'ERROR: PDF operation was cancelled.';
     }
+    const stage = err._pdfStage ? `[${err._pdfStage}] ` : '';
     const msg = err.message || String(err);
-    return msg.startsWith('ERROR:') ? msg : `ERROR: ${msg}`;
+    if (msg.startsWith('ERROR:')) return msg;
+    const prefix = name && name !== 'Error' ? `${name}: ` : '';
+    return `ERROR: ${stage}${prefix}${msg}`;
+}
+
+function tagStageError(stage, err) {
+    if (err && typeof err === 'object' && !err._pdfStage) {
+        try { err._pdfStage = stage; } catch (_) {}
+    }
+    return err;
 }
 
 async function resolvePdfSource(fp, password) {
@@ -300,14 +319,22 @@ async function acquirePdfDoc(fp, password, signal) {
     let loadPromise = _inFlightLoads.get(src.key);
     if (!loadPromise) {
         loadPromise = (async () => {
-            const pdfjsLib = await loadPdfJs();
-            if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
+            let pdfjsLib;
+            try {
+                pdfjsLib = await loadPdfJs();
+            } catch (err) {
+                throw tagStageError('loadPdfJs', err);
+            }
 
-            const rawBytes = await src.readBytes();
+            let rawBytes;
+            try {
+                rawBytes = await src.readBytes();
+            } catch (err) {
+                throw tagStageError('readBytes', err);
+            }
             if (!rawBytes || !hasPdfHeader(rawBytes)) {
                 throw new Error(`ERROR: ${fp} is not a valid PDF file (missing %PDF- header).`);
             }
-            if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 
             // Pass a copy because pdf.js transfers/detaches the underlying ArrayBuffer to its worker.
             const dataCopy = rawBytes.slice();
@@ -322,8 +349,14 @@ async function acquirePdfDoc(fp, password, signal) {
                 docOpts.password = password;
             }
 
-            const loadingTask = pdfjsLib.getDocument(docOpts);
-            const doc = await loadingTask.promise;
+            let doc;
+            try {
+                const loadingTask = pdfjsLib.getDocument(docOpts);
+                doc = await loadingTask.promise;
+            } catch (err) {
+                throw tagStageError('getDocument', err);
+            }
+
             const entry = {
                 key: src.key,
                 doc,
@@ -342,6 +375,7 @@ async function acquirePdfDoc(fp, password, signal) {
     }
 
     const entry = await loadPromise;
+    if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
     if (!entry.doc) {
         throw new Error(`ERROR: PDF cache entry was closed while loading ${fp}; retry the call.`);
     }
@@ -360,7 +394,10 @@ async function withPdfDoc(rawFp, password, signal, fn) {
         entry = await acquirePdfDoc(fp, password, signal);
         return await fn(entry, fp);
     } catch (err) {
-        return { error: formatPdfError(fp, err) };
+        if (!(err?.name === 'AbortError' && signal?.aborted)) {
+            console.error('[pdf_host] error for', fp, err);
+        }
+        return { error: formatPdfError(fp, err, signal) };
     } finally {
         if (entry) {
             entry.refs = Math.max(0, entry.refs - 1);
@@ -517,7 +554,7 @@ async function pdfInfo(fp, opts = {}, signal = null) {
             subject: cleanStr(metaInfo.Subject),
             creator: cleanStr(metaInfo.Creator),
             producer: cleanStr(metaInfo.Producer),
-            encrypted: !!metaInfo.IsAcroFormPresent ? false : Boolean(password),
+            encrypted: Boolean(password),
             outline: outlineRes.items,
             outlineTruncated: outlineRes.truncated
         };
