@@ -67,7 +67,7 @@ async function runTool(runId, toolMeta, args) {
         readFile: (fp) => callApi(runId, 'readFile', [fp]),
         readFileBytes: (fp) => callApi(runId, 'readFileBytes', [fp]),
         // Reads an image (path-safety checked) and returns it cropped/scaled: { dataUrl, width, height, sourceWidth, sourceHeight, crop } or { error }.
-        readImage: (fp, crop) => callApi(runId, 'readImage', [fp, crop || {}]),
+        readImage: (fp, crop, opts) => callApi(runId, 'readImage', [fp, crop || {}, opts || {}]),
         writeFile: (fp, content) => callApi(runId, 'writeFile', [fp, content]),
         renameFile: (oldPath, newPath) => callApi(runId, 'renameFile', [oldPath, newPath]),
         deleteFile: (fp, opts) => callApi(runId, 'deleteFile', [fp, opts || {}]),

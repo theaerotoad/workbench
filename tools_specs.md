@@ -8,7 +8,7 @@ conventions for developing tools for Ion.
 Ion executes tools within a multi-tiered sandboxed environment:
 
 ┌────────────────────────────────────────────────────────┐
-│  Ion Main Application (index.html)                    │
+│  Ion Main Application (index.html)                     │
 │  - File System Access API & IndexedDB                  │
 │  - UI Rendering & Monaco Editors                       │
 │  - Security Permission Guard & Protected Paths         │
@@ -24,7 +24,7 @@ Ion executes tools within a multi-tiered sandboxed environment:
 ┌──────────────────────────▼─────────────────────────────┐
 │  Tool Worker Context (TOOL_WORKER_SOURCE)              │
 │  - Evaluates tool code via Function factory            │
-│  - Isolated from DOM (No `window`, `document`)        │
+│  - Isolated from DOM (No `window`, `document`)         │
 │  - Communicates via `api` interface with host          │
 └────────────────────────────────────────────────────────┘
 
@@ -176,10 +176,14 @@ All paths are workspace-relative (e.g., src/index.js):
     content, or "ERROR: ..." if inaccessible or binary.
   - api.readFileBytes(filepath) -> Promise<Uint8Array | string> Reads binary
     data (up to 64MB). Returns Uint8Array or "ERROR: ..." string.
-  - api.readImage(filepath, crop?) -> Promise<Object> Reads and crops an image
-    file. crop accepts normalized coordinates: { x: 0.0-1.0, y: 0.0-1.0,
-    width: 0.0-1.0, height: 0.0-1.0 }. Returns { dataUrl, width, height,
-    sourceWidth, sourceHeight, crop } or { error }.
+  - api.readImage(filepath, crop?, opts?) -> Promise<Object> Reads and crops an
+    image file. crop accepts normalized coordinates: { x: 0.0-1.0, y: 0.0-1.0,
+    width: 0.0-1.0, height: 0.0-1.0 }. opts: { maxMegapixels?: number } — an
+    additional per-image size budget in megapixels, applied after the standard
+    1568px long-side cap (i.e. it only shrinks the image further). Returns {
+    dataUrl, width, height, sourceWidth, sourceHeight, crop } or { error }. A
+    tool may call readImage multiple times to aggregate several images (e.g. PDF
+    pages) into one `images` response (see section 7).
   - api.writeFile(filepath, content) -> Promise<string | null> Writes string or
     Uint8Array to workspace. Returns null on success or an error string.
   - api.renameFile(oldPath, newPath) -> Promise<string | null> Renames or moves
@@ -274,7 +278,12 @@ await api.showUI("<div style='color: var(--green);'>Rich visual card for user UI
 return {
     output: "Clean text data sent to the LLM context window.",
     summary: "Optional label overriding the tool card header",
-    image: "data:image/png;base64,..." // Optional visual input for vision models
+    image: "data:image/png;base64,..." // Optional visual input for vision models (single image),
+    // images: [                                  // Preferred multi-image field
+    //     "data:image/png;base64,..."            //   a data-URL string, or
+    //     { url: "data:image/jpeg;base64,...",   //   an object; label becomes
+    //       label: "page 3 of report.pdf" }      //   the caption shown to the model
+    // ]
 };
 
   - Separation of Concerns: output is returned to the model context. UI passed
@@ -287,7 +296,13 @@ return {
     card.
   - Multimodal Feedback: If image is set (data URL) and the current model
     supports vision, Ion feeds the image back into the conversation context as a
-    user message turn.
+    user message turn. For multiple images, prefer the images array: a list of
+    data-URL strings or { url, label? } objects. images takes precedence over
+    image (if both are set, only images is used; image remains supported for
+    backward compatibility). All entries are fed back as image_url parts of a
+    single user message turn (along with one text part captioning the batch, or
+    the entry's label when there is exactly one image, e.g. "page 3 of
+    report.pdf").
 
 8. Interactive Tools & Live UI
 

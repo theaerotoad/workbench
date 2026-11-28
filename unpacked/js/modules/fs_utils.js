@@ -107,7 +107,7 @@ window.contextItemApplies = contextItemApplies;
 // --- AST_EXPORTS_END ---
 
 // --- cropAndEncodeImage.js ---
-async function cropAndEncodeImage(dataUrl, { x, y, width, height } = {}) {
+async function cropAndEncodeImage(dataUrl, { x, y, width, height, maxMegapixels = null } = {}) {
 return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -138,6 +138,16 @@ return new Promise((resolve, reject) => {
             const scale = MAX_SIDE / longSide2;
             outW = Math.round(outW * scale);
             outH = Math.round(outH * scale);
+        }
+        // Additional per-image megapixel budget (only shrinks further; 1568px cap always applies first).
+        if (maxMegapixels && maxMegapixels > 0) {
+            const budgetPx = Math.sqrt(maxMegapixels * 1e6);
+            const longSide3 = Math.max(outW, outH);
+            if (longSide3 > budgetPx) {
+                const scale = budgetPx / longSide3;
+                outW = Math.max(1, Math.round(outW * scale));
+                outH = Math.max(1, Math.round(outH * scale));
+            }
         }
         const canvas = document.createElement('canvas');
         canvas.width = outW;

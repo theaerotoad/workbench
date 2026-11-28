@@ -677,14 +677,21 @@ async function runTask(task, msgId, imageUrls, sessionId) {
                 // Pushes the "tool" result message(s) for one processSingleCall() outcome.
                 const commitCallResult = async ({ call, args, resObj, resStr }) => {
                     runCtx.messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: resStr });
-                    if (resObj && resObj.__imageDataUrl && runModelVision) {
-                        runCtx.messages.push({
-                            role: "user",
-                            content: [
-                                { type: "text", text: `(Image result from preview_image tool call for ${args.filepath || ''})` },
-                                { type: "image_url", image_url: { url: resObj.__imageDataUrl } }
-                            ]
-                        });
+                    if (resObj && runModelVision) {
+                        const imgs = (resObj.__imagesDataUrls && resObj.__imagesDataUrls.length)
+                            ? resObj.__imagesDataUrls
+                            : (resObj.__imageDataUrl ? [{ url: resObj.__imageDataUrl }] : []);
+                        if (imgs.length) {
+                            const content = [];
+                            const name = call.function.name;
+                            const fp = args.filepath || (args.files && args.files.map(f => f.filepath).join(', ')) || '';
+                            const text = imgs.length === 1
+                                ? (imgs[0].label || `(Image result from ${name} tool call for ${fp})`)
+                                : `(${imgs.length} image results from ${name} tool call for ${fp})`;
+                            content.push({ type: "text", text });
+                            for (const im of imgs) content.push({ type: "image_url", image_url: { url: im.url } });
+                            runCtx.messages.push({ role: "user", content });
+                        }
                     }
                     await saveSession(runSessionId);
                 };

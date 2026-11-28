@@ -518,7 +518,7 @@ const TOOL_API_METHODS = {
         const res = await window.writeDisk(fp, content, { fromLLMTool: true, sessionId });
         return (res && res.output) ? res.output : null;
     },
-    readImage: async (toolName, [fp, crop]) => {
+    readImage: async (toolName, [fp, crop, opts = {}]) => {
         if (typeof fp !== 'string' || !fp) return { error: 'ERROR: filepath is required.' };
         if (window.isSecurityProtectedPath(fp)) {
             return { error: `ERROR: ${fp} is a protected path and cannot be read by a tool call.` };
@@ -537,7 +537,10 @@ const TOOL_API_METHODS = {
             return { error: `ERROR: ${fp} is not a readable image. It must be an image file (png/jpg/jpeg/gif/bmp/webp/svg/ico) that exists in the open workspace.` };
         }
         try {
-            return await window.cropAndEncodeImage(dataUrl, crop || {});
+            return await window.cropAndEncodeImage(dataUrl, {
+                ...(crop || {}),
+                maxMegapixels: (opts && typeof opts.maxMegapixels === 'number') ? opts.maxMegapixels : null
+            });
         } catch (e) {
             return { error: `ERROR: Failed to preview ${fp}: ${e.message}` };
         }

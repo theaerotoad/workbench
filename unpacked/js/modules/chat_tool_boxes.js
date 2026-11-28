@@ -118,6 +118,9 @@ function describeToolAction(name, args) {
             return args.recursive ? `Delete ${displayPath} (recursive)` : `Delete ${displayPath}`;
         }
         case 'PreviewImage': {
+            if (Array.isArray(args.files) && args.files.length) {
+                return `Preview ${args.files.length} image(s): ${args.files.map(f => f && f.filepath).join(', ')}`;
+            }
             const hasCrop = [args.x, args.y, args.width, args.height].some(v => v !== undefined && v !== null);
             return `Preview ${args.filepath || ''}${hasCrop ? ` (region ${args.x || 0},${args.y || 0} ${args.width || '?'}x${args.height || '?'})` : ''}`;
         }
@@ -181,7 +184,24 @@ async function executeTool(name, args, sessionId, runningBox) {
         if (result.displayHtml) out.displayHtml = result.displayHtml;
         if (result.summary) out.summary = result.summary;
         else if (output.startsWith('ERROR:')) out.summary = summarizeToolError(output);
-        if (result.image) out.__imageDataUrl = result.image;
+
+        // Multimodal: accept legacy `image` (string) and/or new `images` array.
+        // `images` items: a data-URL string, or { url, label? }.
+        const images = [];
+        if (Array.isArray(result.images)) {
+            for (const it of result.images) {
+                if (!it) continue;
+                if (typeof it === 'string') images.push({ url: it });
+                else if (typeof it.url === 'string') images.push({ url: it.url, label: it.label });
+            }
+        }
+        if (images.length === 0 && typeof result.image === 'string' && result.image) {
+            images.push({ url: result.image });
+        }
+        if (images.length) {
+            out.__imagesDataUrls = images;          // new: [{ url, label? }, ...]
+            out.__imageDataUrl = images[0].url;     // legacy single-image compat
+        }
         return out;
     } catch(e) {
         const output = `ERROR: Tool "${name}" failed: ${e.message}`;
