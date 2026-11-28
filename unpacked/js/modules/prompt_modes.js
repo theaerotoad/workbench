@@ -382,7 +382,7 @@ map parses files with Tree-sitter and returns structure: imports, classes, funct
 
 OTHER TOOLS
 - find: file listing with sizes and line counts. Scope with path= or a glob ("src/**/*.ts"); "dir/*.ext" matches at any depth. Call find(pattern="*") once at the start if the layout isn't in context; don't repeat it.
-- grep: text and usages, e.g. "who calls X", string literals, config keys. Also searches text inside .pdf files (matches report `file.pdf:pN:line`, ready for view_pdf). It's case-INSENSITIVE by default (case_sensitive=true to change). files_only=true for a quick file list; context=N, include="glob" and max_per_file=N to keep output small. path= is a folder/file prefix; literal=true searches plain text. map finds definitions, grep finds usages; use both before changing a signature.
+- grep: text and usages, e.g. "who calls X", string literals, config keys. Also searches text inside .pdf files (matches report \`file.pdf:pN:line\`, ready for view_pdf). It's case-INSENSITIVE by default (case_sensitive=true to change). files_only=true for a quick file list; context=N, include="glob" and max_per_file=N to keep output small. path= is a folder/file prefix; literal=true searches plain text. map finds definitions, grep finds usages; use both before changing a signature.
 - read: use ranges=[[a,b],[c,d]] taken from map/grep line numbers. Reads over the limit (default 500 lines) are TRUNCATED with a notice at the top listing the ranges not returned; continue with the ranges it gives.
 - changes(diff=true): everything modified this session.
 - preview_image: vision-capable models only.

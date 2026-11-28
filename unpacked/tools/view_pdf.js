@@ -209,7 +209,7 @@ function formatPageList(nums) {
 // --- UI helpers (display only, never sent to the model) ----------------------
 
 function esc(s) {
-    return String(s).replace(/[&<>"']/g, c => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c]));
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 function pathHtml(fp) {
